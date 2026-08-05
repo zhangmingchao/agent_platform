@@ -1,0 +1,78 @@
+import { createRouter, createWebHistory } from 'vue-router'
+
+const routes = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/Login.vue'),
+    meta: { requiresAuth: false }
+  },
+  {
+    path: '/',
+    component: () => import('../components/Layout.vue'),
+    meta: { requiresAuth: true },
+    redirect: '/dashboard',
+    children: [
+      {
+        path: 'dashboard',
+        name: 'Dashboard',
+        component: () => import('../views/Dashboard.vue'),
+        meta: { title: '仪表盘' }
+      },
+      {
+        path: 'agents',
+        name: 'AgentList',
+        component: () => import('../views/agents/AgentList.vue'),
+        meta: { title: 'Agent 管理' }
+      },
+      {
+        path: 'agents/new',
+        name: 'AgentCreate',
+        component: () => import('../views/agents/AgentForm.vue'),
+        meta: { title: '创建 Agent' }
+      },
+      {
+        path: 'agents/:id/edit',
+        name: 'AgentEdit',
+        component: () => import('../views/agents/AgentForm.vue'),
+        meta: { title: '编辑 Agent' }
+      },
+      {
+        path: 'agents/:id/chat',
+        name: 'AgentChat',
+        component: () => import('../views/chat/Chat.vue'),
+        meta: { title: '对话' }
+      },
+      {
+        path: 'skills',
+        name: 'SkillList',
+        component: () => import('../views/skills/SkillList.vue'),
+        meta: { title: 'Skill 管理' }
+      },
+      {
+        path: 'mcps',
+        name: 'McpList',
+        component: () => import('../views/mcps/McpList.vue'),
+        meta: { title: 'MCP 配置' }
+      }
+    ]
+  }
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+})
+
+router.beforeEach((to, from, next) => {
+  const token = localStorage.getItem('token')
+  if (to.meta.requiresAuth !== false && !token) {
+    next('/login')
+  } else if (to.path === '/login' && token) {
+    next('/')
+  } else {
+    next()
+  }
+})
+
+export default router
