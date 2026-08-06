@@ -2,7 +2,7 @@
   <div class="agent-form">
     <div class="page-header">
       <h2>{{ isEdit ? '编辑 Agent' : '创建 Agent' }}</h2>
-      <el-button @click="$router.back()">返回</el-button>
+      <el-button @click="$router.go(-1)">返回</el-button>
     </div>
 
     <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" style="max-width: 700px">
