@@ -108,7 +108,7 @@ class AgentUpdate(AgentCreate):
     pass
 
 
-@app.get("/api/agents")
+@app.get("/api/agentsList")
 async def api_list_agents(request: Request):
     user = get_current_user(request)
     return await list_agents(user["user_id"])

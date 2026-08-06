@@ -59,7 +59,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted,onActivated  } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '../../utils/request'
@@ -128,4 +128,7 @@ const handleSubmit = async () => {
 }
 
 onMounted(loadData)
+
+
+
 </script>
