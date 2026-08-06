@@ -251,6 +251,10 @@ const callTool = async () => {
 const handleSubmit = async () => {
   if (isEdit.value) {
     await request.put(`/api/mcp-configs/${editingId.value}`, form)
+    ElMessage.success('保存成功')
+    dialogVisible.value = false
+    window.location.reload()
+    return
   } else {
     await request.post('/api/mcp-configs', form)
   }

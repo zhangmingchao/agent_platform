@@ -66,6 +66,7 @@ async def init_db():
                     system_prompt TEXT,
                     model VARCHAR(100) DEFAULT 'deepseek-chat',
                     temperature FLOAT DEFAULT 0.7,
+                    iteration_count INT NOT NULL DEFAULT 6,
                     created_at DATETIME NOT NULL,
                     updated_at DATETIME NOT NULL,
                     INDEX idx_user (user_id),
@@ -146,6 +147,14 @@ async def init_db():
 
             for sql in statements:
                 await cur.execute(sql)
+
+            # Incremental migration for databases created before iteration_count
+            await cur.execute("SHOW COLUMNS FROM agents LIKE 'iteration_count'")
+            if not await cur.fetchone():
+                await cur.execute(
+                    "ALTER TABLE agents ADD COLUMN iteration_count INT NOT NULL DEFAULT 6 AFTER temperature"
+                )
+                log.info("[DB] agents.iteration_count 字段迁移完成")
 
             now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
             await cur.execute(

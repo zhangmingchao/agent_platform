@@ -12,7 +12,7 @@ log = logging.getLogger("agent-platform")
 
 async def list_agents(user_id: int) -> List[Dict]:
     return await fetch_all(
-        "SELECT id, name, description, system_prompt, model, temperature, "
+        "SELECT id, name, description, system_prompt, model, temperature, iteration_count, "
         "created_at, updated_at FROM agents WHERE user_id=%s ORDER BY updated_at DESC",
         (user_id,)
     )
@@ -46,8 +46,8 @@ def _now():
 async def create_agent(user_id: int, data: Dict) -> Dict:
     now = _now()
     agent_id = await execute(
-        "INSERT INTO agents (user_id, name, description, system_prompt, model, temperature, created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        "INSERT INTO agents (user_id, name, description, system_prompt, model, temperature, iteration_count, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             user_id,
             data.get("name", "新Agent"),
@@ -55,6 +55,7 @@ async def create_agent(user_id: int, data: Dict) -> Dict:
             data.get("system_prompt", ""),
             data.get("model", "deepseek-chat"),
             data.get("temperature", 0.7),
+            data.get("iteration_count", 6),
             now,
             now,
         )
@@ -87,7 +88,7 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Dict
 
     now = _now()
     await execute(
-        "UPDATE agents SET name=%s, description=%s, system_prompt=%s, model=%s, temperature=%s, updated_at=%s "
+        "UPDATE agents SET name=%s, description=%s, system_prompt=%s, model=%s, temperature=%s, iteration_count=%s, updated_at=%s "
         "WHERE id=%s",
         (
             data.get("name", "新Agent"),
@@ -95,6 +96,7 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Dict
             data.get("system_prompt", ""),
             data.get("model", "deepseek-chat"),
             data.get("temperature", 0.7),
+            data.get("iteration_count", 6),
             now,
             agent_id,
         )

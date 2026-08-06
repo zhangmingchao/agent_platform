@@ -44,6 +44,7 @@ CREATE TABLE agents (
     system_prompt TEXT,
     model       VARCHAR(100) DEFAULT 'deepseek-chat',
     temperature FLOAT        DEFAULT 0.7,
+    iteration_count INT      NOT NULL DEFAULT 6 COMMENT '单次对话最大工具调用迭代次数',
     created_at  DATETIME     NOT NULL,
     updated_at  DATETIME     NOT NULL,
     INDEX       idx_user (user_id),
