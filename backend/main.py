@@ -17,7 +17,7 @@ from typing import Optional
 from fastapi import FastAPI, Query, Request, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional as OptionalType
 
 from config import SERVER_PORT, SKILLS_DIR
@@ -98,6 +98,7 @@ class AgentCreate(BaseModel):
     name: str = "新Agent"
     description: str = ""
     system_prompt: str = ""
+    iteration_count: int = Field(default=6, ge=1, le=100)
     model: str = "deepseek-chat"
     temperature: float = 0.7
     skill_ids: List[int] = []

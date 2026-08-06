@@ -15,6 +15,14 @@
       <el-form-item label="系统提示词" prop="system_prompt">
         <el-input v-model="form.system_prompt" type="textarea" :rows="6" placeholder="定义 Agent 的角色、行为、专长等" />
       </el-form-item>
+      <el-form-item label="迭代次数" prop="iteration_count">
+        <el-input v-model="form.iteration_count"
+                  :min="1"
+                  type="number"
+                  :max="100"
+                  placeholder="请输入最大迭代次数"
+        />
+      </el-form-item>
       <el-row :gutter="20">
         <el-col :span="12">
           <el-form-item label="模型" prop="model">
@@ -75,6 +83,7 @@ const form = reactive({
   name: '',
   description: '',
   system_prompt: '',
+  iteration_count: 6,
   model: 'deepseek-chat',
   temperature: 0.7,
   skill_ids: [],
@@ -82,7 +91,8 @@ const form = reactive({
 })
 
 const rules = {
-  name: [{ required: true, message: '请输入名称', trigger: 'blur' }]
+  name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
+  iteration_count: [{ required: true, message: '迭代次数必须大于0', trigger: 'blur' }],
 }
 
 const skills = ref([])
@@ -102,6 +112,7 @@ const loadData = async () => {
       form.name = agent.name
       form.description = agent.description
       form.system_prompt = agent.system_prompt
+      form.iteration_count = agent.iteration_count || 6
       form.model = agent.model
       form.temperature = agent.temperature
       form.skill_ids = agent.skills?.map(s => s.id) || []

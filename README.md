@@ -171,14 +171,14 @@ python main.py
 1. **注册/登录** → 进入仪表盘
 2. **创建 Skill** → 上传 SKILL.md 或手动输入内容
 3. **配置 MCP** → 添加 MCP Server 连接信息
-4. **创建 Agent** → 设置名称、系统提示词、关联 Skill 和 MCP
+4. **创建 Agent** → 设置名称、系统提示词、最大迭代次数，并关联 Skill 和 MCP
 5. **开始对话** → 选择 Agent 创建会话，开始流式对话
 
 ## 数据库结构
 
 ```
 users          用户表（id, username, password, created_at）
-agents         Agent 表（id, user_id, name, description, system_prompt, model, temperature）
+agents         Agent 表（id, user_id, name, description, system_prompt, model, temperature, iteration_count）
 skills         Skill 表（id, user_id, name, description, content）
 mcp_configs    MCP 配置表（id, user_id, name, base_url, endpoint, description）
 agent_skills   Agent-Skill 关联表（agent_id, skill_id）
@@ -186,6 +186,8 @@ agent_mcps     Agent-MCP 关联表（agent_id, mcp_id）
 chat_sessions  会话表（id, user_id, agent_id, title）
 chat_messages  消息表（id, session_id, role, content）
 ```
+
+`agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，默认值为 `6`。已有数据库会在后端启动时自动补充该字段。
 
 ## 环境变量
 

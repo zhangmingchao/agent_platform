@@ -174,7 +174,9 @@ async def chat_stream(
         yield "data:\n\n"
         return
 
-    for round_num in range(1, MAX_TOOL_ROUNDS + 1):
+    max_tool_rounds = max(1, min(int(agent.get("iteration_count") or MAX_TOOL_ROUNDS), 100))
+
+    for round_num in range(1, max_tool_rounds + 1):
         _log_round_header(round_num, len(messages))
         _log_messages(messages)
         _log_tool_list(tools)
@@ -237,7 +239,7 @@ async def chat_stream(
                 "content": result_str
             })
 
-    log.warning(f"[LLM] 超过最大轮次 {MAX_TOOL_ROUNDS}")
+    log.warning(f"[LLM] 超过最大轮次 {max_tool_rounds}")
     stream = client.chat.completions.create(
         model=model_name,
         messages=messages,
