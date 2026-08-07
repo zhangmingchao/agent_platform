@@ -13,6 +13,7 @@
       <el-table-column prop="description" label="描述" show-overflow-tooltip />
       <el-table-column prop="model" label="模型" width="160" />
       <el-table-column prop="temperature" label="温度" width="100" />
+      <el-table-column prop="iteration_count" label="迭代次数" width="100" />
       <el-table-column prop="created_at" label="创建时间" width="180">
         <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
       </el-table-column>
