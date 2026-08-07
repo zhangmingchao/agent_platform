@@ -14,12 +14,20 @@
 agent_platform/
 ├── backend/
 │   ├── main.py              # FastAPI 入口
+│   ├── routers/             # HTTP 接口路由
+│   │   ├── auth.py
+│   │   ├── agents.py
+│   │   ├── skills.py
+│   │   ├── mcp_configs.py
+│   │   ├── sessions.py
+│   │   └── chat.py
+│   ├── services/            # 业务服务层
+│   │   ├── agent_service.py
+│   │   ├── skill_service.py
+│   │   └── mcp_config_service.py
 │   ├── config.py            # 配置（端口、密钥、MySQL 连接）
 │   ├── database.py          # MySQL 数据库层（aiomysql）
 │   ├── auth.py              # JWT 认证
-│   ├── agents.py            # Agent CRUD
-│   ├── skills.py            # Skill 管理
-│   ├── mcp_configs.py       # MCP 配置管理
 │   ├── mcp_client.py        # MCP 客户端（Streamable HTTP）
 │   ├── chat_engine.py       # 流式对话核心（多轮 Tool Call）
 │   ├── requirements.txt     # Python 依赖

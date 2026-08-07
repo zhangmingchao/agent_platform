@@ -1,7 +1,4 @@
-"""
-Skill management - upload, list, delete skills.
-Skills are SKILL.md files stored in the data directory.
-"""
+"""Skill business operations."""
 import os
 import logging
 from datetime import datetime

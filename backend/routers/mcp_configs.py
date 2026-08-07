@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from auth import get_current_user
 from mcp_client import McpClient
-from mcp_configs import (
+from services.mcp_config_service import (
     create_mcp_config,
     delete_mcp_config,
     get_mcp_config,
