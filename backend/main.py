@@ -2,6 +2,12 @@
 
 import logging
 import os
+import sys
+
+# Support both `python -m backend.main` and running main.py directly from an IDE.
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    __package__ = "backend"
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
