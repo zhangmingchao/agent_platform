@@ -60,7 +60,12 @@ async def _create_chat_response(request: Request, message: str, session_id: int)
             session_id=session_id,
         ):
             if chunk.startswith("data:") and chunk != "data:\n\n":
-                full_response.append(chunk[5:])
+                # Store only the SSE payload. The trailing blank line belongs to
+                # the SSE frame and must not become part of the chat message.
+                payload = chunk[5:]
+                if payload.endswith("\n\n"):
+                    payload = payload[:-2]
+                full_response.append(payload)
             yield chunk
 
         assistant_text = "".join(full_response)

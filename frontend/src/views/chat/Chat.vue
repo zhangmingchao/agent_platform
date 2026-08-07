@@ -44,7 +44,10 @@
           </div>
           <div class="message-content">
             <div class="message-role">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
-            <div class="message-text">{{ msg.content }}</div>
+            <div
+              :class="['message-text', { 'markdown-body': msg.role === 'assistant' }]"
+              v-html="renderMessage(msg)"
+            ></div>
           </div>
         </div>
         <div v-if="streaming" class="message assistant">
@@ -52,7 +55,9 @@
             <el-avatar :icon="Robot" class="ai-avatar" />
           </div>
           <div class="message-content">
-            <div class="message-text">{{ streamingText }}<span class="cursor">|</span></div>
+            <div class="message-text markdown-body streaming-content">
+              <span v-html="renderMarkdown(streamingText)"></span><span class="cursor">|</span>
+            </div>
           </div>
         </div>
       </div>
@@ -79,7 +84,40 @@
 import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import DOMPurify from 'dompurify'
+import MarkdownIt from 'markdown-it'
 import request from '../../utils/request'
+
+const markdown = new MarkdownIt({
+  breaks: true,
+  html: false,
+  linkify: true,
+  typographer: true
+})
+
+const escapeHtml = (content = '') => content
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#039;')
+  .replaceAll('\n', '<br>')
+
+const renderMarkdown = (content = '') => DOMPurify.sanitize(markdown.render(content))
+const normalizeLegacyStreamMessage = (content = '') => {
+  const fragments = content.split(/\n{2,}/).filter(Boolean)
+  const shortFragments = fragments.filter(fragment => fragment.trim().length <= 8)
+
+  // Older backend versions persisted each SSE frame's blank separator. When
+  // most paragraphs are tiny token fragments, join them back before Markdown.
+  if (fragments.length >= 5 && shortFragments.length / fragments.length >= 0.7) {
+    return fragments.join('')
+  }
+  return content
+}
+const renderMessage = (message) => message.role === 'assistant'
+  ? renderMarkdown(normalizeLegacyStreamMessage(message.content))
+  : escapeHtml(message.content)
 
 const route = useRoute()
 const agentId = computed(() => route.params.id)
@@ -327,12 +365,68 @@ onMounted(async () => {
   padding: 12px 16px;
   border-radius: 12px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
 }
 .message.user .message-text {
   background: #409EFF;
   color: #fff;
+}
+.markdown-body :deep(> :first-child) {
+  margin-top: 0;
+}
+.markdown-body :deep(> :last-child) {
+  margin-bottom: 0;
+}
+.markdown-body :deep(p) {
+  margin: 0 0 10px;
+}
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+.markdown-body :deep(blockquote) {
+  margin: 10px 0;
+  padding: 4px 12px;
+  color: #6b7280;
+  border-left: 4px solid #d1d5db;
+}
+.markdown-body :deep(code) {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.markdown-body :deep(pre) {
+  overflow-x: auto;
+  margin: 10px 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #1f2937;
+  color: #f9fafb;
+}
+.markdown-body :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+.markdown-body :deep(a) {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.markdown-body :deep(table) {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  border-collapse: collapse;
+}
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+}
+.streaming-content > span:first-child {
+  display: inline;
 }
 .cursor {
   animation: blink 0.8s infinite;
