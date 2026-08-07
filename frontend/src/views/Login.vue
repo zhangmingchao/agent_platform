@@ -4,20 +4,20 @@
       <div class="login-header">
         <el-icon :size="40" color="#409EFF"><Robot /></el-icon>
         <h1>{{ t('login.title') }}</h1>
-        <p>AI Agent 管理平台</p>
+        <p>{{ t('login.subtitle') }}</p>
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
         <el-form-item prop="username">
-          <el-input v-model="form.username" placeholder="用户名" :prefix-icon="User" size="large" />
+          <el-input v-model="form.username" :placeholder="t('login.username')" :prefix-icon="User" size="large" />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="form.password" type="password" placeholder="密码" :prefix-icon="Lock" size="large" show-password />
+          <el-input v-model="form.password" type="password" :placeholder="t('login.password')" :prefix-icon="Lock" size="large" show-password />
         </el-form-item>
         <el-button type="primary" size="large" :loading="loading" @click="handleLogin" style="width: 100%">
-          登录
+          {{ t('login.loginBtn') }}
         </el-button>
         <div class="login-footer">
-          <span>默认账号: admin / 123456</span>
+          <span>{{ t('login.defaultAccount') }}</span>
         </div>
       </el-form>
     </div>
@@ -28,11 +28,10 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '../stores/user'
 
-import { useI18n } from 'vue-i18n'
-const { t } = useI18n()   // ✅ 必须解构出 t
-
+const { t } = useI18n()
 const router = useRouter()
 const userStore = useUserStore()
 
@@ -40,8 +39,8 @@ const formRef = ref()
 const loading = ref(false)
 const form = reactive({ username: '', password: '' })
 const rules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+  username: [{ required: true, message: t('login.usernameRequired'), trigger: 'blur' }],
+  password: [{ required: true, message: t('login.passwordRequired'), trigger: 'blur' }]
 }
 
 const handleLogin = async () => {
@@ -49,7 +48,7 @@ const handleLogin = async () => {
   loading.value = true
   try {
     await userStore.login(form.username, form.password)
-    ElMessage.success('登录成功')
+    ElMessage.success(t('login.loginSuccess'))
     router.push('/')
   } catch (e) {
     // Error handled by request interceptor

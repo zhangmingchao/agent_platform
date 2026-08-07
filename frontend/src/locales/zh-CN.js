@@ -1,6 +1,6 @@
 export default {
   login: {
-    title: 'Agent Platform1111',
+    title: 'Agent Platform',
     subtitle: 'AI Agent 管理平台',
     username: '用户名',
     password: '密码',
