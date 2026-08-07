@@ -7,14 +7,14 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import SERVER_PORT
-from database import init_db
-from routers.agents import router as agents_router
-from routers.auth import router as auth_router
-from routers.chat import router as chat_router
-from routers.mcp_configs import router as mcp_configs_router
-from routers.sessions import router as sessions_router
-from routers.skills import router as skills_router
+from .config import SERVER_PORT
+from .database import init_db
+from .routers.agents import router as agents_router
+from .routers.auth import router as auth_router
+from .routers.chat import router as chat_router
+from .routers.mcp_configs import router as mcp_configs_router
+from .routers.sessions import router as sessions_router
+from .routers.skills import router as skills_router
 
 logging.basicConfig(
     level=logging.INFO,

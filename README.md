@@ -80,8 +80,8 @@ mysql -u root -p < backend/sql/init.sql
 ### 2. 后端启动
 
 ```bash
-cd agent_platform/backend
-pip install -r requirements.txt
+cd agent_platform
+pip install -r backend/requirements.txt
 
 # 配置环境变量（可选）
 export DEEPSEEK_API_KEY="your-api-key"
@@ -97,7 +97,7 @@ export DB_PASSWORD="123456"
 export DB_NAME="agent_platform"
 
 # 启动服务
-python main.py
+python -m backend.main
 ```
 
 后端启动后：
@@ -123,8 +123,8 @@ cd agent_platform/frontend
 npm run build
 
 # 启动后端（已包含前端静态文件服务）
-cd ../backend
-python main.py
+cd ..
+python -m backend.main
 ```
 
 访问 `http://127.0.0.1:20000` 即可使用完整系统。

@@ -2,8 +2,8 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
-from auth import get_current_user
-from database import execute, fetch_all, fetch_one
+from ..auth import get_current_user
+from ..database import execute, fetch_all, fetch_one
 
 router = APIRouter(prefix="/api/sessions", tags=["Chat Sessions"])
 

@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 from fastapi import Request, HTTPException
 
-from config import JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRE_HOURS
-from database import fetch_one
+from .config import JWT_ALGORITHM, JWT_EXPIRE_HOURS, JWT_SECRET
+from .database import fetch_one
 
 log = logging.getLogger("agent-platform")
 

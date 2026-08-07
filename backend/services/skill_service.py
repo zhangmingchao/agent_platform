@@ -4,8 +4,8 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Optional
 
-from database import fetch_all, fetch_one, execute
-from config import SKILLS_DIR
+from ..config import SKILLS_DIR
+from ..database import execute, fetch_all, fetch_one
 
 log = logging.getLogger("agent-platform")
 

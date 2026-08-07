@@ -1,7 +1,7 @@
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
-from auth import get_current_user
-from services.skill_service import create_skill, delete_skill, get_skill, list_skills
+from ..auth import get_current_user
+from ..services.skill_service import create_skill, delete_skill, get_skill, list_skills
 
 router = APIRouter(prefix="/api/skills", tags=["Skills"])
 

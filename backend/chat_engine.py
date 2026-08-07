@@ -10,8 +10,8 @@ from typing import AsyncGenerator, Dict, List
 
 from openai import OpenAI
 
-from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, MAX_TOOL_ROUNDS
-from mcp_client import McpClient, mcp_tools_to_openai_format
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, MAX_TOOL_ROUNDS
+from .mcp_client import McpClient, mcp_tools_to_openai_format
 
 log = logging.getLogger("agent-platform")
 

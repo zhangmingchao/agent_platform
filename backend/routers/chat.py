@@ -4,12 +4,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from auth import get_current_user
-from chat_engine import chat_stream
-from database import execute, fetch_all, fetch_one
-from services.agent_service import get_agent
-from services.mcp_config_service import get_agent_mcps
-from services.skill_service import get_agent_skills
+from ..auth import get_current_user
+from ..chat_engine import chat_stream
+from ..database import execute, fetch_all, fetch_one
+from ..services.agent_service import get_agent
+from ..services.mcp_config_service import get_agent_mcps
+from ..services.skill_service import get_agent_skills
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 

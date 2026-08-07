@@ -3,8 +3,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from auth import authenticate_user, create_token, get_current_user
-from database import execute, fetch_one
+from ..auth import authenticate_user, create_token, get_current_user
+from ..database import execute, fetch_one
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 

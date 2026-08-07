@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict
 
-from config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+from .config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
 log = logging.getLogger("agent-platform")
 

@@ -3,8 +3,8 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from auth import get_current_user
-from services.agent_service import create_agent, delete_agent, get_agent, list_agents, update_agent
+from ..auth import get_current_user
+from ..services.agent_service import create_agent, delete_agent, get_agent, list_agents, update_agent
 
 router = APIRouter(prefix="/api", tags=["Agents"])
 
