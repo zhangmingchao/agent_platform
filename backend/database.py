@@ -190,6 +190,7 @@ async def fetch_one(sql: str, params: tuple = ()) -> Optional[Dict]:
             row = await cur.fetchone()
             return dict(row) if row else None
     finally:
+        await conn.rollback()
         await release_conn(conn)
 
 
@@ -222,4 +223,5 @@ async def fetch_val(sql: str, params: tuple = ()):
             row = await cur.fetchone()
             return row[0] if row else None
     finally:
+        await conn.rollback()
         await release_conn(conn)

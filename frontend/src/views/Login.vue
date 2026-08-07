@@ -3,7 +3,7 @@
     <div class="login-card">
       <div class="login-header">
         <el-icon :size="40" color="#409EFF"><Robot /></el-icon>
-        <h1>Agent Platform</h1>
+        <h1>{{ t('login.title') }}</h1>
         <p>AI Agent 管理平台</p>
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
@@ -29,6 +29,9 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
+
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()   // ✅ 必须解构出 t
 
 const router = useRouter()
 const userStore = useUserStore()

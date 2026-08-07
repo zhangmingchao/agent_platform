@@ -134,7 +134,7 @@ python main.py
 ### Agent
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/agents` | Agent 列表 |
+| GET | `/api/agentsList` | Agent 列表 |
 | GET | `/api/agents/{id}` | Agent 详情 |
 | POST | `/api/agents` | 创建 Agent |
 | PUT | `/api/agents/{id}` | 更新 Agent |

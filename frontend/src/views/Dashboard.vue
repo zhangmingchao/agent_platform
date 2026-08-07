@@ -98,7 +98,7 @@ const formatDate = (dateStr) => {
 onMounted(async () => {
   try {
     const [agents, skills, mcps, sessions] = await Promise.all([
-      request.get('/api/agents'),
+      request.get('/api/agentsList'),
       request.get('/api/skills'),
       request.get('/api/mcp-configs'),
       request.get('/api/sessions')

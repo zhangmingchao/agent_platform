@@ -36,7 +36,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted,onActivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
 
@@ -48,7 +48,7 @@ const formatDate = (d) => d ? new Date(d).toLocaleString('zh-CN') : ''
 const loadAgents = async () => {
   loading.value = true
   try {
-    agents.value = await request.get('/api/agents')
+    agents.value = await request.get('/api/agentsList')
   } finally {
     loading.value = false
   }
