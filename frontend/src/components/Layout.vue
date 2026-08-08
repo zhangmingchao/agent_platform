@@ -65,17 +65,21 @@
 </template>
 
 <script setup>
+// 登录后页面的通用布局逻辑：菜单高亮、标题和退出登录。
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 
+// route 读取当前地址；router 用于代码主动跳转。
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
+// 菜单根据当前 URL 自动高亮；页面标题来自路由 meta.title。
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => route.meta?.title || '')
 
+// 清空登录状态后跳转登录页。
 const handleLogout = () => {
   userStore.logout()
   router.push('/login')

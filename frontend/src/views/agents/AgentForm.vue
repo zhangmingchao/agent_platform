@@ -27,8 +27,12 @@
         <el-col :span="12">
           <el-form-item label="模型" prop="model">
             <el-select v-model="form.model" style="width: 100%">
-              <el-option value="deepseek-chat" label="deepseek-chat" />
-              <el-option value="deepseek-reasoner" label="deepseek-reasoner" />
+              <el-option
+                  v-for="item in modelOptions"
+                  :key="item.value"
+                  :value="item.value"
+                  :label="item.label"
+              />
             </el-select>
           </el-form-item>
         </el-col>
@@ -67,18 +71,21 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted,onActivated  } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '../../utils/request'
 
+// route 读取当前 URL 参数；router 用于代码中主动跳转页面。
 const route = useRoute()
 const router = useRouter()
 
+// URL 有 id（/agents/:id/edit）就是编辑模式；没有 id 就是创建模式。
 const isEdit = computed(() => !!route.params.id)
 const formRef = ref()
 const saving = ref(false)
 
+// 表单提交给后端的 Agent 配置；v-model 会直接修改这些字段。
 const form = reactive({
   name: '',
   description: '',
@@ -90,13 +97,27 @@ const form = reactive({
   mcp_ids: []
 })
 
+// Element Plus 表单校验规则。
 const rules = {
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   iteration_count: [{ required: true, message: '迭代次数必须大于0', trigger: 'blur' }],
 }
 
+const modelOptions = ref([])
+
+
+
+// 下拉框的数据源，由后端读取当前用户可用的 Skill 与 MCP。
 const skills = ref([])
 const mcps = ref([])
+
+const llmModelOptions = async () => {
+  try {
+    // 单个请求无需 Promise.all；接口返回的数据可直接作为下拉选项。
+    const llmModels = await request.get('/api/ll_models')
+    modelOptions.value = llmModels
+  } catch (e) { /* request 拦截器会统一提示错误 */ }
+}
 
 const loadData = async () => {
   try {
@@ -108,6 +129,7 @@ const loadData = async () => {
     mcps.value = mcpsList
 
     if (isEdit.value) {
+      // 编辑时额外读取 Agent 详情，并回填到同一份 form 中。
       const agent = await request.get(`/api/agents/${route.params.id}`)
       form.name = agent.name
       form.description = agent.description
@@ -115,6 +137,7 @@ const loadData = async () => {
       form.iteration_count = agent.iteration_count || 6
       form.model = agent.model
       form.temperature = agent.temperature
+      // 后端返回的是对象数组；多选框需要的是 id 数组。
       form.skill_ids = agent.skills?.map(s => s.id) || []
       form.mcp_ids = agent.mcps?.map(m => m.id) || []
     }
@@ -122,6 +145,7 @@ const loadData = async () => {
 }
 
 const handleSubmit = async () => {
+  // 先校验表单，再根据模式调用创建或更新接口。
   await formRef.value.validate()
   saving.value = true
   try {
@@ -131,6 +155,7 @@ const handleSubmit = async () => {
     } else {
       await request.post('/api/agents', form)
       ElMessage.success('创建成功')
+      // 新建成功回到列表；编辑则留在当前页面继续调整。
       router.push('/agents')
     }
   } finally {
@@ -138,7 +163,10 @@ const handleSubmit = async () => {
   }
 }
 
-onMounted(loadData)
+// onMounted 只接收一个回调，因此在同一个异步函数中加载全部页面初始数据。
+onMounted(async () => {
+  await Promise.all([loadData(), llmModelOptions()])
+})
 
 
 

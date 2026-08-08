@@ -62,12 +62,14 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
 
+// 列表、弹窗开关和当前查看的 Skill 都是页面响应式状态。
 const skills = ref([])
 const loading = ref(false)
 const showCreateDialog = ref(false)
 const showViewDialog = ref(false)
 const currentSkill = ref(null)
 
+// 新建弹窗的表单模型。
 const newSkill = reactive({ name: '', description: '', content: '' })
 
 const formatDate = (d) => d ? new Date(d).toLocaleString('zh-CN') : ''
@@ -82,6 +84,7 @@ const loadSkills = async () => {
 }
 
 const handleUpload = async (file) => {
+  // 文件上传必须使用 FormData；file.raw 是浏览器原始 File 对象。
   const formData = new FormData()
   formData.append('file', file.raw)
   try {
@@ -94,6 +97,7 @@ const handleUpload = async (file) => {
 }
 
 const handleCreate = async () => {
+  // 创建后关闭弹窗、清空表单并刷新列表。
   await request.post('/api/skills', newSkill)
   ElMessage.success('创建成功')
   showCreateDialog.value = false
@@ -104,17 +108,20 @@ const handleCreate = async () => {
 }
 
 const handleView = (row) => {
+  // 将被点击行保存起来，供“查看内容”弹窗展示。
   currentSkill.value = row
   showViewDialog.value = true
 }
 
 const handleDelete = async (row) => {
+  // 删除操作使用确认框，并在成功后重新获取数据。
   await ElMessageBox.confirm(`确定删除 Skill "${row.name}" 吗？`, '确认删除', { type: 'warning' })
   await request.delete(`/api/skills/${row.id}`)
   ElMessage.success('删除成功')
   loadSkills()
 }
 
+// 页面首次挂载时获取 Skill 列表。
 onMounted(loadSkills)
 </script>
 

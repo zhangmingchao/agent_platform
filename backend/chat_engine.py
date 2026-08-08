@@ -147,6 +147,7 @@ async def chat_stream(
     model_name = agent.get("model", DEEPSEEK_MODEL)
     temperature = agent.get("temperature", 0.7)
     system_prompt = agent.get("system_prompt", "")
+    log.info(f"model_name={model_name},system_prompt={system_prompt}")
 
     client = OpenAI(
         api_key=DEEPSEEK_API_KEY,

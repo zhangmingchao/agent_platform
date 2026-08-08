@@ -40,11 +40,14 @@ import { ref, onMounted,onActivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
 
+// 表格数据和加载状态。
 const agents = ref([])
 const loading = ref(false)
 
+// 用于表格“创建时间”列的展示。
 const formatDate = (d) => d ? new Date(d).toLocaleString('zh-CN') : ''
 
+// 从后端读取当前用户拥有的 Agent 列表。
 const loadAgents = async () => {
   loading.value = true
   try {
@@ -55,11 +58,14 @@ const loadAgents = async () => {
 }
 
 const handleDelete = async (row) => {
+  // 二次确认，避免用户误删。
   await ElMessageBox.confirm(`确定删除 Agent "${row.name}" 吗？`, '确认删除', { type: 'warning' })
+  // 删除成功后重新加载列表，保持界面与数据库一致。
   await request.delete(`/api/agents/${row.id}`)
   ElMessage.success('删除成功')
   loadAgents()
 }
 
+// 页面首次挂载时自动加载表格数据。
 onMounted(loadAgents)
 </script>

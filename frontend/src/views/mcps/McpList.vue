@@ -116,6 +116,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
 
+// MCP 列表和各类弹窗/请求状态。
 const mcps = ref([])
 const loading = ref(false)
 const dialogVisible = ref(false)
@@ -131,6 +132,7 @@ const currentTool = ref(null)
 const debugArguments = ref('{}')
 const debugResult = ref('')
 
+// 新建或编辑 MCP 时共用的表单数据。
 const form = reactive({
   name: '',
   base_url: 'http://localhost:18888',
@@ -138,12 +140,14 @@ const form = reactive({
   description: ''
 })
 
+// editingId 有值时代表编辑模式，否则代表创建模式。
 const isEdit = computed(() => !!editingId.value)
 
 const formatDate = (d) => d ? new Date(d).toLocaleString('zh-CN') : ''
 const formatJson = (value) => JSON.stringify(value, null, 2)
 
 const buildArgumentTemplate = (schema = {}) => {
+  // 根据 MCP 工具的 JSON Schema 自动生成可编辑的参数示例。
   const args = {}
   const required = new Set(schema.required || [])
   Object.entries(schema.properties || {}).forEach(([name, property]) => {
@@ -163,6 +167,7 @@ const loadMcps = async () => {
   loading.value = true
   try {
     mcps.value = await request.get('/api/mcp-configs', {
+      // 添加时间戳参数，避免浏览器或代理返回旧的缓存结果。
       params: { _t: Date.now() }
     })
   } finally {
@@ -171,6 +176,7 @@ const loadMcps = async () => {
 }
 
 const openCreateDialog = () => {
+  // 打开创建弹窗前先清空上一次遗留的表单内容。
   editingId.value = null
   form.name = ''
   form.base_url = 'http://localhost:18888'
@@ -180,6 +186,7 @@ const openCreateDialog = () => {
 }
 
 const openEditDialog = (row) => {
+  // 将当前行数据回填到表单，供用户修改。
   editingId.value = row.id
   form.name = row.name
   form.base_url = row.base_url
@@ -189,6 +196,7 @@ const openEditDialog = (row) => {
 }
 
 const loadTools = async () => {
+  // 调用后端连接 MCP Server，读取该服务对外暴露的工具列表。
   if (!currentMcp.value) return
   toolsLoading.value = true
   toolsError.value = ''
@@ -206,6 +214,7 @@ const loadTools = async () => {
 }
 
 const openToolsDialog = async (row) => {
+  // 先记录当前 MCP，再显示工具弹窗并加载其工具。
   currentMcp.value = row
   tools.value = []
   toolsDialogVisible.value = true
@@ -213,6 +222,7 @@ const openToolsDialog = async (row) => {
 }
 
 const openDebugDialog = (tool) => {
+  // 为选中的工具生成参数模板，方便直接测试调用。
   currentTool.value = tool
   debugArguments.value = buildArgumentTemplate(tool.inputSchema)
   debugResult.value = ''
@@ -220,6 +230,7 @@ const openDebugDialog = (tool) => {
 }
 
 const callTool = async () => {
+  // 文本框中的参数需要先解析并确认是 JSON 对象。
   let args
   try {
     args = JSON.parse(debugArguments.value || '{}')
@@ -234,6 +245,7 @@ const callTool = async () => {
   debugRunning.value = true
   debugResult.value = ''
   try {
+    // 将工具名与用户编辑后的参数发给后端，由后端转发到 MCP Server。
     const data = await request.post(`/api/mcp-configs/${currentMcp.value.id}/call`, {
       name: currentTool.value.name,
       arguments: args
@@ -249,6 +261,7 @@ const callTool = async () => {
 }
 
 const handleSubmit = async () => {
+  // 创建和编辑共用一个弹窗，根据 isEdit 决定调用哪个接口。
   if (isEdit.value) {
     await request.put(`/api/mcp-configs/${editingId.value}`, form)
     ElMessage.success('保存成功')
@@ -264,12 +277,14 @@ const handleSubmit = async () => {
 }
 
 const handleDelete = async (row) => {
+  // 用户确认后删除，并刷新列表。
   await ElMessageBox.confirm(`确定删除 MCP "${row.name}" 吗？`, '确认删除', { type: 'warning' })
   await request.delete(`/api/mcp-configs/${row.id}`)
   ElMessage.success('删除成功')
   loadMcps()
 }
 
+// 页面首次挂载时加载 MCP 配置。
 onMounted(loadMcps)
 </script>
 

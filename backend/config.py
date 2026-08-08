@@ -15,6 +15,14 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
+# Agent 创建页面的模型下拉选项。实际调用时仍由 Agent 保存的 model 字段决定。
+LLM_MODEL_OPTIONS = [
+    {"value": "deepseek-chat", "label": "deepseek-chat"},
+    {"value": "deepseek-reasoner", "label": "deepseek-reasoner"},
+    {"value": "deepseek-v4-flash", "label": "deepseek-v4-flash"},
+    {"value": "deepseek-v4-pro", "label": "deepseek-v4-pro"},
+]
+
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")

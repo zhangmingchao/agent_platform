@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
+from ..config import LLM_MODEL_OPTIONS
 from ..services.agent_service import create_agent, delete_agent, get_agent, list_agents, update_agent
 
 router = APIRouter(prefix="/api", tags=["Agents"])
@@ -22,6 +23,13 @@ class AgentCreate(BaseModel):
 
 class AgentUpdate(AgentCreate):
     pass
+
+
+@router.get("/ll_models")
+async def api_list_llm_models(request: Request):
+    """返回 Agent 表单可选择的模型列表。"""
+    get_current_user(request)
+    return LLM_MODEL_OPTIONS
 
 
 @router.get("/agentsList")

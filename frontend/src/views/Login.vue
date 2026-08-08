@@ -31,22 +31,29 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '../stores/user'
 
+// t 用于通过语言包 key 获取当前语言的文案。
 const { t } = useI18n()
 const router = useRouter()
+// Pinia store 统一封装登录、token 和用户信息的处理。
 const userStore = useUserStore()
 
+// 表单组件实例，用于调用 Element Plus 的 validate() 校验方法。
 const formRef = ref()
 const loading = ref(false)
+// reactive 适合响应式对象；输入框通过 v-model 双向绑定这些字段。
 const form = reactive({ username: '', password: '' })
+// rules 会传给 el-form，在提交前进行必填校验。
 const rules = {
   username: [{ required: true, message: t('login.usernameRequired'), trigger: 'blur' }],
   password: [{ required: true, message: t('login.passwordRequired'), trigger: 'blur' }]
 }
 
 const handleLogin = async () => {
+  // 没有通过校验时 validate 会抛错，后续登录请求不会执行。
   await formRef.value.validate()
   loading.value = true
   try {
+    // Store 内部请求登录接口，并将返回 token 保存到 localStorage。
     await userStore.login(form.username, form.password)
     ElMessage.success(t('login.loginSuccess'))
     router.push('/')

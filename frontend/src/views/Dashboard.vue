@@ -86,15 +86,18 @@
 import { ref, onMounted } from 'vue'
 import request from '../utils/request'
 
+// ref 创建响应式数据：修改 .value 后，模板会自动重新渲染。
 const stats = ref({ agents: 0, skills: 0, mcps: 0, sessions: 0 })
 const recentAgents = ref([])
 const recentSessions = ref([])
 
+// 将后端返回的时间字符串格式化成适合页面展示的本地时间。
 const formatDate = (dateStr) => {
   if (!dateStr) return ''
   return new Date(dateStr).toLocaleString('zh-CN')
 }
 
+// 页面首次显示后，同时加载仪表盘需要的四类数据。
 onMounted(async () => {
   try {
     const [agents, skills, mcps, sessions] = await Promise.all([
@@ -103,12 +106,14 @@ onMounted(async () => {
       request.get('/api/mcp-configs'),
       request.get('/api/sessions')
     ])
+    // 仪表盘只展示数量，因此从每个列表的 length 计算统计值。
     stats.value = {
       agents: agents.length,
       skills: skills.length,
       mcps: mcps.length,
       sessions: sessions.length
     }
+    // 接口已按时间排序，这里取前 5 条作为“最近”数据。
     recentAgents.value = agents.slice(0, 5)
     recentSessions.value = sessions.slice(0, 5)
   } catch (e) {
