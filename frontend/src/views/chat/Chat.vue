@@ -24,7 +24,11 @@
             :class="['session-item', { active: s.id === currentSessionId }]"
             @click="selectSession(s)"
           >
-            <div class="session-title">{{ s.title || '新对话' }}</div>
+
+            <div class="session-title">
+              <div>{{ s.title || '新对话' }}</div>
+              <div class="session-delete" @click.stop="deleteSession(s.id)"> 🗑️ 删除</div>
+            </div>
             <div class="session-time">{{ formatTime(s.updated_at) }}</div>
           </div>
         </div>
@@ -466,5 +470,21 @@ onMounted(async () => {
   padding: 16px;
   border-top: 1px solid #e5e7eb;
   background: #fff;
+}
+/* 删除按钮默认隐藏，且不占空间 */
+.session-delete {
+  flex-shrink: 0;          /* 不被压缩 */
+  margin-right: 8px;       /* 与内容保持间距 */
+  opacity: 0;              /* 隐藏 */
+  pointer-events: none;    /* 防止误触（但最好用 display:none） */
+  transition: opacity 0.2s;
+  color: #e74c3c;
+  font-size: 14px;
+}
+
+/* hover 时显示删除按钮 */
+.session-item:hover .session-delete {
+  opacity: 1;
+  pointer-events: auto;    /* 允许点击 */
 }
 </style>
