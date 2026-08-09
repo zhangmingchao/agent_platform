@@ -226,12 +226,19 @@ const sendMessage = async () => {
 
       for (const line of lines) {
         if (line.startsWith('data:')) {
-          const chunk = line.slice(5)
-          if (chunk === '') {
-            // `data:` 空事件是后端约定的结束标记。
-            streaming.value = false
-          } else {
-            streamingText.value += chunk
+          const payload = line.slice(5)
+          try {
+            // 新协议将内容编码为单行 JSON，因此内容中的 \n 不会破坏 SSE 分帧。
+            const event = JSON.parse(payload)
+            if (event.type === 'done') {
+              streaming.value = false
+            } else if (event.type === 'chunk') {
+              streamingText.value += event.content || ''
+            }
+          } catch (e) {
+            // 兼容后端升级前的纯文本 SSE 格式。
+            if (payload === '') streaming.value = false
+            else streamingText.value += payload
           }
         }
       }

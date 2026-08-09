@@ -1,3 +1,6 @@
+import asyncio
+import json
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -12,6 +15,7 @@ from ..services.mcp_config_service import get_agent_mcps
 from ..services.skill_service import get_agent_skills
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+log = logging.getLogger("agent-platform")
 
 
 def _now():
@@ -51,22 +55,32 @@ async def _create_chat_response(request: Request, message: str, session_id: int)
 
     async def generate():
         full_response = []
-        async for chunk in chat_stream(
-            agent=agent,
-            skills=skills_data,
-            mcp_configs=mcps_data,
-            user_message=message,
-            history_messages=history_messages,
-            session_id=session_id,
-        ):
-            if chunk.startswith("data:") and chunk != "data:\n\n":
-                # Store only the SSE payload. The trailing blank line belongs to
-                # the SSE frame and must not become part of the chat message.
-                payload = chunk[5:]
-                if payload.endswith("\n\n"):
-                    payload = payload[:-2]
-                full_response.append(payload)
-            yield chunk
+        try:
+            async for chunk in chat_stream(
+                agent=agent,
+                skills=skills_data,
+                mcp_configs=mcps_data,
+                user_message=message,
+                history_messages=history_messages,
+                session_id=session_id,
+            ):
+                if chunk.startswith("data:"):
+                    payload_text = chunk[5:]
+                    if payload_text.endswith("\n\n"):
+                        payload_text = payload_text[:-2]
+                    try:
+                        event = json.loads(payload_text)
+                        if event.get("type") == "chunk":
+                            full_response.append(event.get("content", ""))
+                    except json.JSONDecodeError:
+                        # 兼容旧版 chat_stream 产生的纯文本 SSE 数据。
+                        if payload_text:
+                            full_response.append(payload_text)
+                yield chunk
+        except asyncio.CancelledError:
+            # 用户刷新、切换页面或关闭浏览器时会取消 SSE；这是正常断开，不是服务异常。
+            log.info("[会话#%s] 客户端已断开 SSE 连接", session_id)
+            return
 
         assistant_text = "".join(full_response)
         if assistant_text.strip():

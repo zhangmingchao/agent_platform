@@ -12,10 +12,20 @@ from openai import OpenAI
 
 from .config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, MAX_TOOL_ROUNDS
 from .mcp_client import McpClient, mcp_tools_to_openai_format
+from .services.skill_service import read_skill_entrypoint, read_skill_file
 
 log = logging.getLogger("agent-platform")
 
 SEP = "━" * 60
+
+
+def _sse_event(event_type: str, content: str = "") -> str:
+    """Encode one SSE event as single-line JSON so newlines are preserved."""
+    payload = json.dumps(
+        {"type": event_type, "content": content},
+        ensure_ascii=False,
+    )
+    return f"data:{payload}\n\n"
 
 
 def _log_tool_list(tools: List[Dict]):
@@ -42,17 +52,16 @@ def _log_messages(messages: list):
 
 
 def _log_tool_call(idx: int, func_name: str, func_args: dict):
-    log.info(f"  ToolCall[{idx}] | name={func_name}")
-    log.info(f"    请求参数: {json.dumps(func_args, ensure_ascii=False)}")
+    log.info(f"  name={func_name}||请求参数: {json.dumps(func_args, ensure_ascii=False)}")
 
 
 def _log_tool_result(func_name: str, result: str, elapsed_ms: int):
-    log.info(f"  ToolResult | name={func_name} | 耗时={elapsed_ms}ms")
-    log.info(f"    返回: {result[:200]}")
+    log.info(f"  ToolResult | name={func_name} | 返回: {result}")
+
 
 
 def _log_final_response(text: str):
-    log.info(f"[LLM交互] 最终响应: {text[:200]}")
+    log.info(f"[LLM交互] 最终响应: {text}")
 
 
 def build_skill_tool(skills: List[Dict]) -> Dict:
@@ -91,13 +100,56 @@ Invoke a skill by its name to get full instructions and context for the task."""
     }
 
 
+def build_skill_file_tool(skills: List[Dict]) -> Dict:
+    """Allow the model to read referenced text files from an activated Skill package."""
+    skill_names = [skill["name"] for skill in skills]
+    return {
+        "type": "function",
+        "function": {
+            "name": "SkillFile",
+            "description": (
+                "Read a UTF-8 text file referenced by a Skill, such as "
+                "references/guide.md. Call Skill first, then read only files it references."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "enum": skill_names,
+                        "description": "The owning Skill name",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path inside the Skill package",
+                    },
+                },
+                "required": ["skill_name", "path"],
+            },
+        },
+    }
+
+
 def execute_skill(skills_map: Dict[str, Dict], command: str) -> str:
     skill = skills_map.get(command)
     if not skill:
         return f"Unknown skill: {command}"
-    content = skill["content"]
+    # Skill 的可执行内容以 data/skills/<id>/SKILL.md 为准；content 仅兼容旧数据。
+    content = read_skill_entrypoint(skill["id"], skill.get("content", ""))
     log.info(f"[Skill执行] name={command} | 内容长度={len(content)}")
     return content
+
+
+def execute_skill_file(skills_map: Dict[str, Dict], skill_name: str, path: str) -> str:
+    skill = skills_map.get(skill_name)
+    if not skill:
+        return f"Unknown skill: {skill_name}"
+    try:
+        content = read_skill_file(skill["id"], path)
+        log.info(f"[Skill文件] name={skill_name} | path={path} | 内容长度={len(content)}")
+        return content
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
 def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) -> tuple:
@@ -112,7 +164,11 @@ def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) -> tuple
         skills_map = {s["name"]: s for s in skills}
         skill_tool = build_skill_tool(skills)
         tools.append(skill_tool)
+        tools.append(build_skill_file_tool(skills))
         executors["Skill"] = lambda command: execute_skill(skills_map, command)
+        executors["SkillFile"] = lambda skill_name, path: execute_skill_file(
+            skills_map, skill_name, path
+        )
 
     for mcp_cfg in mcp_configs:
         try:
@@ -168,11 +224,11 @@ async def chat_stream(
 
     log.info(f"\n{SEP}")
     log.info(f"[会话#{session_id}] Agent={agent['name']} | 用户消息: {user_message[:80]}")
-    log.info(f"[会话#{session_id}] 历史消息={len(history_messages)} | 工具数={len(tools)}")
+    log.info(f"[会话#{session_id}] 历史消息={len(history_messages)} | 工具={json.dumps(tools)}")
 
     if not DEEPSEEK_API_KEY:
-        yield "data:API Key 未配置\n\n"
-        yield "data:\n\n"
+        yield _sse_event("chunk", "API Key 未配置")
+        yield _sse_event("done")
         return
 
     max_tool_rounds = max(1, min(int(agent.get("iteration_count") or MAX_TOOL_ROUNDS), 100))
@@ -196,18 +252,14 @@ async def chat_stream(
 
         if not assistant_msg.tool_calls:
             log.info(f"[LLM] 第{round_num}轮 → 最终响应 | 耗时={llm_elapsed}ms")
-            _log_final_response(assistant_msg.content or "")
+            final_text = assistant_msg.content or ""
+            _log_final_response(final_text)
 
-            stream = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                stream=True
-            )
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    text = chunk.choices[0].delta.content
-                    yield f"data:{text}\n\n"
-            yield "data:\n\n"
+            # 这次非流式调用已经生成了完整答案，不再重复请求一次模型。
+            # 以一个 SSE chunk 返回，避免答案不一致、双倍费用和连接取消问题。
+            if final_text:
+                yield _sse_event("chunk", final_text)
+            yield _sse_event("done")
             return
 
         tool_calls = assistant_msg.tool_calls
@@ -241,12 +293,13 @@ async def chat_stream(
             })
 
     log.warning(f"[LLM] 超过最大轮次 {max_tool_rounds}")
-    stream = client.chat.completions.create(
+    response = client.chat.completions.create(
         model=model_name,
         messages=messages,
-        stream=True
+        temperature=temperature,
+        stream=False,
     )
-    for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield f"data:{chunk.choices[0].delta.content}\n\n"
-    yield "data:\n\n"
+    final_text = response.choices[0].message.content or ""
+    if final_text:
+        yield _sse_event("chunk", final_text)
+    yield _sse_event("done")
