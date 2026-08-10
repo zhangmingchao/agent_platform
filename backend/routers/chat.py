@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -13,6 +14,7 @@ from ..database import execute, fetch_all, fetch_one
 from ..services.agent_service import get_agent
 from ..services.mcp_config_service import get_agent_mcps
 from ..services.skill_service import get_agent_skills
+from ..services.trace_service import create_trace, finish_trace
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 log = logging.getLogger("agent-platform")
@@ -52,6 +54,14 @@ async def _create_chat_response(request: Request, message: str, session_id: int)
 
     skills_data = await get_agent_skills(agent["id"])
     mcps_data = await get_agent_mcps(agent["id"])
+    trace_id = await create_trace(
+        user_id=user["user_id"],
+        agent_id=agent["id"],
+        session_id=session_id,
+        user_message=message,
+        model=agent.get("model", ""),
+    )
+    trace_started = time.time()
 
     async def generate():
         full_response = []
@@ -63,6 +73,7 @@ async def _create_chat_response(request: Request, message: str, session_id: int)
                 user_message=message,
                 history_messages=history_messages,
                 session_id=session_id,
+                trace_id=trace_id,
             ):
                 if chunk.startswith("data:"):
                     payload_text = chunk[5:]
@@ -80,7 +91,24 @@ async def _create_chat_response(request: Request, message: str, session_id: int)
         except asyncio.CancelledError:
             # 用户刷新、切换页面或关闭浏览器时会取消 SSE；这是正常断开，不是服务异常。
             log.info("[会话#%s] 客户端已断开 SSE 连接", session_id)
+            await finish_trace(
+                trace_id,
+                "cancelled",
+                output_text="".join(full_response),
+                error_text="客户端断开连接",
+                duration_ms=int((time.time() - trace_started) * 1000),
+            )
             return
+        except Exception as exc:
+            log.exception("[Trace#%s] 对话执行失败", trace_id)
+            await finish_trace(
+                trace_id,
+                "error",
+                output_text="".join(full_response),
+                error_text=str(exc),
+                duration_ms=int((time.time() - trace_started) * 1000),
+            )
+            raise
 
         assistant_text = "".join(full_response)
         if assistant_text.strip():
@@ -89,6 +117,12 @@ async def _create_chat_response(request: Request, message: str, session_id: int)
                 "VALUES (%s, %s, %s, %s)",
                 (session_id, "assistant", assistant_text, _now()),
             )
+        await finish_trace(
+            trace_id,
+            "success",
+            output_text=assistant_text,
+            duration_ms=int((time.time() - trace_started) * 1000),
+        )
 
     return StreamingResponse(
         generate(),

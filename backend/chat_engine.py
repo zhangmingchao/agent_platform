@@ -6,17 +6,28 @@ import json
 import time
 import logging
 from datetime import datetime
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Optional
 
 from openai import OpenAI
 
 from .config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, MAX_TOOL_ROUNDS
 from .mcp_client import McpClient, mcp_tools_to_openai_format
 from .services.skill_service import read_skill_entrypoint, read_skill_file
+from .services.trace_service import create_span
 
 log = logging.getLogger("agent-platform")
 
 SEP = "━" * 60
+
+
+async def _trace_span(trace_id: Optional[int], **kwargs) -> None:
+    """Trace persistence must never break the user's chat request."""
+    if not trace_id:
+        return
+    try:
+        await create_span(trace_id=trace_id, **kwargs)
+    except Exception:
+        log.exception("[Trace#%s] 写入 Span 失败", trace_id)
 
 
 def _sse_event(event_type: str, content: str = "") -> str:
@@ -196,6 +207,7 @@ async def chat_stream(
     user_message: str,
     history_messages: List[Dict],
     session_id: int,
+    trace_id: Optional[int] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Core streaming chat with multi-round tool call loop.
@@ -220,7 +232,20 @@ async def chat_stream(
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": prompt})
 
+    discovery_start = time.time()
     tools, executors = build_all_tools(agent, skills, mcp_configs)
+    await _trace_span(
+        trace_id,
+        span_type="setup",
+        name="工具发现",
+        status="success",
+        input_data={
+            "skills": [skill.get("name") for skill in skills],
+            "mcps": [mcp.get("name") for mcp in mcp_configs],
+        },
+        output_data={"tools": [tool["function"]["name"] for tool in tools]},
+        duration_ms=int((time.time() - discovery_start) * 1000),
+    )
 
     log.info(f"\n{SEP}")
     log.info(f"[会话#{session_id}] Agent={agent['name']} | 用户消息: {user_message[:80]}")
@@ -239,16 +264,39 @@ async def chat_stream(
         _log_tool_list(tools)
 
         t0 = time.time()
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=temperature,
-            stream=False
-        )
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=temperature,
+                stream=False
+            )
+        except Exception as exc:
+            await _trace_span(
+                trace_id,
+                span_type="llm",
+                name=f"LLM 第 {round_num} 轮",
+                round_no=round_num,
+                status="error",
+                input_data={"model": model_name, "messages": messages},
+                error_text=str(exc),
+                duration_ms=int((time.time() - t0) * 1000),
+            )
+            raise
         llm_elapsed = int((time.time() - t0) * 1000)
         assistant_msg = response.choices[0].message
+        await _trace_span(
+            trace_id,
+            span_type="llm",
+            name=f"LLM 第 {round_num} 轮",
+            round_no=round_num,
+            status="success",
+            input_data={"model": model_name, "messages": messages},
+            output_data=assistant_msg.model_dump(exclude_none=True),
+            duration_ms=llm_elapsed,
+        )
 
         if not assistant_msg.tool_calls:
             log.info(f"[LLM] 第{round_num}轮 → 最终响应 | 耗时={llm_elapsed}ms")
@@ -275,16 +323,36 @@ async def chat_stream(
             executor = executors.get(func_name)
             if executor:
                 tool_start = time.time()
+                tool_status = "success"
+                tool_error = ""
                 try:
                     result = executor(**func_args)
                     elapsed = int((time.time() - tool_start) * 1000)
                     result_str = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
                     _log_tool_result(func_name, result_str, elapsed)
                 except Exception as e:
+                    elapsed = int((time.time() - tool_start) * 1000)
+                    tool_status = "error"
+                    tool_error = str(e)
                     result_str = json.dumps({"error": str(e)}, ensure_ascii=False)
                     log.error(f"  工具执行异常: {e}")
             else:
+                elapsed = 0
+                tool_status = "error"
+                tool_error = f"未知工具: {func_name}"
                 result_str = json.dumps({"error": f"未知工具: {func_name}"}, ensure_ascii=False)
+
+            await _trace_span(
+                trace_id,
+                span_type="tool",
+                name=func_name,
+                round_no=round_num,
+                status=tool_status,
+                input_data=func_args,
+                output_data=result_str,
+                error_text=tool_error,
+                duration_ms=elapsed,
+            )
 
             messages.append({
                 "role": "tool",
@@ -293,13 +361,37 @@ async def chat_stream(
             })
 
     log.warning(f"[LLM] 超过最大轮次 {max_tool_rounds}")
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=messages,
-        temperature=temperature,
-        stream=False,
-    )
+    t0 = time.time()
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            temperature=temperature,
+            stream=False,
+        )
+    except Exception as exc:
+        await _trace_span(
+            trace_id,
+            span_type="llm",
+            name="LLM 最终汇总",
+            round_no=max_tool_rounds + 1,
+            status="error",
+            input_data={"model": model_name, "messages": messages},
+            error_text=str(exc),
+            duration_ms=int((time.time() - t0) * 1000),
+        )
+        raise
     final_text = response.choices[0].message.content or ""
+    await _trace_span(
+        trace_id,
+        span_type="llm",
+        name="LLM 最终汇总",
+        round_no=max_tool_rounds + 1,
+        status="success",
+        input_data={"model": model_name, "messages": messages},
+        output_data={"content": final_text},
+        duration_ms=int((time.time() - t0) * 1000),
+    )
     if final_text:
         yield _sse_event("chunk", final_text)
     yield _sse_event("done")

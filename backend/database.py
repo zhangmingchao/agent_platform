@@ -143,6 +143,48 @@ async def init_db():
                     CONSTRAINT fk_msg_session FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS trace_runs (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    agent_id INT NOT NULL,
+                    session_id INT NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'running',
+                    model VARCHAR(100),
+                    input_text LONGTEXT,
+                    output_text LONGTEXT,
+                    error_text TEXT,
+                    started_at DATETIME(6) NOT NULL,
+                    ended_at DATETIME(6),
+                    duration_ms BIGINT DEFAULT 0,
+                    created_at DATETIME(6) NOT NULL,
+                    INDEX idx_trace_user (user_id, id),
+                    INDEX idx_trace_agent (agent_id),
+                    INDEX idx_trace_session (session_id),
+                    CONSTRAINT fk_trace_user FOREIGN KEY (user_id) REFERENCES users(id),
+                    CONSTRAINT fk_trace_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_trace_session FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS trace_spans (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    trace_id BIGINT NOT NULL,
+                    span_type VARCHAR(30) NOT NULL,
+                    name VARCHAR(255) NOT NULL,
+                    round_no INT,
+                    status VARCHAR(20) NOT NULL,
+                    input_data LONGTEXT,
+                    output_data LONGTEXT,
+                    error_text TEXT,
+                    started_at DATETIME(6) NOT NULL,
+                    ended_at DATETIME(6),
+                    duration_ms BIGINT DEFAULT 0,
+                    created_at DATETIME(6) NOT NULL,
+                    INDEX idx_span_trace (trace_id, id),
+                    CONSTRAINT fk_span_trace FOREIGN KEY (trace_id) REFERENCES trace_runs(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
             ]
 
             for sql in statements:

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..auth import get_current_user
 from ..database import execute, fetch_all, fetch_one
@@ -13,8 +13,14 @@ def _now():
 
 
 @router.get("")
-async def api_list_sessions(request: Request):
+async def api_list_sessions(request: Request, agent_id: int = Query(None)):
     user = get_current_user(request)
+    if agent_id is not None:
+        return await fetch_all(
+            "SELECT id, agent_id, title, created_at, updated_at FROM chat_sessions "
+            "WHERE user_id=%s AND agent_id=%s ORDER BY updated_at DESC",
+            (user["user_id"], agent_id),
+        )
     return await fetch_all(
         "SELECT id, agent_id, title, created_at, updated_at FROM chat_sessions "
         "WHERE user_id=%s ORDER BY updated_at DESC",
@@ -29,6 +35,12 @@ async def api_create_session(request: Request):
     agent_id = body.get("agent_id")
     if not agent_id:
         raise HTTPException(status_code=400, detail="需要 agent_id")
+    agent = await fetch_one(
+        "SELECT id FROM agents WHERE id=%s AND user_id=%s",
+        (agent_id, user["user_id"]),
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent 不存在")
     session_id = await execute(
         "INSERT INTO chat_sessions (user_id, agent_id, title, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s)",
@@ -52,6 +64,12 @@ async def api_rename_session(session_id: int, request: Request):
 @router.delete("/{session_id}")
 async def api_delete_session(session_id: int, request: Request):
     user = get_current_user(request)
+    session = await fetch_one(
+        "SELECT id FROM chat_sessions WHERE id=%s AND user_id=%s",
+        (session_id, user["user_id"]),
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
     await execute(
         "DELETE FROM chat_sessions WHERE id=%s AND user_id=%s",
         (session_id, user["user_id"]),

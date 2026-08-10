@@ -21,6 +21,7 @@ from .routers.chat import router as chat_router
 from .routers.mcp_configs import router as mcp_configs_router
 from .routers.sessions import router as sessions_router
 from .routers.skills import router as skills_router
+from .routers.traces import router as traces_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,7 @@ app.include_router(skills_router)
 app.include_router(mcp_configs_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
+app.include_router(traces_router)
 
 
 @app.on_event("startup")

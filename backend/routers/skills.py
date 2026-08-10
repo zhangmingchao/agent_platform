@@ -10,6 +10,7 @@ from ..services.skill_service import (
     list_skills,
     read_skill_file,
     read_skill_archive,
+    update_skill_metadata,
     update_skill_file,
 )
 
@@ -61,6 +62,27 @@ async def api_update_skill_file(skill_id: int, file_path: str, request: Request)
 async def api_get_skill(skill_id: int, request: Request):
     user = get_current_user(request)
     skill = await get_skill(skill_id, user["user_id"])
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill 不存在")
+    return skill
+
+
+@router.put("/{skill_id}")
+async def api_update_skill(skill_id: int, request: Request):
+    user = get_current_user(request)
+    body = await request.json()
+    name = body.get("name", "")
+    description = body.get("description", "")
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=400, detail="技能名称不能为空")
+    if not isinstance(description, str):
+        raise HTTPException(status_code=400, detail="技能描述必须是字符串")
+    skill = await update_skill_metadata(
+        skill_id,
+        user["user_id"],
+        name.strip(),
+        description.strip(),
+    )
     if not skill:
         raise HTTPException(status_code=404, detail="Skill 不存在")
     return skill

@@ -24,10 +24,18 @@
             :class="['session-item', { active: s.id === currentSessionId }]"
             @click="selectSession(s)"
           >
-
-            <div class="session-title">
-              <div>{{ s.title || '新对话' }}</div>
-              <div class="session-delete" @click.stop="deleteSession(s.id)"> 🗑️ 删除</div>
+            <div class="session-title-row">
+              <div class="session-title">{{ s.title || '新对话' }}</div>
+              <el-button
+                class="session-delete"
+                type="danger"
+                link
+                size="small"
+                :disabled="streaming && s.id === currentSessionId"
+                @click.stop="deleteSession(s)"
+              >
+                删除
+              </el-button>
             </div>
             <div class="session-time">{{ formatTime(s.updated_at) }}</div>
           </div>
@@ -87,7 +95,7 @@
 <script setup>
 import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import request from '../../utils/request'
@@ -159,8 +167,10 @@ const loadAgent = async () => {
 }
 
 const loadSessions = async () => {
-  // 当前接口返回当前登录用户的会话列表。
-  sessions.value = await request.get('/api/sessions')
+  // 会话列表同时按当前用户和当前 Agent 隔离。
+  sessions.value = await request.get('/api/sessions', {
+    params: { agent_id: Number(agentId.value) }
+  })
 }
 
 const selectSession = async (session) => {
@@ -176,6 +186,35 @@ const createSession = async () => {
   currentSessionId.value = session.session_id
   messages.value = []
   await loadSessions()
+}
+
+const deleteSession = async (session) => {
+  if (streaming.value && session.id === currentSessionId.value) {
+    ElMessage.warning('当前会话正在生成回复，暂时不能删除')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除会话“${session.title || '新对话'}”吗？删除后无法恢复。`,
+      '删除会话',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch (e) {
+    return
+  }
+
+  await request.delete(`/api/sessions/${session.id}`)
+  const deletingCurrent = session.id === currentSessionId.value
+  await loadSessions()
+
+  if (deletingCurrent) {
+    currentSessionId.value = null
+    messages.value = []
+    streamingText.value = ''
+    if (sessions.value.length > 0) await selectSession(sessions.value[0])
+  }
+  ElMessage.success('会话已删除')
 }
 
 const sendMessage = async () => {
@@ -330,11 +369,18 @@ onMounted(async () => {
   border-left: 3px solid #409EFF;
 }
 .session-title {
+  min-width: 0;
+  flex: 1;
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .session-time {
   font-size: 12px;
@@ -471,20 +517,17 @@ onMounted(async () => {
   border-top: 1px solid #e5e7eb;
   background: #fff;
 }
-/* 删除按钮默认隐藏，且不占空间 */
 .session-delete {
-  flex-shrink: 0;          /* 不被压缩 */
-  margin-right: 8px;       /* 与内容保持间距 */
-  opacity: 0;              /* 隐藏 */
-  pointer-events: none;    /* 防止误触（但最好用 display:none） */
-  transition: opacity 0.2s;
-  color: #e74c3c;
-  font-size: 14px;
+  flex-shrink: 0;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s;
 }
 
-/* hover 时显示删除按钮 */
-.session-item:hover .session-delete {
+.session-item:hover .session-delete,
+.session-delete:focus {
   opacity: 1;
-  pointer-events: auto;    /* 允许点击 */
+  pointer-events: auto;
 }
 </style>

@@ -64,6 +64,26 @@ async def create_skill(user_id: int, name: str, description: str, content: str) 
     }
 
 
+async def update_skill_metadata(
+    skill_id: int,
+    user_id: int,
+    name: str,
+    description: str,
+) -> Optional[Dict]:
+    """Update the display metadata without changing the Skill package files."""
+    existing = await fetch_one(
+        "SELECT id FROM skills WHERE id=%s AND user_id=%s",
+        (skill_id, user_id),
+    )
+    if not existing:
+        return None
+    await execute(
+        "UPDATE skills SET name=%s, description=%s WHERE id=%s AND user_id=%s",
+        (name, description, skill_id, user_id),
+    )
+    return await get_skill(skill_id, user_id)
+
+
 def _decode_zip_filename(filename: str) -> str:
     """Repair UTF-8 filenames decoded as CP437 by ZIP tools without the UTF-8 flag."""
     try:
