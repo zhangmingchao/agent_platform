@@ -2,9 +2,9 @@
 
 一个完整的 AI Agent 管理平台，支持：
 - 🔐 **用户登录/注册** - JWT 认证
-- 🤖 **Agent 管理** - 创建、编辑、删除 Agent，配置系统提示词、模型、温度
-- 📝 **Skill 管理** - 上传 SKILL.md 文件，手动创建 Skill
-- 🔌 **MCP 配置** - 配置多个 MCP Server 连接，动态发现和调用工具
+- 🤖 **Agent 管理** - 创建、编辑、删除 Agent，配置系统提示词、模型、温度和工具迭代次数
+- 📝 **Skill 管理** - 上传 ZIP 技能包（`SKILL.md` + `references/`），在线编辑与 Markdown 预览
+- 🔌 **MCP 配置** - 配置多个 MCP Server，动态发现、查看和调试工具
 - 💬 **流式对话** - SSE 流式响应，多轮 Tool Call 自动循环
 - 🔎 **Trace 调用链** - 记录每次对话的 LLM 轮次、工具调用、输入输出、错误与耗时
 - 📱 **Web UI** - Vue 3 + Element Plus 前端
@@ -21,11 +21,13 @@ agent_platform/
 │   │   ├── skills.py
 │   │   ├── mcp_configs.py
 │   │   ├── sessions.py
-│   │   └── chat.py
+│   │   ├── chat.py
+│   │   └── traces.py
 │   ├── services/            # 业务服务层
 │   │   ├── agent_service.py
 │   │   ├── skill_service.py
-│   │   └── mcp_config_service.py
+│   │   ├── mcp_config_service.py
+│   │   └── trace_service.py
 │   ├── config.py            # 配置（端口、密钥、MySQL 连接）
 │   ├── database.py          # MySQL 数据库层（aiomysql）
 │   ├── auth.py              # JWT 认证
@@ -33,7 +35,7 @@ agent_platform/
 │   ├── chat_engine.py       # 流式对话核心（多轮 Tool Call）
 │   ├── requirements.txt     # Python 依赖
 │   ├── sql/init.sql         # MySQL 初始化脚本
-│   └── data/                # 上传的 Skill 文件
+│   └── data/skills/{id}/    # 解压后的 Skill 包（SKILL.md、references 等）
 ├── frontend/
 │   ├── src/
 │   │   ├── views/           # 页面组件
@@ -68,6 +70,7 @@ agent_platform/
 | Pinia | 状态管理 |
 | Vue Router | 路由 |
 | Axios | HTTP 客户端 |
+| markdown-it + DOMPurify | Markdown 渲染与安全过滤 |
 
 ## 快速开始
 
@@ -148,13 +151,19 @@ python -m backend.main
 | POST | `/api/agents` | 创建 Agent |
 | PUT | `/api/agents/{id}` | 更新 Agent |
 | DELETE | `/api/agents/{id}` | 删除 Agent |
+| GET | `/api/ll_models` | 可用模型列表 |
 
 ### Skill
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/skills` | Skill 列表 |
-| POST | `/api/skills/upload` | 上传 SKILL.md |
+| GET | `/api/skills/{id}` | Skill 详情 |
+| PUT | `/api/skills/{id}` | 更新名称和描述 |
+| POST | `/api/skills/upload` | 上传 ZIP 技能包 |
 | POST | `/api/skills` | 手动创建 Skill |
+| GET | `/api/skills/{id}/files` | 技能包文件列表 |
+| GET | `/api/skills/{id}/files/{path}` | 读取技能包文本文件 |
+| PUT | `/api/skills/{id}/files/{path}` | 更新技能包文本文件 |
 | DELETE | `/api/skills/{id}` | 删除 Skill |
 
 ### MCP 配置
@@ -164,16 +173,18 @@ python -m backend.main
 | POST | `/api/mcp-configs` | 创建 MCP 配置 |
 | PUT | `/api/mcp-configs/{id}` | 更新 MCP 配置 |
 | DELETE | `/api/mcp-configs/{id}` | 删除 MCP 配置 |
+| GET | `/api/mcp-configs/{id}/tools` | 发现 MCP 工具 |
+| POST | `/api/mcp-configs/{id}/call` | 调试调用 MCP 工具 |
 
 ### 会话 & 对话
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/sessions` | 会话列表 |
+| GET | `/api/sessions?agent_id={id}` | 按当前用户与 Agent 查询会话 |
 | POST | `/api/sessions` | 创建会话 |
 | PUT | `/api/sessions/{id}` | 重命名会话 |
 | DELETE | `/api/sessions/{id}` | 删除会话 |
 | GET | `/api/sessions/{id}/messages` | 历史消息 |
-| GET | `/api/chat/stream` | SSE 流式对话 |
+| POST | `/api/chat/stream` | SSE 流式对话（JSON 请求体） |
 
 ### Trace 调用链
 | 方法 | 路径 | 说明 |
@@ -184,10 +195,11 @@ python -m backend.main
 ## 使用流程
 
 1. **注册/登录** → 进入仪表盘
-2. **创建 Skill** → 上传 SKILL.md 或手动输入内容
-3. **配置 MCP** → 添加 MCP Server 连接信息
+2. **创建 Skill** → 上传包含 `SKILL.md` 的 ZIP 技能包，或手动创建
+3. **配置 MCP** → 添加 MCP Server，查看工具并通过 JSON 参数调试调用
 4. **创建 Agent** → 设置名称、系统提示词、最大迭代次数，并关联 Skill 和 MCP
 5. **开始对话** → 选择 Agent 创建会话，开始流式对话
+6. **查看 Trace** → 在 Trace 调用链菜单查看每轮 LLM 和工具调用详情
 
 ## 数据库结构
 
@@ -205,6 +217,34 @@ trace_spans    Trace 节点（trace_id, span_type, round_no, input/output, error
 ```
 
 `agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，默认值为 `6`。已有数据库会在后端启动时自动补充该字段。
+
+## Skill 包格式
+
+上传文件必须是 ZIP，解压后必须包含 `SKILL.md`。ZIP 可以直接包含文件，也可以包含一层外部目录；后端会自动去掉统一的外层目录。
+
+```text
+my-skill.zip
+├── SKILL.md
+└── references/
+    ├── guide.md
+    └── example.json
+```
+
+- 文件解压到 `backend/data/skills/{skill_id}/`。
+- 页面支持查看和编辑 UTF-8 文本文件，单文件上限为 1 MB。
+- `.md` 文件支持编辑、实时预览和分栏模式。
+- `SKILL.md` 是运行时指令主数据源；数据库 `skills.content` 保留兼容快照。
+- ZIP 最多包含 200 个有效文件，解压总大小不能超过 20 MB。
+
+## Trace 调用链
+
+每次用户发送消息会创建一条 `trace_runs` 记录，执行过程中的节点写入 `trace_spans`：
+
+- `setup`：Skill/MCP 工具发现结果。
+- `llm`：每轮模型输入、输出、状态和耗时。
+- `tool`：Skill、SkillFile 或 MCP 工具的参数、结果、错误和耗时。
+
+Trace 状态包括 `running`、`success`、`error` 和 `cancelled`。Trace 数据按登录用户隔离；仅新产生的对话会被记录，历史对话不会自动补录。数据库表会在后端启动时自动创建。
 
 ## 环境变量
 
