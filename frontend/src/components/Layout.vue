@@ -28,6 +28,10 @@
           <el-icon><Connection /></el-icon>
           <span>MCP 配置</span>
         </el-menu-item>
+        <el-menu-item index="/traces">
+          <el-icon><Share /></el-icon>
+          <span>Trace 调用链</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

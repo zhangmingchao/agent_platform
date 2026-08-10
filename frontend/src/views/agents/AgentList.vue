@@ -9,8 +9,16 @@
     </div>
 
     <el-table :data="agents" v-loading="loading" stripe>
-      <el-table-column prop="name" label="名称" width="180" />
-      <el-table-column prop="description" label="描述" show-overflow-tooltip />
+      <el-table-column label="名称" width="180">
+        <template #default="{ row }">
+          <InlineEdit :model-value="row.name" :maxlength="200" placeholder="未命名" @save="saveAgentField(row, 'name', $event)" />
+        </template>
+      </el-table-column>
+      <el-table-column label="描述">
+        <template #default="{ row }">
+          <InlineEdit :model-value="row.description" placeholder="暂无描述" @save="saveAgentField(row, 'description', $event)" />
+        </template>
+      </el-table-column>
       <el-table-column prop="model" label="模型" width="160" />
       <el-table-column prop="temperature" label="温度" width="100" />
       <el-table-column prop="iteration_count" label="迭代次数" width="100" />
@@ -39,6 +47,7 @@
 import { ref, onMounted,onActivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
+import InlineEdit from '../../components/InlineEdit.vue'
 
 // 表格数据和加载状态。
 const agents = ref([])
@@ -64,6 +73,32 @@ const handleDelete = async (row) => {
   await request.delete(`/api/agents/${row.id}`)
   ElMessage.success('删除成功')
   loadAgents()
+}
+
+const saveAgentField = async (row, field, value) => {
+  const originalValue = row[field] || ''
+  if (field === 'name' && !value) {
+    ElMessage.warning('Agent 名称不能为空')
+    return
+  }
+  if (value === originalValue) return
+
+  try {
+    const detail = await request.get(`/api/agents/${row.id}`)
+    const updated = await request.put(`/api/agents/${row.id}`, {
+      name: field === 'name' ? value : detail.name,
+      description: field === 'description' ? value : (detail.description || ''),
+      system_prompt: detail.system_prompt || '',
+      iteration_count: detail.iteration_count || 6,
+      model: detail.model,
+      temperature: detail.temperature,
+      skill_ids: detail.skills?.map(skill => skill.id) || [],
+      mcp_ids: detail.mcps?.map(mcp => mcp.id) || []
+    })
+    row.name = updated.name
+    row.description = updated.description
+    ElMessage.success(`${field === 'name' ? '名称' : '描述'}已保存`)
+  } catch (e) { /* request 拦截器统一提示错误 */ }
 }
 
 // 页面首次挂载时自动加载表格数据。

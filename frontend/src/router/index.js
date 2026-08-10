@@ -60,6 +60,12 @@ const routes = [
         name: 'McpList',
         component: () => import('../views/mcps/McpList.vue'),
         meta: { title: 'MCP 配置' }
+      },
+      {
+        path: 'traces',
+        name: 'TraceList',
+        component: () => import('../views/traces/TraceList.vue'),
+        meta: { title: 'Trace 调用链' }
       }
     ]
   }
