@@ -6,6 +6,7 @@
 - 📝 **Skill 管理** - 上传 SKILL.md 文件，手动创建 Skill
 - 🔌 **MCP 配置** - 配置多个 MCP Server 连接，动态发现和调用工具
 - 💬 **流式对话** - SSE 流式响应，多轮 Tool Call 自动循环
+- 🔎 **Trace 调用链** - 记录每次对话的 LLM 轮次、工具调用、输入输出、错误与耗时
 - 📱 **Web UI** - Vue 3 + Element Plus 前端
 
 ## 目录结构
@@ -174,6 +175,12 @@ python -m backend.main
 | GET | `/api/sessions/{id}/messages` | 历史消息 |
 | GET | `/api/chat/stream` | SSE 流式对话 |
 
+### Trace 调用链
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/traces` | 当前用户的 Trace 列表 |
+| GET | `/api/traces/{id}` | Trace 详情与 Span 调用链 |
+
 ## 使用流程
 
 1. **注册/登录** → 进入仪表盘
@@ -193,6 +200,8 @@ agent_skills   Agent-Skill 关联表（agent_id, skill_id）
 agent_mcps     Agent-MCP 关联表（agent_id, mcp_id）
 chat_sessions  会话表（id, user_id, agent_id, title）
 chat_messages  消息表（id, session_id, role, content）
+trace_runs     对话 Trace（user_id, agent_id, session_id, status, input/output, duration）
+trace_spans    Trace 节点（trace_id, span_type, round_no, input/output, error, duration）
 ```
 
 `agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，默认值为 `6`。已有数据库会在后端启动时自动补充该字段。

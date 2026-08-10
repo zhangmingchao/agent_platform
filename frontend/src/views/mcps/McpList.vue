@@ -9,7 +9,11 @@
     </div>
 
     <el-table :data="mcps" v-loading="loading" stripe>
-      <el-table-column prop="name" label="名称" width="180" />
+      <el-table-column label="名称" width="180">
+        <template #default="{ row }">
+          <InlineEdit :model-value="row.name" :maxlength="200" placeholder="未命名" @save="saveMcpName(row, $event)" />
+        </template>
+      </el-table-column>
       <el-table-column prop="base_url" label="服务器地址" />
       <el-table-column prop="endpoint" label="端点" width="120" />
       <el-table-column prop="description" label="描述" show-overflow-tooltip />
@@ -115,6 +119,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
+import InlineEdit from '../../components/InlineEdit.vue'
 
 // MCP 列表和各类弹窗/请求状态。
 const mcps = ref([])
@@ -282,6 +287,26 @@ const handleDelete = async (row) => {
   await request.delete(`/api/mcp-configs/${row.id}`)
   ElMessage.success('删除成功')
   loadMcps()
+}
+
+const saveMcpName = async (row, value) => {
+  const originalValue = row.name || ''
+  if (!value) {
+    ElMessage.warning('MCP 名称不能为空')
+    return
+  }
+  if (value === originalValue) return
+
+  try {
+    const updated = await request.put(`/api/mcp-configs/${row.id}`, {
+      name: value,
+      base_url: row.base_url,
+      endpoint: row.endpoint,
+      description: row.description || ''
+    })
+    row.name = updated.name
+    ElMessage.success('名称已保存')
+  } catch (e) { /* request 拦截器统一提示错误 */ }
 }
 
 // 页面首次挂载时加载 MCP 配置。
