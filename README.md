@@ -141,6 +141,7 @@ python -m backend.main
 | POST | `/api/auth/login` | 登录 |
 | POST | `/api/auth/register` | 注册 |
 | GET | `/api/auth/me` | 当前用户信息 |
+| PUT | `/api/auth/password` | 修改当前用户密码 |
 | POST | `/api/auth/logout` | 登出 |
 
 ### Agent
