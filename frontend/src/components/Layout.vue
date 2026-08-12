@@ -164,6 +164,7 @@ const submitPassword = async () => {
       current_password: updatePasswordForm.currentPassword,
       new_password: updatePasswordForm.newPassword
     })
+    userStore.logout()
     ElMessage.success('密码修改成功，请重新登录')
     showUpdatePassword.value = false
     userStore.logout()

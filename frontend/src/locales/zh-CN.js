@@ -5,10 +5,15 @@ export default {
     username: '用户名',
     password: '密码',
     loginBtn: '登录',
+    registerBtn: '注册账号',
     defaultAccount: '默认账号: admin / 123456',
     usernameRequired: '请输入用户名',
     passwordRequired: '请输入密码',
     loginSuccess: '登录成功'
+  },
+  register: {
+    title: '注册账号',
+    backToLogin: '返回登录'
   },
   dashboard: {
     agentTotal: 'Agent 总数',

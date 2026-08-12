@@ -5,10 +5,15 @@ export default {
     username: 'Username',
     password: 'Password',
     loginBtn: 'Log in',
+    registerBtn: 'Create account',
     defaultAccount: 'Default account: admin / 123456',
     usernameRequired: 'Please enter your username',
     passwordRequired: 'Please enter your password',
     loginSuccess: 'Logged in successfully'
+  },
+  register: {
+    title: 'Create account',
+    backToLogin: 'Back to login'
   },
   dashboard: {
     agentTotal: 'Total Agents',

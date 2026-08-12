@@ -16,6 +16,9 @@
         <el-button type="primary" size="large" :loading="loading" @click="handleLogin" style="width: 100%">
           {{ t('login.loginBtn') }}
         </el-button>
+        <el-button class="register-button" link type="primary" @click="router.push('/register')" >
+          {{ t('login.registerBtn') }}
+        </el-button>
         <div class="login-footer">
           <span>{{ t('login.defaultAccount') }}</span>
         </div>
@@ -58,7 +61,7 @@ const handleLogin = async () => {
     ElMessage.success(t('login.loginSuccess'))
     router.push('/')
   } catch (e) {
-    // Error handled by request interceptor
+    // 错误提示由 request 响应拦截器统一处理。
   } finally {
     loading.value = false
   }
@@ -97,5 +100,9 @@ const handleLogin = async () => {
   margin-top: 16px;
   color: #9ca3af;
   font-size: 12px;
+}
+.register-button {
+  display: flex;
+  margin: 12px auto 0;
 }
 </style>

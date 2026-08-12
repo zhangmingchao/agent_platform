@@ -21,12 +21,14 @@ request.interceptors.request.use(config => {
 request.interceptors.response.use(
   response => response.data, // 页面拿到的直接是后端 JSON 数据，而不是 Axios 完整响应对象。
   error => {
-    if (error.response?.status === 401) {
+    const isLoginRequest = error.config?.url === '/api/auth/login'
+
+    if (error.response?.status === 401 && !isLoginRequest) {
       // token 无效或过期：清理本地登录信息并跳回登录页。
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      window.location.href = '/login'
       ElMessage.error('登录已过期，请重新登录')
+      window.location.href = '/login'
     } else {
       ElMessage.error(error.response?.data?.detail || '请求失败')
     }

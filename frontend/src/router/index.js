@@ -11,6 +11,12 @@ const routes = [
     meta: { requiresAuth: false }
   },
   {
+    path: '/register',
+    name: 'Register',
+    component: () => import('../views/Register.vue'),
+    meta: { requiresAuth: false }
+  },
+  {
     path: '/',
     // Layout 是登录后页面的共同外壳，包含侧边栏、顶部栏和子页面插槽。
     component: () => import('../components/Layout.vue'),
