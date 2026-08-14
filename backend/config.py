@@ -7,7 +7,7 @@ SKILLS_DIR = os.path.join(DATA_DIR, "skills")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(SKILLS_DIR, exist_ok=True)
 
-JWT_SECRET = os.getenv("JWT_SECRET", "agent-platform-secret-2026")
+JWT_SECRET = os.getenv("JWT_SECRET", "agent-platform-secret-2026-change-me-now")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 

@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 
 # Support both `python -m backend.main` and running main.py directly from an IDE.
 if __package__ in (None, ""):
@@ -14,10 +15,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import SERVER_PORT
-from .database import init_db
+from .database import close_pool, init_db
 from .routers.agents import router as agents_router
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
+from .routers.crews import router as crews_router
+from .routers.flows import router as flows_router
 from .routers.mcp_configs import router as mcp_configs_router
 from .routers.sessions import router as sessions_router
 from .routers.skills import router as skills_router
@@ -30,21 +33,27 @@ logging.basicConfig(
 )
 log = logging.getLogger("agent-platform")
 
-app = FastAPI(title="Agent Platform")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await init_db()
+    log.info("数据库初始化完成")
+    try:
+        yield
+    finally:
+        await close_pool()
+
+
+app = FastAPI(title="Agent Platform", lifespan=lifespan)
 
 app.include_router(auth_router)
 app.include_router(agents_router)
+app.include_router(crews_router)
+app.include_router(flows_router)
 app.include_router(skills_router)
 app.include_router(mcp_configs_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(traces_router)
-
-
-@app.on_event("startup")
-async def startup():
-    await init_db()
-    log.info("数据库初始化完成")
 
 
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")

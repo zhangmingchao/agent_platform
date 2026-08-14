@@ -2,8 +2,8 @@
   <div class="chat-page">
     <div class="chat-sidebar">
       <div class="sidebar-header">
-        <h3>{{ agent?.name || '对话' }}</h3>
-        <el-button size="small" @click="$router.push('/agents')">
+        <h3>{{ target?.name || '对话' }}</h3>
+        <el-button size="small" @click="$router.push(backPath)">
           <el-icon><ArrowLeft /></el-icon>
           返回
         </el-button>
@@ -134,12 +134,14 @@ const renderMessage = (message) => message.role === 'assistant'
   ? renderMarkdown(normalizeLegacyStreamMessage(message.content))
   : escapeHtml(message.content)
 
-// 从 /agents/:id/chat 中取得当前要聊天的 Agent ID。
+// 同一个页面同时承载 Crew 和 Flow 对话，目标类型由路由 meta 指定。
 const route = useRoute()
-const agentId = computed(() => route.params.id)
+const targetId = computed(() => Number(route.params.id))
+const targetType = computed(() => route.meta.targetType)
+const backPath = computed(() => targetType.value === 'flow' ? '/flows' : '/crews')
 
 // 聊天页所有会变化的状态都放在 ref 中。
-const agent = ref(null)
+const target = ref(null)
 const sessions = ref([])
 const currentSessionId = ref(null)
 const messages = ref([])
@@ -161,15 +163,15 @@ const scrollToBottom = async () => {
   }
 }
 
-const loadAgent = async () => {
-  // 读取 Agent 信息，主要用于在侧边栏显示名称。
-  agent.value = await request.get(`/api/agents/${agentId.value}`)
+const loadTarget = async () => {
+  const resource = targetType.value === 'flow' ? 'flows' : 'crews'
+  target.value = await request.get(`/api/${resource}/${targetId.value}`)
 }
 
 const loadSessions = async () => {
-  // 会话列表同时按当前用户和当前 Agent 隔离。
+  // 会话列表按当前用户、目标类型和目标 ID 隔离。
   sessions.value = await request.get('/api/sessions', {
-    params: { agent_id: Number(agentId.value) }
+    params: { target_type: targetType.value, target_id: targetId.value }
   })
 }
 
@@ -181,8 +183,10 @@ const selectSession = async (session) => {
 }
 
 const createSession = async () => {
-  // 创建的会话会绑定当前路由中的 Agent ID。
-  const session = await request.post('/api/sessions', { agent_id: agentId.value })
+  const session = await request.post('/api/sessions', {
+    target_type: targetType.value,
+    target_id: targetId.value
+  })
   currentSessionId.value = session.session_id
   messages.value = []
   await loadSessions()
@@ -258,6 +262,7 @@ const sendMessage = async () => {
     const decoder = new TextDecoder()
 
     let buffer = ''
+    let streamError = ''
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -277,6 +282,8 @@ const sendMessage = async () => {
               streaming.value = false
             } else if (event.type === 'chunk') {
               streamingText.value += event.content || ''
+            } else if (event.type === 'error') {
+              streamError = event.content || '执行失败'
             }
           } catch (e) {
             // 兼容后端升级前的纯文本 SSE 格式。
@@ -287,6 +294,8 @@ const sendMessage = async () => {
       }
       scrollToBottom()
     }
+
+    if (streamError) throw new Error(streamError)
 
     if (streamingText.value) {
       // 流结束后，将临时展示内容转成正式历史消息。
@@ -302,9 +311,9 @@ const sendMessage = async () => {
   }
 }
 
-// 进入聊天页：加载 Agent、会话列表，并默认打开第一条会话。
+// 进入聊天页：加载执行目标、会话列表，并默认打开第一条会话。
 onMounted(async () => {
-  await loadAgent()
+  await loadTarget()
   await loadSessions()
   if (sessions.value.length > 0) {
     selectSession(sessions.value[0])

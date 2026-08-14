@@ -20,6 +20,14 @@
           <el-icon><User /></el-icon>
           <span>Agent 管理</span>
         </el-menu-item>
+        <el-menu-item index="/crews">
+          <el-icon><UserFilled /></el-icon>
+          <span>Crew 管理</span>
+        </el-menu-item>
+        <el-menu-item index="/flows">
+          <el-icon><Operation /></el-icon>
+          <span>Flow 编排</span>
+        </el-menu-item>
         <el-menu-item index="/skills">
           <el-icon><Document /></el-icon>
           <span>Skill 管理</span>
@@ -108,7 +116,10 @@ const router = useRouter()
 const userStore = useUserStore()
 
 // 菜单根据当前 URL 自动高亮；页面标题来自路由 meta.title。
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => {
+  const section = route.path.split('/')[1]
+  return section ? `/${section}` : '/dashboard'
+})
 const currentTitle = computed(() => route.meta?.title || '')
 
 const showUpdatePassword = ref(false)

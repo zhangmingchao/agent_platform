@@ -15,7 +15,8 @@
           <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="agent_name" label="Agent" width="160" show-overflow-tooltip />
+      <el-table-column label="目标类型" width="100"><template #default="{ row }"><el-tag size="small">{{ row.target_type === 'flow' ? 'Flow' : 'Crew' }}</el-tag></template></el-table-column>
+      <el-table-column prop="target_name" label="执行目标" width="180" show-overflow-tooltip />
       <el-table-column prop="session_title" label="会话" width="180" show-overflow-tooltip />
       <el-table-column prop="input_text" label="用户输入" min-width="260" show-overflow-tooltip />
       <el-table-column prop="model" label="模型" width="150" />
@@ -42,7 +43,7 @@
                 {{ statusText(currentTrace.status) }}
               </el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="Agent">{{ currentTrace.agent_name }}</el-descriptions-item>
+            <el-descriptions-item label="执行目标">{{ currentTrace.target_type === 'flow' ? 'Flow' : 'Crew' }} / {{ currentTrace.target_name }}</el-descriptions-item>
             <el-descriptions-item label="模型">{{ currentTrace.model }}</el-descriptions-item>
             <el-descriptions-item label="会话">{{ currentTrace.session_title }}</el-descriptions-item>
             <el-descriptions-item label="总耗时">{{ formatDuration(currentTrace.duration_ms) }}</el-descriptions-item>
@@ -120,7 +121,7 @@ const statusType = (status) => ({
 const statusText = (status) => ({
   success: '成功', error: '失败', cancelled: '已取消', running: '运行中'
 }[status] || status)
-const spanTypeText = (type) => ({ llm: 'LLM', tool: '工具', setup: '准备' }[type] || type)
+const spanTypeText = (type) => ({ llm: 'LLM', tool: '工具', setup: '准备', crew: 'Crew', crew_setup: 'Crew 准备', task: 'Task', flow_node: 'Flow 节点', approval: '人工审批' }[type] || type)
 const formatDuration = (ms = 0) => ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms || 0} ms`
 const formatDate = (date) => date ? new Date(date).toLocaleString('zh-CN') : '-'
 const pretty = (value) => {
