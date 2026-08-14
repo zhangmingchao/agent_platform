@@ -21,7 +21,7 @@ async def get_pool() -> aiomysql.Pool:
             user=DB_USER,
             password=DB_PASSWORD,
             charset="utf8mb4",
-            autocommit=True,
+            autocommit=False,
         )
         try:
             async with bootstrap.cursor() as cur:
