@@ -39,7 +39,7 @@ class LlmModelPayload(BaseModel):
         return value
 
 
-@router.get("")
+@router.get("list")
 async def api_list_llm_models(user: Dict = Depends(get_current_user)):
     return await list_llm_models(user["user_id"])
 

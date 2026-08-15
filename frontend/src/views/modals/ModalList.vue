@@ -40,24 +40,7 @@ const loading = ref(false)
 const load = async () => {
   loading.value = true;
   try {
-    modals.value = [
-      {
-        "id":1,
-        "name":"deepseek-1",
-        "model":"deepseek-1",
-        "enabled":true,
-        "baseUrl":"https://api.deepseek.com",
-        "apiKey":"11sdfasdfasdfasdfasdfasdfsdfsadf"
-      },
-      {
-        "id":2,
-        "name":"deepseek-2",
-        "model":"deepseek-2",
-        "enabled":false,
-        "baseUrl":"https://api.deepseek.com",
-        "apiKey":"11sdfasdfasdfasdfasdfasdfsdfsadf"
-      }
-    ]
+    modals.value = await request.get("llm-models/list")
   } finally {
     loading.value = false
   }
