@@ -67,8 +67,14 @@
             <el-avatar :icon="Robot" class="ai-avatar" />
           </div>
           <div class="message-content">
+            <div v-if="streamingStatus" class="streaming-status">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              {{ streamingStatus }}
+            </div>
             <div class="message-text markdown-body streaming-content">
-              <span v-html="renderMarkdown(streamingText)"></span><span class="cursor">|</span>
+              <span v-if="streamingText" v-html="renderMarkdown(streamingText)"></span>
+              <span v-else class="waiting-text">正在处理，请稍候…</span>
+              <span class="cursor">|</span>
             </div>
           </div>
         </div>
@@ -148,6 +154,7 @@ const messages = ref([])
 const inputText = ref('')
 const streaming = ref(false)
 const streamingText = ref('')
+const streamingStatus = ref('正在连接执行服务…')
 const messagesContainer = ref(null)
 
 const formatTime = (d) => {
@@ -238,6 +245,7 @@ const sendMessage = async () => {
 
   streaming.value = true
   streamingText.value = ''
+  streamingStatus.value = '正在连接执行服务…'
 
   try {
     // 流式接口使用 fetch，而不是 axios：fetch 可直接读取 response.body 的数据流。
@@ -263,6 +271,7 @@ const sendMessage = async () => {
 
     let buffer = ''
     let streamError = ''
+    let streamDone = false
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -279,9 +288,20 @@ const sendMessage = async () => {
             // 新协议将内容编码为单行 JSON，因此内容中的 \n 不会破坏 SSE 分帧。
             const event = JSON.parse(payload)
             if (event.type === 'done') {
-              streaming.value = false
+              streamDone = true
+              streamingStatus.value = '执行完成'
+            } else if (event.type === 'status') {
+              streamingStatus.value = event.content || '正在处理…'
+            } else if (event.type === 'phase_start') {
+              streamingText.value = ''
+              streamingStatus.value = event.content || '正在执行下一阶段…'
             } else if (event.type === 'chunk') {
               streamingText.value += event.content || ''
+              if (event.task_name) {
+                streamingStatus.value = `正在生成：${event.task_name}${event.agent_role ? `（${event.agent_role}）` : ''}`
+              }
+            } else if (event.type === 'result') {
+              streamingText.value = event.content || streamingText.value
             } else if (event.type === 'error') {
               streamError = event.content || '执行失败'
             }
@@ -296,6 +316,7 @@ const sendMessage = async () => {
     }
 
     if (streamError) throw new Error(streamError)
+    if (!streamDone) throw new Error('流式连接意外中断')
 
     if (streamingText.value) {
       // 流结束后，将临时展示内容转成正式历史消息。
@@ -307,6 +328,7 @@ const sendMessage = async () => {
     // 无论成功失败都恢复输入状态，并刷新会话标题和更新时间。
     streaming.value = false
     streamingText.value = ''
+    streamingStatus.value = ''
     loadSessions()
   }
 }
@@ -514,6 +536,15 @@ onMounted(async () => {
 .streaming-content > span:first-child {
   display: inline;
 }
+.streaming-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  color: #909399;
+  font-size: 12px;
+}
+.waiting-text { color: #909399; }
 .cursor {
   animation: blink 0.8s infinite;
 }

@@ -38,7 +38,7 @@ Flow 是持久化的图执行器，通过节点和条件边串联一个或多个
   → 保存 assistant 消息并结束 Trace
 ```
 
-CrewAI 的执行结果目前在任务完成后作为一个 SSE `chunk` 返回。接口协议仍支持多个 chunk，后续可以接入 CrewAI 原生流式事件。
+Crew 使用 CrewAI 原生 `CrewStreamingOutput`，模型生成的文本以多个 SSE `chunk` 实时返回。协议同时发送 `status`（执行状态）、`phase_start`（Task 阶段切换）、`result`（最终结果）和 `done`（流结束）。多 Task 或多 Crew Flow 切换阶段时，前端会展示当前阶段，最终以 `result` 校准并持久化完整回答。
 
 ## 3. Flow 规则
 

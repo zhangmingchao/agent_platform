@@ -85,6 +85,30 @@ async def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS llm_models (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    name VARCHAR(200) NOT NULL,
+                    model_key VARCHAR(100) NOT NULL,
+                    provider VARCHAR(30) NOT NULL DEFAULT 'openai_compatible',
+                    model_name VARCHAR(200) NOT NULL,
+                    base_url VARCHAR(500) NOT NULL,
+                    api_key_encrypted TEXT,
+                    organization VARCHAR(200) DEFAULT '',
+                    extra_headers_json LONGTEXT,
+                    timeout_seconds INT NOT NULL DEFAULT 60,
+                    max_retries INT NOT NULL DEFAULT 2,
+                    enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    is_default TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    UNIQUE KEY uk_llm_user_model_key (user_id, model_key),
+                    INDEX idx_llm_user_enabled (user_id, enabled),
+                    CONSTRAINT fk_llm_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    CHECK (provider IN ('openai', 'deepseek', 'openai_compatible'))
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS agents (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id INT NOT NULL,

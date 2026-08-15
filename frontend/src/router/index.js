@@ -114,7 +114,24 @@ const routes = [
                 name: 'TraceList',
                 component: () => import('../views/traces/TraceList.vue'),
                 meta: {title: 'Trace 调用链'}
-            }
+            },
+            {
+                path: 'modals',
+                name: 'ModalList',
+                component: () => import('../views/modals/ModalList.vue'),
+                meta: {title: '模型管理'}
+            },{
+                path: 'modals/new',
+                name: 'ModalCreate',
+                component: () => import('../views/modals/ModalForm.vue'),
+                meta: {title: '创建 模型'}
+            },{
+                // :id 是动态参数，例如 /agents/12/edit 中 route.params.id === '12'。
+                path: 'modals/:id/edit',
+                name: 'ModalEdit',
+                component: () => import('../views/modals/ModalForm.vue'),
+                meta: {title: '编辑 模型'}
+            },
         ]
     }
 ]

@@ -60,7 +60,8 @@ async def _create_chat_response(user: Dict, message: str, session_id: int):
     trace_started = time.time()
 
     async def generate():
-        full_response = []
+        current_phase_response = []
+        final_response = None
         try:
             async for chunk in chat_stream(
                 target_type=session["target_type"], target_definition=target,
@@ -70,21 +71,27 @@ async def _create_chat_response(user: Dict, message: str, session_id: int):
                 if chunk.startswith("data:"):
                     try:
                         event = json.loads(chunk[5:].strip())
-                        if event.get("type") == "chunk":
-                            full_response.append(event.get("content", ""))
+                        if event.get("type") == "phase_start":
+                            current_phase_response = []
+                        elif event.get("type") == "chunk":
+                            current_phase_response.append(event.get("content", ""))
+                        elif event.get("type") == "result":
+                            final_response = event.get("content", "")
                     except json.JSONDecodeError:
                         pass
                 yield chunk
         except asyncio.CancelledError:
-            await finish_trace(trace_id, "cancelled", "".join(full_response), "客户端断开连接", int((time.time() - trace_started) * 1000))
+            partial_response = final_response if final_response is not None else "".join(current_phase_response)
+            await finish_trace(trace_id, "cancelled", partial_response, "客户端断开连接", int((time.time() - trace_started) * 1000))
             return
         except Exception as exc:
             log.exception("[Trace#%s] CrewAI 执行失败", trace_id)
-            await finish_trace(trace_id, "error", "".join(full_response), str(exc), int((time.time() - trace_started) * 1000))
+            partial_response = final_response if final_response is not None else "".join(current_phase_response)
+            await finish_trace(trace_id, "error", partial_response, str(exc), int((time.time() - trace_started) * 1000))
             yield f"data:{json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n"
             return
 
-        assistant_text = "".join(full_response)
+        assistant_text = final_response if final_response is not None else "".join(current_phase_response)
         if assistant_text.strip():
             await execute(
                 "INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (%s, %s, %s, %s)",

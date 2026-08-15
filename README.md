@@ -32,7 +32,7 @@ Flow（跨团队业务流程）
 - MCP Server 配置、工具发现与在线调试
 - Crew 与 Task 可视化表单编排
 - Flow 节点和条件连线编排
-- Crew/Flow 会话隔离及 SSE 响应
+- CrewAI 原生 Token 流式输出、Crew/Flow 执行状态及 SSE 响应
 - Trace 调用链查看
 - 中英文 Dashboard
 
@@ -128,6 +128,8 @@ npm run build
 | 会话 | `GET/POST /api/sessions`，使用 `target_type=crew|flow` 与 `target_id` |
 | 对话 | `POST /api/chat/stream`，请求体 `{"session_id": 1, "message": "你好"}` |
 | Trace | `GET /api/traces`、`GET /api/traces/{id}` |
+
+对话 SSE 事件包括：`status`、`phase_start`、`chunk`、`result`、`error` 和 `done`。其中 `chunk` 来自 CrewAI 原生流输出，并非对完整结果进行人工切片。
 
 ## 数据库表
 

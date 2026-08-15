@@ -1,4 +1,5 @@
 """CrewAI-backed conversation runtime with Skill, MCP and Trace integration."""
+import asyncio
 import json
 import logging
 import re
@@ -18,9 +19,23 @@ from .services.trace_service import create_span
 log = logging.getLogger("agent-platform")
 
 
-def _sse_event(event_type: str, content: str = "") -> str:
-    payload = json.dumps({"type": event_type, "content": content}, ensure_ascii=False)
+def _sse_event(event_type: str, content: str = "", **metadata: Any) -> str:
+    payload = json.dumps(
+        {"type": event_type, "content": content, **metadata},
+        ensure_ascii=False,
+        default=str,
+    )
     return f"data:{payload}\n\n"
+
+
+async def _emit_runtime_event(
+    event_queue: Optional[asyncio.Queue],
+    event_type: str,
+    content: str = "",
+    **metadata: Any,
+) -> None:
+    if event_queue is not None:
+        await event_queue.put({"type": event_type, "content": content, **metadata})
 
 
 async def _trace_span(trace_id: Optional[int], **kwargs: Any) -> None:
@@ -317,6 +332,7 @@ async def run_crew(
     user_message: str,
     history_messages: List[Dict[str, str]],
     trace_id: Optional[int] = None,
+    event_queue: Optional[asyncio.Queue] = None,
 ) -> str:
     """Build and run a persisted Crew definition."""
     process_name = crew_definition.get("process", "sequential")
@@ -406,6 +422,12 @@ async def run_crew(
             "tasks": [item.get("name") for item in task_definitions],
         },
     )
+    await _emit_runtime_event(
+        event_queue,
+        "status",
+        f"正在准备 Crew：{crew_definition.get('name') or 'Crew'}",
+        stage="crew_setup",
+    )
     crew_kwargs: Dict[str, Any] = {
         "name": crew_definition.get("name") or "Crew",
         "agents": runtime_agents,
@@ -419,11 +441,63 @@ async def run_crew(
         "max_rpm": crew_definition.get("max_rpm"),
         "share_crew": False,
         "tracing": False,
+        "stream": event_queue is not None,
     }
     crew = Crew(**crew_kwargs)
     started = time.time()
     try:
-        output = await crew.kickoff_async()
+        execution = await crew.kickoff_async()
+        if event_queue is not None:
+            current_stream_phase: Optional[tuple] = None
+            async for stream_chunk in execution:
+                chunk_type = getattr(getattr(stream_chunk, "chunk_type", None), "value", "text")
+                task_index = int(getattr(stream_chunk, "task_index", 0) or 0)
+                task_name = getattr(stream_chunk, "task_name", "") or (
+                    task_definitions[task_index].get("name", "")
+                    if task_index < len(task_definitions) else ""
+                )
+                agent_role = getattr(stream_chunk, "agent_role", "") or ""
+                stream_phase = (task_index, agent_role)
+                if stream_phase != current_stream_phase:
+                    current_stream_phase = stream_phase
+                    phase_label = f"正在执行 Task：{task_name or task_index + 1}"
+                    if agent_role:
+                        phase_label += f"（{agent_role}）"
+                    await _emit_runtime_event(
+                        event_queue,
+                        "phase_start",
+                        phase_label,
+                        stage="task",
+                        task_index=task_index,
+                        task_name=task_name,
+                        agent_role=agent_role,
+                    )
+                if chunk_type == "tool_call":
+                    tool_call = getattr(stream_chunk, "tool_call", None)
+                    tool_name = getattr(tool_call, "tool_name", "") or getattr(tool_call, "name", "")
+                    await _emit_runtime_event(
+                        event_queue,
+                        "status",
+                        f"正在调用工具{f'：{tool_name}' if tool_name else ''}",
+                        stage="tool",
+                        task_name=task_name,
+                        agent_role=agent_role,
+                    )
+                    continue
+                content = getattr(stream_chunk, "content", "")
+                if content:
+                    await _emit_runtime_event(
+                        event_queue,
+                        "chunk",
+                        content,
+                        stage="task",
+                        task_index=task_index,
+                        task_name=task_name,
+                        agent_role=agent_role,
+                    )
+            output = execution.result
+        else:
+            output = execution
     except Exception as exc:
         await _flush_tool_events(trace_id, recorder.events)
         await _trace_span(
@@ -482,6 +556,7 @@ async def run_flow(
     user_message: str,
     history_messages: List[Dict[str, str]],
     trace_id: Optional[int] = None,
+    event_queue: Optional[asyncio.Queue] = None,
 ) -> str:
     """Execute a persisted Flow graph and pass state between Crew nodes."""
     from .services.crew_service import get_crew
@@ -502,13 +577,27 @@ async def run_flow(
         visited += 1
         node = nodes[current_key]
         started = time.time()
+        await _emit_runtime_event(
+            event_queue,
+            "status",
+            f"正在执行 Flow 节点：{node['name']}",
+            stage="flow_node",
+            node_key=current_key,
+            node_type=node["node_type"],
+        )
         if node["node_type"] == "crew":
             if not node.get("crew_id"):
                 raise ValueError(f"Flow 节点“{node['name']}”未配置 Crew")
             crew = await get_crew(node["crew_id"], user_id, runtime=True)
             if not crew:
                 raise ValueError(f"Flow 节点“{node['name']}”引用的 Crew 不存在")
-            state_value = await run_crew(crew, state_value, history_messages, trace_id)
+            state_value = await run_crew(
+                crew,
+                state_value,
+                history_messages,
+                trace_id,
+                event_queue,
+            )
         elif node["node_type"] == "transform":
             config = node.get("config") or {}
             state_value = f"{config.get('prefix', '')}{state_value}{config.get('suffix', '')}"
@@ -566,15 +655,44 @@ async def chat_stream(
         yield _sse_event("chunk", "API Key 未配置")
         yield _sse_event("done")
         return
-    if target_type == "crew":
-        final_text = await run_crew(target_definition, user_message, history_messages, trace_id)
-    elif target_type == "flow":
-        final_text = await run_flow(
-            target_definition, user_id, user_message, history_messages, trace_id
-        )
-    else:
+    event_queue: asyncio.Queue = asyncio.Queue()
+
+    async def execute_target() -> str:
+        if target_type == "crew":
+            return await run_crew(
+                target_definition,
+                user_message,
+                history_messages,
+                trace_id,
+                event_queue,
+            )
+        if target_type == "flow":
+            return await run_flow(
+                target_definition,
+                user_id,
+                user_message,
+                history_messages,
+                trace_id,
+                event_queue,
+            )
         raise ValueError(f"不支持的执行目标: {target_type}")
+
+    execution_task = asyncio.create_task(execute_target())
+    try:
+        while not execution_task.done() or not event_queue.empty():
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+            except asyncio.TimeoutError:
+                continue
+            yield _sse_event(
+                event.pop("type"),
+                event.pop("content", ""),
+                **event,
+            )
+        final_text = await execution_task
+    finally:
+        if not execution_task.done():
+            execution_task.cancel()
     log.info("[CrewAI][会话#%s] target=%s:%s", session_id, target_type, target_definition.get("name"))
-    if final_text:
-        yield _sse_event("chunk", final_text)
+    yield _sse_event("result", final_text or "")
     yield _sse_event("done")

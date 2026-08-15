@@ -40,6 +40,10 @@
           <el-icon><Share /></el-icon>
           <span>Trace 调用链</span>
         </el-menu-item>
+        <el-menu-item index="/modals">
+          <el-icon><Share /></el-icon>
+          <span>模型 配置</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
