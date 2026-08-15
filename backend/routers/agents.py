@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from ..auth import get_current_user
 from ..config import LLM_MODEL_OPTIONS
 from ..services.agent_service import create_agent, delete_agent, get_agent, list_agents, update_agent
+from ..services.llm_model_service import list_llm_models
 
 router = APIRouter(prefix="/api", tags=["Agents"])
 
@@ -31,6 +32,9 @@ class AgentPayload(BaseModel):
 
 @router.get("/ll_models")
 async def api_list_llm_models(user: Dict = Depends(get_current_user)):
+    models = await list_llm_models(user["user_id"], enabled_only=True)
+    if models:
+        return [{"value": m["model_key"], "label": m["name"]} for m in models]
     return LLM_MODEL_OPTIONS
 
 

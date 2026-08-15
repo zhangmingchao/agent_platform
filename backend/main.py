@@ -21,6 +21,7 @@ from .routers.auth import router as auth_router,not_auth_router as not_auth_rout
 from .routers.chat import router as chat_router
 from .routers.crews import router as crews_router
 from .routers.flows import router as flows_router
+from .routers.llm_models import router as llm_models_router
 from .routers.mcp_configs import router as mcp_configs_router
 from .routers.sessions import router as sessions_router
 from .routers.skills import router as skills_router
@@ -50,6 +51,7 @@ app.include_router(not_auth_router)
 app.include_router(agents_router)
 app.include_router(crews_router)
 app.include_router(flows_router)
+app.include_router(llm_models_router)
 app.include_router(skills_router)
 app.include_router(mcp_configs_router)
 app.include_router(sessions_router)

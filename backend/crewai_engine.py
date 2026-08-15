@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, create_model
 
 from .config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, MAX_TOOL_ROUNDS
 from .mcp_client import McpClient
+from .services.llm_model_service import get_llm_model_by_key
 from .services.skill_service import read_skill_entrypoint, read_skill_file
 from .services.trace_service import create_span
 
@@ -218,8 +219,18 @@ def _build_tools(
     return tools
 
 
-def _build_llm(agent: Dict[str, Any]) -> LLM:
+def _build_llm(agent: Dict[str, Any], llm_model: Optional[Dict[str, Any]] = None) -> LLM:
     temperature = agent.get("temperature")
+    if llm_model:
+        return LLM(
+            model=llm_model["model_name"],
+            provider="openai",
+            api_key=llm_model["api_key"],
+            base_url=llm_model["base_url"],
+            temperature=float(0.7 if temperature is None else temperature),
+            api="completions",
+            custom_openai=True,
+        )
     return LLM(
         model=agent.get("model") or DEEPSEEK_MODEL,
         provider="openai",
@@ -235,6 +246,7 @@ def _build_agent(
     definition: Dict[str, Any],
     recorder: ToolEventRecorder,
     allow_delegation: bool,
+    llm_model: Optional[Dict[str, Any]] = None,
 ) -> Agent:
     name = definition.get("name") or "Agent"
     role = definition.get("role") or name
@@ -247,7 +259,7 @@ def _build_agent(
         role=role,
         goal=description,
         backstory=backstory,
-        llm=_build_llm(definition),
+        llm=_build_llm(definition, llm_model),
         tools=_build_tools(definition, recorder),
         allow_delegation=allow_delegation or bool(definition.get("allow_delegation")),
         max_iter=max_iter,
@@ -333,13 +345,25 @@ async def run_crew(
     history_messages: List[Dict[str, str]],
     trace_id: Optional[int] = None,
     event_queue: Optional[asyncio.Queue] = None,
+    user_id: Optional[int] = None,
 ) -> str:
     """Build and run a persisted Crew definition."""
     process_name = crew_definition.get("process", "sequential")
     recorder = ToolEventRecorder()
     agent_definitions = {item["id"]: item for item in crew_definition.get("agents", [])}
+
+    llm_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    if user_id:
+        for definition in agent_definitions.values():
+            model_key = definition.get("model")
+            if model_key and model_key not in llm_cache:
+                llm_cache[model_key] = await get_llm_model_by_key(model_key, user_id)
+
     crew_agents = {
-        agent_id: _build_agent(definition, recorder, allow_delegation=False)
+        agent_id: _build_agent(
+            definition, recorder, allow_delegation=False,
+            llm_model=llm_cache.get(definition.get("model")),
+        )
         for agent_id, definition in agent_definitions.items()
     }
     if not crew_agents:
@@ -406,7 +430,10 @@ async def run_crew(
         manager_definition = agent_definitions.get(manager_id)
         if not manager_definition:
             raise ValueError("层级 Crew 缺少 Manager Agent")
-        manager_agent = _build_agent(manager_definition, recorder, allow_delegation=True)
+        manager_agent = _build_agent(
+            manager_definition, recorder, allow_delegation=True,
+            llm_model=llm_cache.get(manager_definition.get("model")),
+        )
         runtime_agents = [agent for agent_id, agent in crew_agents.items() if agent_id != manager_id]
         if not runtime_agents:
             raise ValueError("层级 Crew 缺少协作 Agent")
@@ -597,6 +624,7 @@ async def run_flow(
                 history_messages,
                 trace_id,
                 event_queue,
+                user_id,
             )
         elif node["node_type"] == "transform":
             config = node.get("config") or {}
@@ -665,6 +693,7 @@ async def chat_stream(
                 history_messages,
                 trace_id,
                 event_queue,
+                user_id,
             )
         if target_type == "flow":
             return await run_flow(
