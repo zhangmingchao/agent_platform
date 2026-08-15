@@ -31,3 +31,7 @@ DB_NAME = os.getenv("DB_NAME", "agent_platform")
 
 SERVER_PORT = int(os.getenv("SERVER_PORT", "20000"))
 MAX_TOOL_ROUNDS = 5
+
+REDIS_PORT = int(os.getenv("REDIS_PORT","6379"))
+REDIS_HOST = str(os.getenv("REDIS_HOST","127.0.0.1"))
+REDIS_DB = int(os.getenv("REDIS_DB","0"))

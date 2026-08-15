@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
@@ -37,30 +37,30 @@ class FlowPayload(BaseModel):
 
 
 @router.get("")
-async def api_list_flows(request: Request):
-    return await list_flows(get_current_user(request)["user_id"])
+async def api_list_flows(user: Dict = Depends(get_current_user)):
+    return await list_flows(user["user_id"])
 
 
 @router.get("/{flow_id}")
-async def api_get_flow(flow_id: int, request: Request):
-    flow = await get_flow(flow_id, get_current_user(request)["user_id"])
+async def api_get_flow(flow_id: int, user: Dict = Depends(get_current_user)):
+    flow = await get_flow(flow_id, user["user_id"])
     if not flow:
         raise HTTPException(status_code=404, detail="Flow 不存在")
     return flow
 
 
 @router.post("")
-async def api_create_flow(data: FlowPayload, request: Request):
+async def api_create_flow(data: FlowPayload, user: Dict = Depends(get_current_user)):
     try:
-        return await create_flow(get_current_user(request)["user_id"], data.model_dump())
+        return await create_flow(user["user_id"], data.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.put("/{flow_id}")
-async def api_update_flow(flow_id: int, data: FlowPayload, request: Request):
+async def api_update_flow(flow_id: int, data: FlowPayload, user: Dict = Depends(get_current_user)):
     try:
-        flow = await update_flow(flow_id, get_current_user(request)["user_id"], data.model_dump())
+        flow = await update_flow(flow_id, user["user_id"], data.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not flow:
@@ -69,7 +69,7 @@ async def api_update_flow(flow_id: int, data: FlowPayload, request: Request):
 
 
 @router.delete("/{flow_id}")
-async def api_delete_flow(flow_id: int, request: Request):
-    if not await delete_flow(flow_id, get_current_user(request)["user_id"]):
+async def api_delete_flow(flow_id: int, user: Dict = Depends(get_current_user)):
+    if not await delete_flow(flow_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Flow 不存在")
     return {"success": True}

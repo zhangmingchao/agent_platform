@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ..auth import get_current_user
@@ -26,11 +26,11 @@ async def _target_exists(user_id: int, target_type: str, target_id: int) -> bool
 
 @router.get("")
 async def api_list_sessions(
-    request: Request,
     target_type: Optional[Literal["crew", "flow"]] = Query(None),
     target_id: Optional[int] = Query(None),
+    user: Dict = Depends(get_current_user),
 ):
-    user_id = get_current_user(request)["user_id"]
+    user_id = user["user_id"]
     if target_type and target_id is not None:
         return await fetch_all(
             "SELECT id, target_type, target_id, title, created_at, updated_at FROM chat_sessions "
@@ -45,8 +45,8 @@ async def api_list_sessions(
 
 
 @router.post("")
-async def api_create_session(data: SessionPayload, request: Request):
-    user_id = get_current_user(request)["user_id"]
+async def api_create_session(data: SessionPayload, user: Dict = Depends(get_current_user)):
+    user_id = user["user_id"]
     if not await _target_exists(user_id, data.target_type, data.target_id):
         raise HTTPException(status_code=404, detail="执行目标不存在")
     session_id = await execute(
@@ -58,8 +58,8 @@ async def api_create_session(data: SessionPayload, request: Request):
 
 
 @router.put("/{session_id}")
-async def api_rename_session(session_id: int, request: Request):
-    user_id = get_current_user(request)["user_id"]
+async def api_rename_session(session_id: int, request: Request, user: Dict = Depends(get_current_user)):
+    user_id = user["user_id"]
     title = (await request.json()).get("title", "新对话")
     await execute(
         "UPDATE chat_sessions SET title=%s WHERE id=%s AND user_id=%s",
@@ -69,8 +69,8 @@ async def api_rename_session(session_id: int, request: Request):
 
 
 @router.delete("/{session_id}")
-async def api_delete_session(session_id: int, request: Request):
-    user_id = get_current_user(request)["user_id"]
+async def api_delete_session(session_id: int, user: Dict = Depends(get_current_user)):
+    user_id = user["user_id"]
     if not await fetch_one("SELECT id FROM chat_sessions WHERE id=%s AND user_id=%s", (session_id, user_id)):
         raise HTTPException(status_code=404, detail="会话不存在")
     await execute("DELETE FROM chat_sessions WHERE id=%s AND user_id=%s", (session_id, user_id))
@@ -78,8 +78,8 @@ async def api_delete_session(session_id: int, request: Request):
 
 
 @router.get("/{session_id}/messages")
-async def api_get_messages(session_id: int, request: Request):
-    user_id = get_current_user(request)["user_id"]
+async def api_get_messages(session_id: int, user: Dict = Depends(get_current_user)):
+    user_id = user["user_id"]
     if not await fetch_one("SELECT id FROM chat_sessions WHERE id=%s AND user_id=%s", (session_id, user_id)):
         return []
     return await fetch_all(

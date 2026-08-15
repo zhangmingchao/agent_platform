@@ -3,9 +3,9 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..auth import get_current_user
@@ -23,8 +23,7 @@ def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
-async def _create_chat_response(request: Request, message: str, session_id: int):
-    user = get_current_user(request)
+async def _create_chat_response(user: Dict, message: str, session_id: int):
     session = await fetch_one(
         "SELECT id, target_type, target_id FROM chat_sessions WHERE id=%s AND user_id=%s",
         (session_id, user["user_id"]),
@@ -99,16 +98,24 @@ async def _create_chat_response(request: Request, message: str, session_id: int)
 
 
 @router.post("/stream")
-async def api_chat_stream_post(request: Request):
+async def api_chat_stream_post(
+    request: Request,
+    user: Dict = Depends(get_current_user),
+):
     body = await request.json()
     message, session_id = body.get("message", ""), body.get("session_id")
     if not isinstance(message, str) or not message.strip():
         raise HTTPException(status_code=400, detail="消息不能为空")
     if not isinstance(session_id, int):
         raise HTTPException(status_code=400, detail="需要有效的 session_id")
-    return await _create_chat_response(request, message, session_id)
+    return await _create_chat_response(user, message, session_id)
 
 
 @router.get("/stream")
-async def api_chat_stream_get(request: Request, message: str = Query(...), session_id: int = Query(...), token: Optional[str] = Query(None)):
-    return await _create_chat_response(request, message, session_id)
+async def api_chat_stream_get(
+    message: str = Query(...),
+    session_id: int = Query(...),
+    token: Optional[str] = Query(None),
+    user: Dict = Depends(get_current_user),
+):
+    return await _create_chat_response(user, message, session_id)

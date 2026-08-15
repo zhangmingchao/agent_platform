@@ -1,6 +1,6 @@
-from typing import List
+from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
@@ -30,36 +30,35 @@ class AgentPayload(BaseModel):
 
 
 @router.get("/ll_models")
-async def api_list_llm_models(request: Request):
-    get_current_user(request)
+async def api_list_llm_models(user: Dict = Depends(get_current_user)):
     return LLM_MODEL_OPTIONS
 
 
 @router.get("/agentsList")
-async def api_list_agents(request: Request):
-    return await list_agents(get_current_user(request)["user_id"])
+async def api_list_agents(user: Dict = Depends(get_current_user)):
+    return await list_agents(user["user_id"])
 
 
 @router.get("/agents/{agent_id}")
-async def api_get_agent(agent_id: int, request: Request):
-    agent = await get_agent(agent_id, get_current_user(request)["user_id"])
+async def api_get_agent(agent_id: int, user: Dict = Depends(get_current_user)):
+    agent = await get_agent(agent_id, user["user_id"])
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
     return agent
 
 
 @router.post("/agents")
-async def api_create_agent(data: AgentPayload, request: Request):
+async def api_create_agent(data: AgentPayload, user: Dict = Depends(get_current_user)):
     try:
-        return await create_agent(get_current_user(request)["user_id"], data.model_dump())
+        return await create_agent(user["user_id"], data.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.put("/agents/{agent_id}")
-async def api_update_agent(agent_id: int, data: AgentPayload, request: Request):
+async def api_update_agent(agent_id: int, data: AgentPayload, user: Dict = Depends(get_current_user)):
     try:
-        agent = await update_agent(agent_id, get_current_user(request)["user_id"], data.model_dump())
+        agent = await update_agent(agent_id, user["user_id"], data.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not agent:
@@ -68,9 +67,9 @@ async def api_update_agent(agent_id: int, data: AgentPayload, request: Request):
 
 
 @router.delete("/agents/{agent_id}")
-async def api_delete_agent(agent_id: int, request: Request):
+async def api_delete_agent(agent_id: int, user: Dict = Depends(get_current_user)):
     try:
-        deleted = await delete_agent(agent_id, get_current_user(request)["user_id"])
+        deleted = await delete_agent(agent_id, user["user_id"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not deleted:

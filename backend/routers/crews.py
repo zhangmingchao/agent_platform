@@ -1,6 +1,6 @@
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
@@ -43,30 +43,30 @@ class CrewPayload(BaseModel):
 
 
 @router.get("")
-async def api_list_crews(request: Request):
-    return await list_crews(get_current_user(request)["user_id"])
+async def api_list_crews(user: Dict = Depends(get_current_user)):
+    return await list_crews(user["user_id"])
 
 
 @router.get("/{crew_id}")
-async def api_get_crew(crew_id: int, request: Request):
-    crew = await get_crew(crew_id, get_current_user(request)["user_id"])
+async def api_get_crew(crew_id: int, user: Dict = Depends(get_current_user)):
+    crew = await get_crew(crew_id, user["user_id"])
     if not crew:
         raise HTTPException(status_code=404, detail="Crew 不存在")
     return crew
 
 
 @router.post("")
-async def api_create_crew(data: CrewPayload, request: Request):
+async def api_create_crew(data: CrewPayload, user: Dict = Depends(get_current_user)):
     try:
-        return await create_crew(get_current_user(request)["user_id"], data.model_dump())
+        return await create_crew(user["user_id"], data.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.put("/{crew_id}")
-async def api_update_crew(crew_id: int, data: CrewPayload, request: Request):
+async def api_update_crew(crew_id: int, data: CrewPayload, user: Dict = Depends(get_current_user)):
     try:
-        crew = await update_crew(crew_id, get_current_user(request)["user_id"], data.model_dump())
+        crew = await update_crew(crew_id, user["user_id"], data.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not crew:
@@ -75,9 +75,9 @@ async def api_update_crew(crew_id: int, data: CrewPayload, request: Request):
 
 
 @router.delete("/{crew_id}")
-async def api_delete_crew(crew_id: int, request: Request):
+async def api_delete_crew(crew_id: int, user: Dict = Depends(get_current_user)):
     try:
-        deleted = await delete_crew(crew_id, get_current_user(request)["user_id"])
+        deleted = await delete_crew(crew_id, user["user_id"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not deleted:

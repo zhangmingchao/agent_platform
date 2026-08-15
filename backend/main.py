@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import SERVER_PORT
 from .database import close_pool, init_db
 from .routers.agents import router as agents_router
-from .routers.auth import router as auth_router
+from .routers.auth import router as auth_router,not_auth_router as not_auth_router
 from .routers.chat import router as chat_router
 from .routers.crews import router as crews_router
 from .routers.flows import router as flows_router
@@ -46,6 +46,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Agent Platform", lifespan=lifespan)
 
 app.include_router(auth_router)
+app.include_router(not_auth_router)
 app.include_router(agents_router)
 app.include_router(crews_router)
 app.include_router(flows_router)

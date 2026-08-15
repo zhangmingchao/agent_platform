@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 from fastapi import Request, HTTPException
 
+from .redis_config import get_str
 from .config import JWT_ALGORITHM, JWT_EXPIRE_HOURS, JWT_SECRET
 from .database import fetch_one
 
@@ -40,10 +41,13 @@ def get_current_user(request: Request) -> Dict:
 
     if not token:
         raise HTTPException(status_code=401, detail="未登录")
+    user_id = get_str(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="未登录")
 
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return {"user_id": payload["user_id"], "username": payload["username"]}
+        return {"user_id": payload["user_id"], "username": payload["username"],"token":token}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="登录已过期")
     except jwt.InvalidTokenError:
