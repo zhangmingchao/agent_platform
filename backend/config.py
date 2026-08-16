@@ -11,11 +11,11 @@ JWT_SECRET = os.getenv("JWT_SECRET", "agent-platform-secret-2026")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
+# --- LLM (DeepSeek, OpenAI-compatible) ---
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-# Agent 创建页面的模型下拉选项。实际调用时仍由 Agent 保存的 model 字段决定。
 LLM_MODEL_OPTIONS = [
     {"value": "deepseek-chat", "label": "deepseek-chat"},
     {"value": "deepseek-reasoner", "label": "deepseek-reasoner"},
@@ -23,11 +23,29 @@ LLM_MODEL_OPTIONS = [
     {"value": "deepseek-v4-pro", "label": "deepseek-v4-pro"},
 ]
 
+# --- Database ---
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "123456")
-DB_NAME = os.getenv("DB_NAME", "agent_platform_open_ai")
+DB_NAME = os.getenv("DB_NAME", "agent_platform_langchain")
 
+# --- Redis ---
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+
+# --- Server ---
 SERVER_PORT = int(os.getenv("SERVER_PORT", "20000"))
-MAX_TOOL_ROUNDS = 5
+MAX_TOOL_ROUNDS = 6
+
+# --- LangSmith (Trace) ---
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY", "")
+LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "agent-platform-langchain")
+
+if LANGSMITH_API_KEY:
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_API_KEY", LANGSMITH_API_KEY)
+    os.environ.setdefault("LANGCHAIN_PROJECT", LANGSMITH_PROJECT)
+    os.environ.setdefault("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")

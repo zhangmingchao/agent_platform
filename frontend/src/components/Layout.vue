@@ -20,6 +20,10 @@
           <el-icon><User /></el-icon>
           <span>Agent 管理</span>
         </el-menu-item>
+        <el-menu-item index="/models">
+          <el-icon><Coin /></el-icon>
+          <span>模型管理</span>
+        </el-menu-item>
         <el-menu-item index="/skills">
           <el-icon><Document /></el-icon>
           <span>Skill 管理</span>
@@ -94,20 +98,16 @@
 </template>
 
 <script setup>
-// 登录后页面的通用布局逻辑：菜单高亮、标题和退出登录。
 import {computed, reactive, ref} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import request from '../utils/request'
 import {ElMessage} from "element-plus";
 
-
-// route 读取当前地址；router 用于代码主动跳转。
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-// 菜单根据当前 URL 自动高亮；页面标题来自路由 meta.title。
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => route.meta?.title || '')
 
@@ -136,16 +136,17 @@ const rules = {
   ]
 }
 
-// 清空登录状态后跳转登录页。
-const handleLogout = () => {
+const handleLogout = async () => {
+  try {
+    await request.post('/api/auth/logout')
+  } catch (e) {
+    // token may already be expired, ignore
+  }
   userStore.logout()
   router.push('/login')
 }
 
-
-
 const submitPassword = async () => {
-  // 先校验表单
   const valid = await updatePasswordFormRef.value.validate().catch(() => false)
   if (!valid) return
 
@@ -164,19 +165,17 @@ const submitPassword = async () => {
       current_password: updatePasswordForm.currentPassword,
       new_password: updatePasswordForm.newPassword
     })
+    // Delete token from Redis
+    try { await request.post('/api/auth/logout') } catch (e) {}
     userStore.logout()
     ElMessage.success('密码修改成功，请重新登录')
     showUpdatePassword.value = false
-    userStore.logout()
     router.push('/login')
   }catch (e) {
-    // Error handled by request interceptor
   } finally {
     loading.value = false
   }
-
 }
-
 </script>
 
 <style scoped>

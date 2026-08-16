@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth import get_current_user
 from ..mcp_client import McpClient
@@ -18,20 +18,17 @@ log = logging.getLogger("agent-platform")
 
 
 async def _run_mcp_request(func, *args):
-    """Run the synchronous MCP client without blocking FastAPI's event loop."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: func(*args))
 
 
 @router.get("")
-async def api_list_mcp_configs(request: Request):
-    user = get_current_user(request)
+async def api_list_mcp_configs(user: dict = Depends(get_current_user)):
     return await list_mcp_configs(user["user_id"])
 
 
 @router.get("/{config_id}")
-async def api_get_mcp_config(config_id: int, request: Request):
-    user = get_current_user(request)
+async def api_get_mcp_config(config_id: int, user: dict = Depends(get_current_user)):
     cfg = await get_mcp_config(config_id, user["user_id"])
     if not cfg:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")
@@ -39,15 +36,13 @@ async def api_get_mcp_config(config_id: int, request: Request):
 
 
 @router.post("")
-async def api_create_mcp(request: Request):
-    user = get_current_user(request)
+async def api_create_mcp(request: Request, user: dict = Depends(get_current_user)):
     body = await request.json()
     return await create_mcp_config(user["user_id"], body)
 
 
 @router.put("/{config_id}")
-async def api_update_mcp(config_id: int, request: Request):
-    user = get_current_user(request)
+async def api_update_mcp(config_id: int, request: Request, user: dict = Depends(get_current_user)):
     body = await request.json()
     cfg = await update_mcp_config(config_id, user["user_id"], body)
     if not cfg:
@@ -56,8 +51,7 @@ async def api_update_mcp(config_id: int, request: Request):
 
 
 @router.delete("/{config_id}")
-async def api_delete_mcp(config_id: int, request: Request):
-    user = get_current_user(request)
+async def api_delete_mcp(config_id: int, user: dict = Depends(get_current_user)):
     success = await delete_mcp_config(config_id, user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")
@@ -65,8 +59,7 @@ async def api_delete_mcp(config_id: int, request: Request):
 
 
 @router.get("/{config_id}/tools")
-async def api_list_mcp_tools(config_id: int, request: Request):
-    user = get_current_user(request)
+async def api_list_mcp_tools(config_id: int, user: dict = Depends(get_current_user)):
     cfg = await get_mcp_config(config_id, user["user_id"])
     if not cfg:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")
@@ -81,8 +74,7 @@ async def api_list_mcp_tools(config_id: int, request: Request):
 
 
 @router.post("/{config_id}/call")
-async def api_call_mcp_tool(config_id: int, request: Request):
-    user = get_current_user(request)
+async def api_call_mcp_tool(config_id: int, request: Request, user: dict = Depends(get_current_user)):
     cfg = await get_mcp_config(config_id, user["user_id"])
     if not cfg:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")

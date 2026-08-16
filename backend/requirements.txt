@@ -1,8 +1,28 @@
+# Web framework
 fastapi>=0.100.0
 uvicorn>=0.20.0
-requests>=2.25.0
-PyJWT>=2.0.0
+
+# Database
 aiomysql>=0.2.0
+
+# Redis
+redis>=5.0.0
+
+# Auth
+PyJWT>=2.0.0
 cryptography>=41.0.0
+
+# File upload
 python-multipart>=0.0.5
-openai>=1.0.0
+
+# LangChain / LangGraph
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langgraph>=0.2.0
+langgraph-checkpoint>=0.0.1
+
+# LangSmith (optional, for tracing)
+langsmith>=0.1.0
+
+# HTTP client (for MCP)
+requests>=2.25.0

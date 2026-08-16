@@ -1,9 +1,10 @@
 from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ..auth import authenticate_user, create_token, get_current_user
+from ..auth import get_current_user, get_current_user_optional, login_and_store_token, logout_token
 from ..database import execute, fetch_one
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -30,15 +31,21 @@ class ChangePasswordRequest(BaseModel):
 
 @router.post("/login")
 async def api_login(req: LoginRequest):
-    user = await authenticate_user(req.username, req.password)
+    """Login — creates JWT and stores token in Redis."""
+    user = await fetch_one(
+        "SELECT id, username FROM users WHERE username=%s AND password=%s",
+        (req.username, req.password)
+    )
     if not user:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
-    token = create_token(user["id"], user["username"])
+
+    token = await login_and_store_token(user["id"], user["username"])
     return {"token": token, "user_id": user["id"], "username": user["username"]}
 
 
 @router.post("/register")
 async def api_register(req: RegisterRequest):
+    """Register — no auth required."""
     existing = await fetch_one("SELECT id FROM users WHERE username=%s", (req.username,))
     if existing:
         raise HTTPException(status_code=400, detail="用户名已存在")
@@ -50,18 +57,19 @@ async def api_register(req: RegisterRequest):
 
 
 @router.get("/me")
-async def api_me(request: Request):
-    return get_current_user(request)
+async def api_me(user: dict = Depends(get_current_user)):
+    """Get current user info — requires auth."""
+    return user
 
 
 @router.put("/password")
-async def api_change_password(data: ChangePasswordRequest, request: Request):
-    user = get_current_user(request)
-
+async def api_change_password(
+    data: ChangePasswordRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Change password — requires auth."""
     if data.new_password == data.current_password:
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
-    if not data.new_password.strip():
-        raise HTTPException(status_code=400, detail="新密码不能为空")
 
     existing = await fetch_one(
         "SELECT id FROM users WHERE id=%s AND password=%s",
@@ -82,5 +90,9 @@ async def api_change_password(data: ChangePasswordRequest, request: Request):
 
 
 @router.post("/logout")
-async def api_logout():
-    return {"success": True, "message": "请在前端清除 token"}
+async def api_logout(request: Request):
+    """Logout — deletes token from Redis. No auth required (optional auth)."""
+    deleted = await logout_token(request)
+    if deleted:
+        return {"success": True, "message": "已退出登录"}
+    return {"success": True, "message": "无需退出（未检测到有效token）"}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from ..auth import get_current_user
 from ..services.skill_service import (
@@ -18,22 +18,19 @@ router = APIRouter(prefix="/api/skills", tags=["Skills"])
 
 
 @router.get("")
-async def api_list_skills(request: Request):
-    user = get_current_user(request)
+async def api_list_skills(user: dict = Depends(get_current_user)):
     return await list_skills(user["user_id"])
 
 
 @router.get("/{skill_id}/files")
-async def api_list_skill_files(skill_id: int, request: Request):
-    user = get_current_user(request)
+async def api_list_skill_files(skill_id: int, user: dict = Depends(get_current_user)):
     if not await get_skill(skill_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Skill 不存在")
     return list_skill_files(skill_id)
 
 
 @router.get("/{skill_id}/files/{file_path:path}")
-async def api_read_skill_file(skill_id: int, file_path: str, request: Request):
-    user = get_current_user(request)
+async def api_read_skill_file(skill_id: int, file_path: str, user: dict = Depends(get_current_user)):
     if not await get_skill(skill_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Skill 不存在")
     try:
@@ -43,8 +40,12 @@ async def api_read_skill_file(skill_id: int, file_path: str, request: Request):
 
 
 @router.put("/{skill_id}/files/{file_path:path}")
-async def api_update_skill_file(skill_id: int, file_path: str, request: Request):
-    user = get_current_user(request)
+async def api_update_skill_file(
+    skill_id: int,
+    file_path: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     if not await get_skill(skill_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Skill 不存在")
     body = await request.json()
@@ -59,8 +60,7 @@ async def api_update_skill_file(skill_id: int, file_path: str, request: Request)
 
 
 @router.get("/{skill_id}")
-async def api_get_skill(skill_id: int, request: Request):
-    user = get_current_user(request)
+async def api_get_skill(skill_id: int, user: dict = Depends(get_current_user)):
     skill = await get_skill(skill_id, user["user_id"])
     if not skill:
         raise HTTPException(status_code=404, detail="Skill 不存在")
@@ -68,8 +68,11 @@ async def api_get_skill(skill_id: int, request: Request):
 
 
 @router.put("/{skill_id}")
-async def api_update_skill(skill_id: int, request: Request):
-    user = get_current_user(request)
+async def api_update_skill(
+    skill_id: int,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     body = await request.json()
     name = body.get("name", "")
     description = body.get("description", "")
@@ -90,19 +93,17 @@ async def api_update_skill(skill_id: int, request: Request):
 
 @router.post("/upload")
 async def api_upload_skill(
-    request: Request,
     file: UploadFile = File(...),
     name: str = Form(...),
     description: str = Form(...),
+    user: dict = Depends(get_current_user),
 ):
-    user = get_current_user(request)
     content = await file.read()
     filename = file.filename or ""
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     try:
         if suffix == "zip":
-            # SKILL.md 只提供实际执行内容；名称和描述由创建弹窗明确提交。
             _, _, content_text = read_skill_archive(content)
             clean_name = name.strip()
             clean_description = description.strip()
@@ -112,10 +113,8 @@ async def api_upload_skill(
                 raise ValueError("技能描述不能为空")
             skill = await create_skill(user["user_id"], clean_name, clean_description, content_text)
             try:
-                # 解压目录以数据库中的 Skill ID 命名，例如 data/skills/42/.
                 extract_skill_archive(skill["id"], content)
             except Exception:
-                # 文件解压失败时，回滚刚创建的 Skill 记录。
                 await delete_skill(skill["id"], user["user_id"])
                 raise
             return skill
@@ -126,8 +125,10 @@ async def api_upload_skill(
 
 
 @router.post("")
-async def api_create_skill(request: Request):
-    user = get_current_user(request)
+async def api_create_skill(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     body = await request.json()
     return await create_skill(
         user["user_id"],
@@ -138,8 +139,7 @@ async def api_create_skill(request: Request):
 
 
 @router.delete("/{skill_id}")
-async def api_delete_skill(skill_id: int, request: Request):
-    user = get_current_user(request)
+async def api_delete_skill(skill_id: int, user: dict = Depends(get_current_user)):
     success = await delete_skill(skill_id, user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="Skill 不存在")

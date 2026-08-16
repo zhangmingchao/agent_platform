@@ -1,7 +1,7 @@
 """
 Database layer - MySQL with aiomysql for async operations.
-Tables: users, agents, agent_skills, agent_mcps, skills, mcp_configs,
-        chat_sessions, chat_messages
+Tables: users, models, agents, agent_skills, agent_mcps, skills, mcp_configs,
+        chat_sessions, chat_messages, trace_runs, trace_spans
 """
 import aiomysql
 import logging
@@ -15,9 +15,24 @@ log = logging.getLogger("agent-platform")
 _pool: Optional[aiomysql.Pool] = None
 
 
+async def _ensure_database_exists():
+    conn = await aiomysql.connect(
+        host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD
+    )
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "CREATE DATABASE IF NOT EXISTS `%s` DEFAULT CHARACTER SET utf8mb4" % DB_NAME
+            )
+        log.info("[DB] database '%s' ensured", DB_NAME)
+    finally:
+        conn.close()
+
+
 async def get_pool() -> aiomysql.Pool:
     global _pool
     if _pool is None:
+        await _ensure_database_exists()
         _pool = await aiomysql.create_pool(
             host=DB_HOST,
             port=DB_PORT,
@@ -44,10 +59,6 @@ async def init_db():
     conn = await get_conn()
     try:
         async with conn.cursor() as cur:
-            await cur.execute("CREATE DATABASE IF NOT EXISTS `%s` DEFAULT CHARACTER SET utf8mb4" % DB_NAME)
-            await cur.execute("USE `%s`" % DB_NAME)
-            await conn.commit()
-
             statements = [
                 """
                 CREATE TABLE IF NOT EXISTS users (
@@ -58,6 +69,24 @@ async def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS models (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    name VARCHAR(100) NOT NULL,
+                    provider VARCHAR(50) DEFAULT 'openai',
+                    model_id VARCHAR(100) NOT NULL,
+                    api_key VARCHAR(500) NOT NULL,
+                    base_url VARCHAR(500) DEFAULT '',
+                    temperature FLOAT DEFAULT 0.7,
+                    max_tokens INT DEFAULT 4096,
+                    is_active TINYINT DEFAULT 1,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    INDEX idx_user (user_id),
+                    CONSTRAINT fk_model_user FOREIGN KEY (user_id) REFERENCES users(id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS agents (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id INT NOT NULL,
@@ -65,6 +94,7 @@ async def init_db():
                     description TEXT,
                     system_prompt TEXT,
                     model VARCHAR(100) DEFAULT 'deepseek-chat',
+                    model_config_id INT DEFAULT NULL,
                     temperature FLOAT DEFAULT 0.7,
                     iteration_count INT NOT NULL DEFAULT 6,
                     created_at DATETIME NOT NULL,
@@ -145,44 +175,40 @@ async def init_db():
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS trace_runs (
-                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    session_id INT,
                     user_id INT NOT NULL,
                     agent_id INT NOT NULL,
-                    session_id INT NOT NULL,
-                    status VARCHAR(20) NOT NULL DEFAULT 'running',
-                    model VARCHAR(100),
-                    input_text LONGTEXT,
-                    output_text LONGTEXT,
+                    status VARCHAR(20) DEFAULT 'running',
+                    input_text TEXT,
+                    output_text TEXT,
                     error_text TEXT,
-                    started_at DATETIME(6) NOT NULL,
-                    ended_at DATETIME(6),
-                    duration_ms BIGINT DEFAULT 0,
-                    created_at DATETIME(6) NOT NULL,
-                    INDEX idx_trace_user (user_id, id),
-                    INDEX idx_trace_agent (agent_id),
-                    INDEX idx_trace_session (session_id),
-                    CONSTRAINT fk_trace_user FOREIGN KEY (user_id) REFERENCES users(id),
-                    CONSTRAINT fk_trace_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
-                    CONSTRAINT fk_trace_session FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+                    model VARCHAR(100),
+                    total_tokens INT DEFAULT 0,
+                    total_duration_ms INT DEFAULT 0,
+                    started_at DATETIME NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    INDEX idx_session (session_id),
+                    INDEX idx_user (user_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS trace_spans (
-                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    trace_id BIGINT NOT NULL,
-                    span_type VARCHAR(30) NOT NULL,
-                    name VARCHAR(255) NOT NULL,
-                    round_no INT,
-                    status VARCHAR(20) NOT NULL,
-                    input_data LONGTEXT,
-                    output_data LONGTEXT,
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    run_id INT NOT NULL,
+                    span_type VARCHAR(50) NOT NULL,
+                    name VARCHAR(200),
+                    round_no INT DEFAULT NULL,
+                    input_data TEXT,
+                    output_data TEXT,
                     error_text TEXT,
-                    started_at DATETIME(6) NOT NULL,
-                    ended_at DATETIME(6),
-                    duration_ms BIGINT DEFAULT 0,
-                    created_at DATETIME(6) NOT NULL,
-                    INDEX idx_span_trace (trace_id, id),
-                    CONSTRAINT fk_span_trace FOREIGN KEY (trace_id) REFERENCES trace_runs(id) ON DELETE CASCADE
+                    tokens_used INT DEFAULT 0,
+                    duration_ms INT DEFAULT 0,
+                    status VARCHAR(20) DEFAULT 'running',
+                    started_at DATETIME NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    INDEX idx_run (run_id),
+                    CONSTRAINT fk_span_run FOREIGN KEY (run_id) REFERENCES trace_runs(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
             ]
@@ -190,13 +216,20 @@ async def init_db():
             for sql in statements:
                 await cur.execute(sql)
 
-            # Incremental migration for databases created before iteration_count
-            await cur.execute("SHOW COLUMNS FROM agents LIKE 'iteration_count'")
-            if not await cur.fetchone():
+            # Migration: add model_config_id to agents if missing
+            try:
                 await cur.execute(
-                    "ALTER TABLE agents ADD COLUMN iteration_count INT NOT NULL DEFAULT 6 AFTER temperature"
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='agents' AND COLUMN_NAME='model_config_id'",
+                    (DB_NAME,)
                 )
-                log.info("[DB] agents.iteration_count 字段迁移完成")
+                if not await cur.fetchone():
+                    await cur.execute(
+                        "ALTER TABLE agents ADD COLUMN model_config_id INT DEFAULT NULL AFTER model"
+                    )
+                    log.info("[DB] added model_config_id column to agents table")
+            except Exception:
+                pass
 
             now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
             await cur.execute(
@@ -208,7 +241,7 @@ async def init_db():
                 ("test", "123456", now)
             )
             await conn.commit()
-            log.info("[DB] 数据库初始化完成，默认用户: admin/123456, test/123456")
+            log.info("[DB] initialized (agent_platform_langchain), default users: admin/123456, test/123456")
     finally:
         await release_conn(conn)
 

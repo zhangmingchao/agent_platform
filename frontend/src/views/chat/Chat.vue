@@ -67,8 +67,18 @@
             <el-avatar :icon="Robot" class="ai-avatar" />
           </div>
           <div class="message-content">
-            <div class="message-text markdown-body streaming-content">
+            <div v-if="toolCalls.length > 0" class="tool-calls-panel">
+              <div v-for="(tc, i) in toolCalls" :key="i" class="tool-call-item">
+                <el-icon v-if="tc.status === 'running'"><Loading /></el-icon>
+                <el-icon v-else><Check /></el-icon>
+                <span class="tool-name">{{ tc.name }}</span>
+              </div>
+            </div>
+            <div v-if="streamingText" class="message-text markdown-body streaming-content">
               <span v-html="renderMarkdown(streamingText)"></span><span class="cursor">|</span>
+            </div>
+            <div v-else-if="toolCalls.length === 0" class="thinking-indicator">
+              AI 思考中<span class="dots">...</span>
             </div>
           </div>
         </div>
@@ -100,7 +110,6 @@ import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import request from '../../utils/request'
 
-// markdown-it 负责将 AI 返回的 Markdown 转为 HTML；禁止原始 HTML 避免直接注入。
 const markdown = new MarkdownIt({
   breaks: true,
   html: false,
@@ -108,7 +117,6 @@ const markdown = new MarkdownIt({
   typographer: true
 })
 
-// 用户消息不按 Markdown 解释，只转义为安全 HTML 并保留换行。
 const escapeHtml = (content = '') => content
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -117,14 +125,10 @@ const escapeHtml = (content = '') => content
   .replaceAll("'", '&#039;')
   .replaceAll('\n', '<br>')
 
-// DOMPurify 在 v-html 渲染前清理危险标签和属性，防止 XSS。
 const renderMarkdown = (content = '') => DOMPurify.sanitize(markdown.render(content))
 const normalizeLegacyStreamMessage = (content = '') => {
   const fragments = content.split(/\n{2,}/).filter(Boolean)
   const shortFragments = fragments.filter(fragment => fragment.trim().length <= 8)
-
-  // 兼容旧数据：旧后端曾将每段 SSE 的空行分隔符保存到数据库，
-  // 导致 Markdown 把一个回答展示成很多很短的段落。
   if (fragments.length >= 5 && shortFragments.length / fragments.length >= 0.7) {
     return fragments.join('')
   }
@@ -134,11 +138,9 @@ const renderMessage = (message) => message.role === 'assistant'
   ? renderMarkdown(normalizeLegacyStreamMessage(message.content))
   : escapeHtml(message.content)
 
-// 从 /agents/:id/chat 中取得当前要聊天的 Agent ID。
 const route = useRoute()
 const agentId = computed(() => route.params.id)
 
-// 聊天页所有会变化的状态都放在 ref 中。
 const agent = ref(null)
 const sessions = ref([])
 const currentSessionId = ref(null)
@@ -146,6 +148,7 @@ const messages = ref([])
 const inputText = ref('')
 const streaming = ref(false)
 const streamingText = ref('')
+const toolCalls = ref([])
 const messagesContainer = ref(null)
 
 const formatTime = (d) => {
@@ -154,7 +157,6 @@ const formatTime = (d) => {
 }
 
 const scrollToBottom = async () => {
-  // 等 Vue 先把新消息渲染到 DOM，再滚动到底部。
   await nextTick()
   if (messagesContainer.value) {
     messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
@@ -162,26 +164,22 @@ const scrollToBottom = async () => {
 }
 
 const loadAgent = async () => {
-  // 读取 Agent 信息，主要用于在侧边栏显示名称。
   agent.value = await request.get(`/api/agents/${agentId.value}`)
 }
 
 const loadSessions = async () => {
-  // 会话列表同时按当前用户和当前 Agent 隔离。
   sessions.value = await request.get('/api/sessions', {
     params: { agent_id: Number(agentId.value) }
   })
 }
 
 const selectSession = async (session) => {
-  // 切换会话：记录会话 ID、获取历史消息并滚动到底部。
   currentSessionId.value = session.id
   messages.value = await request.get(`/api/sessions/${session.id}/messages`)
   scrollToBottom()
 }
 
 const createSession = async () => {
-  // 创建的会话会绑定当前路由中的 Agent ID。
   const session = await request.post('/api/sessions', { agent_id: agentId.value })
   currentSessionId.value = session.session_id
   messages.value = []
@@ -193,21 +191,18 @@ const deleteSession = async (session) => {
     ElMessage.warning('当前会话正在生成回复，暂时不能删除')
     return
   }
-
   try {
     await ElMessageBox.confirm(
-      `确定删除会话“${session.title || '新对话'}”吗？删除后无法恢复。`,
+      `确定删除会话"${session.title || '新对话'}"吗？删除后无法恢复。`,
       '删除会话',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
   } catch (e) {
     return
   }
-
   await request.delete(`/api/sessions/${session.id}`)
   const deletingCurrent = session.id === currentSessionId.value
   await loadSessions()
-
   if (deletingCurrent) {
     currentSessionId.value = null
     messages.value = []
@@ -218,25 +213,22 @@ const deleteSession = async (session) => {
 }
 
 const sendMessage = async () => {
-  // 空消息或正在生成回复时，不允许再次发送。
   const text = inputText.value.trim()
   if (!text || streaming.value) return
 
   if (!currentSessionId.value) {
-    // 用户还没主动创建会话时，第一次发送消息会自动创建一个。
     await createSession()
   }
 
-  // 先乐观地显示用户消息，不必等待后端响应。
   messages.value.push({ role: 'user', content: text })
   inputText.value = ''
   scrollToBottom()
 
   streaming.value = true
   streamingText.value = ''
+  toolCalls.value = []
 
   try {
-    // 流式接口使用 fetch，而不是 axios：fetch 可直接读取 response.body 的数据流。
     const token = localStorage.getItem('token')
     const response = await fetch('/api/chat/stream', {
       method: 'POST',
@@ -253,7 +245,6 @@ const sendMessage = async () => {
       const error = await response.json().catch(() => ({}))
       throw new Error(error.detail || `请求失败（${response.status}）`)
     }
-    // reader 每次读取一小段服务端返回的 SSE 数据。
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
 
@@ -263,7 +254,6 @@ const sendMessage = async () => {
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
-      // 网络分片可能截断在一行中间，因此保留最后一段不完整数据到下一轮。
       const lines = buffer.split('\n')
       buffer = lines.pop()
 
@@ -271,15 +261,22 @@ const sendMessage = async () => {
         if (line.startsWith('data:')) {
           const payload = line.slice(5)
           try {
-            // 新协议将内容编码为单行 JSON，因此内容中的 \n 不会破坏 SSE 分帧。
             const event = JSON.parse(payload)
             if (event.type === 'done') {
               streaming.value = false
             } else if (event.type === 'chunk') {
               streamingText.value += event.content || ''
+            } else if (event.type === 'tool_start') {
+              toolCalls.value.push({ name: event.content, status: 'running' })
+              scrollToBottom()
+            } else if (event.type === 'tool_end') {
+              if (toolCalls.value.length > 0) {
+                toolCalls.value[toolCalls.value.length - 1].status = 'done'
+              }
+            } else if (event.type === 'error') {
+              ElMessage.error(event.content || '对话错误')
             }
           } catch (e) {
-            // 兼容后端升级前的纯文本 SSE 格式。
             if (payload === '') streaming.value = false
             else streamingText.value += payload
           }
@@ -289,20 +286,18 @@ const sendMessage = async () => {
     }
 
     if (streamingText.value) {
-      // 流结束后，将临时展示内容转成正式历史消息。
       messages.value.push({ role: 'assistant', content: streamingText.value })
     }
   } catch (e) {
     ElMessage.error(e.message || '对话请求失败')
   } finally {
-    // 无论成功失败都恢复输入状态，并刷新会话标题和更新时间。
     streaming.value = false
     streamingText.value = ''
+    toolCalls.value = []
     loadSessions()
   }
 }
 
-// 进入聊天页：加载 Agent、会话列表，并默认打开第一条会话。
 onMounted(async () => {
   await loadAgent()
   await loadSessions()
@@ -448,6 +443,38 @@ onMounted(async () => {
   background: #409EFF;
   color: #fff;
 }
+.tool-calls-panel {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.tool-call-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  color: #0369a1;
+}
+.tool-name {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.thinking-indicator {
+  color: #9ca3af;
+  font-size: 14px;
+  padding: 8px 0;
+}
+.dots {
+  animation: dots 1.4s infinite;
+}
+@keyframes dots {
+  0%, 20% { opacity: 0.2; }
+  50% { opacity: 1; }
+  100% { opacity: 0.2; }
+}
 .markdown-body :deep(> :first-child) {
   margin-top: 0;
 }
@@ -524,7 +551,6 @@ onMounted(async () => {
   pointer-events: none;
   transition: opacity 0.18s;
 }
-
 .session-item:hover .session-delete,
 .session-delete:focus {
   opacity: 1;
