@@ -5,11 +5,11 @@
 -- 引擎: InnoDB
 -- ============================================================
 
-CREATE DATABASE IF NOT EXISTS agent_platform
+CREATE DATABASE IF NOT EXISTS agent_platform_open_ai
     DEFAULT CHARACTER SET utf8mb4
     DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE agent_platform;
+USE agent_platform_open_ai;
 
 -- ============================================================
 -- 用户表
