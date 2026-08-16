@@ -37,11 +37,15 @@ async def finish_trace(
     output_text: str = "",
     error_text: str = "",
     duration_ms: int = 0,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
 ) -> None:
     await execute(
         "UPDATE trace_runs SET status=%s, output_text=%s, error_text=%s, ended_at=%s, "
-        "duration_ms=%s WHERE id=%s",
-        (status, output_text, error_text, _now(), duration_ms, trace_id),
+        "duration_ms=%s, prompt_tokens=%s, completion_tokens=%s, total_tokens=%s WHERE id=%s",
+        (status, output_text, error_text, _now(), duration_ms,
+         prompt_tokens, completion_tokens, total_tokens, trace_id),
     )
 
 
@@ -77,6 +81,7 @@ async def list_traces(user_id: int, limit: int = 100) -> List[Dict]:
     return await fetch_all(
         "SELECT t.id, t.target_type, t.target_id, t.target_name, t.session_id, t.status, "
         "t.model, t.input_text, t.duration_ms, t.started_at, t.ended_at, t.created_at, "
+        "t.prompt_tokens, t.completion_tokens, t.total_tokens, "
         "s.title AS session_title, "
         "(SELECT COUNT(*) FROM trace_spans sp WHERE sp.trace_id=t.id) AS span_count "
         "FROM trace_runs t JOIN chat_sessions s ON s.id=t.session_id "
@@ -98,7 +103,7 @@ async def get_trace(trace_id: int, user_id: int) -> Optional[Dict]:
         "sp.input_data, sp.output_data, sp.error_text, sp.started_at, sp.ended_at, sp.duration_ms, "
         "a.name AS agent_name, ct.name AS task_name FROM trace_spans sp "
         "LEFT JOIN agents a ON a.id=sp.agent_id LEFT JOIN crew_tasks ct ON ct.id=sp.task_id "
-        "WHERE sp.trace_id=%s ORDER BY sp.id",
+        "WHERE sp.trace_id=%s ORDER BY sp.started_at, sp.id",
         (trace_id,),
     )
     return trace

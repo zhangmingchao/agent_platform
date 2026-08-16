@@ -383,6 +383,22 @@ async def init_db():
                     continue
                 await cur.execute(sql)
 
+            # 对已存在的 trace_runs 表补齐 token 字段（升级老库用）
+            if "trace_runs" in existing_tables:
+                for col, def_sql in [
+                    ("prompt_tokens", "prompt_tokens INT DEFAULT 0"),
+                    ("completion_tokens", "completion_tokens INT DEFAULT 0"),
+                    ("total_tokens", "total_tokens INT DEFAULT 0"),
+                ]:
+                    await cur.execute(
+                        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='trace_runs' AND COLUMN_NAME=%s",
+                        (col,),
+                    )
+                    exists = (await cur.fetchone())[0]
+                    if not exists:
+                        await cur.execute(f"ALTER TABLE trace_runs ADD COLUMN {def_sql}")
+
             await cur.execute("SET sql_notes = 1")
 
             now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")

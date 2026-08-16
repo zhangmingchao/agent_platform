@@ -5,7 +5,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
 
 from crewai import Agent, Crew, LLM, Process, Task
 from crewai.tools import BaseTool
@@ -128,10 +128,97 @@ class SkillFileCommand(BaseModel):
 
 
 class ToolEventRecorder:
-    """Mutable holder kept by reference when Pydantic validates tool models."""
+    """Mutable holder kept by reference when Pydantic validates tool models.
+    Also records per-LLM-call token usage明细 and full messages/response.
+    """
 
     def __init__(self) -> None:
         self.events: List[Dict[str, Any]] = []
+        # 每次 LLM 调用的 token 明细列表
+        # 每条: {"call_index": 1, "prompt_tokens": 280, "completion_tokens": 20, "total_tokens": 300}
+        self.llm_calls: List[Dict[str, Any]] = []
+        # 每次 LLM 调用的完整 messages + response（用于 Trace 展示）
+        # 每条: {"round_no": 1, "agent_role": "...", "messages": [...], "tools": [...], "response": "...", "usage": {...}, "started_at": "...", "duration_ms": 123}
+        self.llm_call_events: List[Dict[str, Any]] = []
+        # 累计 token 数（所有 LLM 调用之和）
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._total_tokens = 0
+
+    def record_llm_call(
+        self,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+        messages: Any = None,
+        tools: Any = None,
+        response: Any = None,
+        agent_role: str = "",
+        started_at: str = "",
+    ) -> None:
+        """记录一次 LLM 调用的 token 消耗 + 原生 messages/response"""
+        if total_tokens == 0 and (prompt_tokens or completion_tokens):
+            total_tokens = prompt_tokens + completion_tokens
+        self._prompt_tokens += prompt_tokens
+        self._completion_tokens += completion_tokens
+        self._total_tokens += total_tokens
+
+        round_no = len(self.llm_calls) + 1
+        if not started_at:
+            started_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+        self.llm_calls.append({
+            "call_index": round_no,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        })
+
+        # 记录完整的 messages + response（用于 Trace 展示）
+        # messages 可能是 str 或 list[dict]，统一序列化
+        self.llm_call_events.append({
+            "round_no": round_no,
+            "agent_role": agent_role,
+            "messages": _safe_serialize(messages),
+            "tools": _safe_serialize(tools),
+            "response": _safe_serialize(response),
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            },
+            "started_at": started_at,
+            "duration_ms": 0,  # 在 hook 里补充
+        })
+
+    @property
+    def token_usage(self) -> Dict[str, int]:
+        """返回所有 LLM 调用的累计 token 数"""
+        return {
+            "prompt_tokens": self._prompt_tokens,
+            "completion_tokens": self._completion_tokens,
+            "total_tokens": self._total_tokens,
+        }
+
+
+def _safe_serialize(obj: Any) -> Any:
+    """安全序列化对象，确保能被 json.dumps 处理"""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serialize(item) for item in obj]
+    if isinstance(obj, dict):
+        return {str(k): _safe_serialize(v) for k, v in obj.items()}
+    # Pydantic model / 自定义对象 → 转 dict
+    if hasattr(obj, "model_dump"):
+        return _safe_serialize(obj.model_dump())
+    if hasattr(obj, "dict"):
+        return _safe_serialize(obj.dict())
+    if hasattr(obj, "__dict__"):
+        return _safe_serialize(obj.__dict__)
+    return str(obj)
 
 
 def _build_tools(
@@ -219,10 +306,14 @@ def _build_tools(
     return tools
 
 
-def _build_llm(agent: Dict[str, Any], llm_model: Optional[Dict[str, Any]] = None) -> LLM:
+def _build_llm(
+    agent: Dict[str, Any],
+    llm_model: Optional[Dict[str, Any]] = None,
+    recorder: Optional[ToolEventRecorder] = None,
+) -> LLM:
     temperature = agent.get("temperature")
     if llm_model:
-        return LLM(
+        llm = LLM(
             model=llm_model["model_name"],
             provider="openai",
             api_key=llm_model["api_key"],
@@ -231,15 +322,154 @@ def _build_llm(agent: Dict[str, Any], llm_model: Optional[Dict[str, Any]] = None
             api="completions",
             custom_openai=True,
         )
-    return LLM(
-        model=agent.get("model") or DEEPSEEK_MODEL,
-        provider="openai",
-        api_key=DEEPSEEK_API_KEY,
-        base_url=DEEPSEEK_BASE_URL,
-        temperature=float(0.7 if temperature is None else temperature),
-        api="completions",
-        custom_openai=True,
-    )
+    else:
+        llm = LLM(
+            model=agent.get("model") or DEEPSEEK_MODEL,
+            provider="openai",
+            api_key=DEEPSEEK_API_KEY,
+            base_url=DEEPSEEK_BASE_URL,
+            temperature=float(0.7 if temperature is None else temperature),
+            api="completions",
+            custom_openai=True,
+        )
+
+    # 如果有 recorder，hook LLM 的 call/acall 方法，记录每次调用的 token 消耗 + 原生 messages/response
+    if recorder is not None:
+        _patch_llm_for_token_tracking(llm, recorder, agent_role=agent.get("role") or agent.get("name") or "Agent")
+
+    # DeepSeek 等国内模型兼容性补丁：禁用 response_format / JSON mode
+    # CrewAI memory_extractor 在 supports_function_calling=True 时会传 response_model=Pydantic类，
+    # 底层转成 response_format={"type":"json_object"}，但 DeepSeek/通义等模型不支持 → 400报错
+    _patch_llm_for_deepseek_compat(llm)
+
+    return llm
+
+
+def _patch_llm_for_deepseek_compat(llm: LLM) -> None:
+    """LLM 兼容性补丁：让 CrewAI memory_extractor 不走 JSON response_format 路径。
+    
+    核心做法：把 supports_function_calling 改写为返回 False，
+    这样 memory/analyze.py 的 extract_memories_from_content 会走普通文本输出 + json.loads
+    的降级路径，而不是传 response_model 给 LLM.call → 触发 response_format 400。
+    注：这个补丁只影响 CrewAI "要不要用结构化输出" 的判断，不影响 Agent 正常调工具。
+    """
+    original_supports_func = getattr(llm, "supports_function_calling", None)
+    if original_supports_func is not None and callable(original_supports_func):
+        def _patched_supports_function_calling() -> bool:
+            return False
+        llm.supports_function_calling = _patched_supports_function_calling
+
+
+def _patch_llm_for_token_tracking(llm: LLM, recorder: ToolEventRecorder, agent_role: str = "") -> None:
+    """给 LLM 实例的 call/acall 方法打补丁，记录每次调用的 token 消耗 + 原生 messages/response。
+    
+    策略：
+    1. 调用前记录 llm.usage_metrics（用于算 token 差值）
+    2. 记录传入的 messages 参数（发给大模型的完整内容）
+    3. 调用后记录返回值（大模型响应内容）
+    4. 对比 usage_metrics 差值得到这次调用的 token 数
+    """
+    
+    def _extract_usage(llm_obj: Any) -> Dict[str, int]:
+        """从 LLM 实例上安全提取当前累计的 token usage。
+        
+        CrewAI 1.15+ 用 get_token_usage_summary() 方法（底层是 _token_usage 字典），
+        老版本可能用 usage_metrics 属性，两种都兼容。
+        """
+        # 方式 1：CrewAI 1.15+ 的 get_token_usage_summary() 方法
+        get_summary = getattr(llm_obj, "get_token_usage_summary", None)
+        if callable(get_summary):
+            try:
+                summary = get_summary()
+                return {
+                    "prompt_tokens": int(getattr(summary, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(getattr(summary, "completion_tokens", 0) or 0),
+                    "total_tokens": int(getattr(summary, "total_tokens", 0) or 0),
+                }
+            except Exception:
+                pass
+        # 方式 2：_token_usage 字典（CrewAI 1.15 内部属性）
+        token_usage = getattr(llm_obj, "_token_usage", None)
+        if isinstance(token_usage, dict):
+            return {
+                "prompt_tokens": int(token_usage.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(token_usage.get("completion_tokens", 0) or 0),
+                "total_tokens": int(token_usage.get("total_tokens", 0) or 0),
+            }
+        # 方式 3：老版本 usage_metrics 属性
+        usage = getattr(llm_obj, "usage_metrics", None)
+        if usage is None:
+            return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        if hasattr(usage, "prompt_tokens"):
+            return {
+                "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+            }
+        if isinstance(usage, dict):
+            return {
+                "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+                "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            }
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    # Hook 同步 call 方法
+    original_call = llm.call
+
+    def patched_call(*args: Any, **kwargs: Any) -> Any:
+        before = _extract_usage(llm)
+        call_start = time.time()
+        started_at_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+        # messages 是第一个位置参数或 kwargs 里的 messages
+        messages = args[0] if args else kwargs.get("messages")
+        tools = kwargs.get("tools")
+        result = original_call(*args, **kwargs)
+        after = _extract_usage(llm)
+        duration_ms = int((time.time() - call_start) * 1000)
+        prompt_t = max(0, after["prompt_tokens"] - before["prompt_tokens"])
+        completion_t = max(0, after["completion_tokens"] - before["completion_tokens"])
+        total_t = max(0, after["total_tokens"] - before["total_tokens"])
+        # 记录完整的 messages + response，started_at 用调用开始时的时间
+        pre_count = len(recorder.llm_call_events)
+        recorder.record_llm_call(
+            prompt_tokens=prompt_t, completion_tokens=completion_t, total_tokens=total_t,
+            messages=messages, tools=tools, response=result, agent_role=agent_role,
+            started_at=started_at_str,
+        )
+        # 补充 duration_ms
+        if len(recorder.llm_call_events) > pre_count:
+            recorder.llm_call_events[-1]["duration_ms"] = duration_ms
+        return result
+
+    llm.call = patched_call
+
+    # Hook 异步 acall 方法（kickoff_async 走的是这个）
+    original_acall = getattr(llm, "acall", None)
+    if original_acall and asyncio.iscoroutinefunction(original_acall):
+        async def patched_acall(*args: Any, **kwargs: Any) -> Any:
+            before = _extract_usage(llm)
+            call_start = time.time()
+            started_at_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+            # messages 是第一个位置参数或 kwargs 里的 messages
+            messages = args[0] if args else kwargs.get("messages")
+            tools = kwargs.get("tools")
+            result = await original_acall(*args, **kwargs)
+            after = _extract_usage(llm)
+            duration_ms = int((time.time() - call_start) * 1000)
+            prompt_t = max(0, after["prompt_tokens"] - before["prompt_tokens"])
+            completion_t = max(0, after["completion_tokens"] - before["completion_tokens"])
+            total_t = max(0, after["total_tokens"] - before["total_tokens"])
+            pre_count = len(recorder.llm_call_events)
+            recorder.record_llm_call(
+                prompt_tokens=prompt_t, completion_tokens=completion_t, total_tokens=total_t,
+                messages=messages, tools=tools, response=result, agent_role=agent_role,
+                started_at=started_at_str,
+            )
+            if len(recorder.llm_call_events) > pre_count:
+                recorder.llm_call_events[-1]["duration_ms"] = duration_ms
+            return result
+        llm.acall = patched_acall
 
 
 def _build_agent(
@@ -259,7 +489,7 @@ def _build_agent(
         role=role,
         goal=description,
         backstory=backstory,
-        llm=_build_llm(definition, llm_model),
+        llm=_build_llm(definition, llm_model, recorder=recorder),
         tools=_build_tools(definition, recorder),
         allow_delegation=allow_delegation or bool(definition.get("allow_delegation")),
         max_iter=max_iter,
@@ -305,6 +535,29 @@ async def _flush_tool_events(trace_id: Optional[int], events: List[Dict[str, Any
         )
 
 
+async def _flush_llm_call_events(trace_id: Optional[int], events: List[Dict[str, Any]]) -> None:
+    """把每次 LLM 调用的完整 messages + response 写入 trace_spans"""
+    for event in events:
+        await _trace_span(
+            trace_id,
+            span_type="llm_call",
+            name=f"LLM Call #{event['round_no']} · {event['agent_role']}",
+            round_no=event["round_no"],
+            status="success",
+            input_data={
+                "agent_role": event["agent_role"],
+                "messages": event["messages"],
+                "tools": event["tools"],
+            },
+            output_data={
+                "response": event["response"],
+                "usage": event["usage"],
+            },
+            started_at=event["started_at"],
+            duration_ms=event.get("duration_ms", 0),
+        )
+
+
 def _render_task_text(template: str, user_message: str, history_messages: List[Dict[str, str]]) -> str:
     history = "\n".join(
         f"{item.get('role', 'user')}: {item.get('content', '')}" for item in history_messages
@@ -346,8 +599,12 @@ async def run_crew(
     trace_id: Optional[int] = None,
     event_queue: Optional[asyncio.Queue] = None,
     user_id: Optional[int] = None,
-) -> str:
-    """Build and run a persisted Crew definition."""
+) -> Tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+    """Build and run a persisted Crew definition.
+    Returns (final_text, token_usage_dict, llm_calls_list) where:
+    - token_usage_dict has keys: prompt_tokens, completion_tokens, total_tokens
+    - llm_calls_list is the per-LLM-call明细 (每次 LLM 调用的 token 分解)
+    """
     process_name = crew_definition.get("process", "sequential")
     recorder = ToolEventRecorder()
     agent_definitions = {item["id"]: item for item in crew_definition.get("agents", [])}
@@ -553,6 +810,7 @@ async def run_crew(
 
             # 流式遍历结束后，从 execution.result 拿最终完整结果
             output = execution.result
+            
 
         # ===== 非流式模式：直接拿 execution 作为结果（不需要推事件） =====
         else:
@@ -560,8 +818,9 @@ async def run_crew(
 
     # ===== 异常处理：记录错误到 Trace，然后向上抛 =====
     except Exception as exc:
-        # 先把已缓存的工具调用事件写到 trace_spans（保证部分 trace 不丢）
+        # 先把已缓存的工具调用事件 + LLM 调用事件写到 trace_spans（保证部分 trace 不丢）
         await _flush_tool_events(trace_id, recorder.events)
+        await _flush_llm_call_events(trace_id, recorder.llm_call_events)
         # 写一条 status=error 的 crew span，记录失败信息
         await _trace_span(
             trace_id,
@@ -575,6 +834,7 @@ async def run_crew(
         raise   # 重新抛出异常，让上层（chat_stream）处理 SSE 错误推送
 
     await _flush_tool_events(trace_id, recorder.events)
+    await _flush_llm_call_events(trace_id, recorder.llm_call_events)
     for definition, task_output in zip(task_definitions, getattr(output, "tasks_output", [])):
         await _trace_span(
             trace_id,
@@ -587,16 +847,44 @@ async def run_crew(
             output_data={"content": getattr(task_output, "raw", str(task_output))},
         )
     final_text = output.raw if hasattr(output, "raw") else str(output)
+
+    # 优先用 recorder 记录的 per-call token 明细（通过 hook LLM.call/acall 得到，最精确）
+    # 如果 recorder 没记录到（比如 LLM 实例没有 usage_metrics 属性），回退到 execution.token_usage
+    if recorder.llm_calls:
+        token_usage = recorder.token_usage
+    else:
+        # 回退方案：从 CrewAI 的 execution.token_usage 里提取
+        usage_obj = getattr(output, "token_usage", None) or {}
+        if hasattr(usage_obj, "prompt_tokens"):
+            prompt_tokens = int(getattr(usage_obj, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage_obj, "completion_tokens", 0) or 0)
+            total_tokens = int(getattr(usage_obj, "total_tokens", 0) or 0)
+        elif isinstance(usage_obj, dict):
+            prompt_tokens = int(usage_obj.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage_obj.get("completion_tokens", 0) or 0)
+            total_tokens = int(usage_obj.get("total_tokens", 0) or 0)
+        else:
+            prompt_tokens = 0
+            completion_tokens = 0
+            total_tokens = 0
+        if total_tokens == 0 and (prompt_tokens or completion_tokens):
+            total_tokens = prompt_tokens + completion_tokens
+        token_usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+
     await _trace_span(
         trace_id,
         span_type="crew",
         name=f"Crew · {crew_definition.get('name')}",
         status="success",
         input_data={"message": user_message},
-        output_data={"content": final_text},
+        output_data={"content": final_text, "token_usage": token_usage, "llm_calls": recorder.llm_calls},
         duration_ms=int((time.time() - started) * 1000),
     )
-    return final_text
+    return final_text, token_usage, recorder.llm_calls
 
 
 def _edge_matches(edge: Dict[str, Any], value: str) -> bool:
@@ -620,8 +908,12 @@ async def run_flow(
     history_messages: List[Dict[str, str]],
     trace_id: Optional[int] = None,
     event_queue: Optional[asyncio.Queue] = None,
-) -> str:
-    """Execute a persisted Flow graph and pass state between Crew nodes."""
+) -> Tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+    """Execute a persisted Flow graph and pass state between Crew nodes.
+    Returns (final_text, token_usage_dict, llm_calls_list) where:
+    - token_usage_dict accumulates prompt/completion/total tokens from all Crew nodes
+    - llm_calls_list is the per-LLM-call明细 from all Crew nodes
+    """
     from .services.crew_service import get_crew
 
     nodes = {item["node_key"]: item for item in flow_definition.get("nodes", [])}
@@ -636,6 +928,9 @@ async def run_flow(
     state_value = user_message
     visited = 0
     max_steps = max(1, len(nodes) * 3)
+    # 汇总所有 Crew 节点的 token 消耗
+    flow_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    flow_llm_calls: List[Dict[str, Any]] = []   # 所有 Crew 节点的 per-call 明细
     while current_key and visited < max_steps:
         visited += 1
         node = nodes[current_key]
@@ -654,7 +949,7 @@ async def run_flow(
             crew = await get_crew(node["crew_id"], user_id, runtime=True)
             if not crew:
                 raise ValueError(f"Flow 节点“{node['name']}”引用的 Crew 不存在")
-            state_value = await run_crew(
+            state_value, crew_usage, crew_llm_calls = await run_crew(
                 crew,
                 state_value,
                 history_messages,
@@ -662,6 +957,13 @@ async def run_flow(
                 event_queue,
                 user_id,
             )
+            flow_usage["prompt_tokens"] += crew_usage.get("prompt_tokens", 0)
+            flow_usage["completion_tokens"] += crew_usage.get("completion_tokens", 0)
+            flow_usage["total_tokens"] += crew_usage.get("total_tokens", 0)
+            # 给 per-call 明细加上节点名前缀，方便区分是哪个 Crew 节点产生的
+            for call in crew_llm_calls:
+                call["flow_node"] = node["name"]
+                flow_llm_calls.append(call)
         elif node["node_type"] == "transform":
             config = node.get("config") or {}
             state_value = f"{config.get('prefix', '')}{state_value}{config.get('suffix', '')}"
@@ -682,7 +984,7 @@ async def run_flow(
                 name=f"Flow · {node['name']}",
                 status="success",
                 input_data={"node_type": "end"},
-                output_data={"content": state_value},
+                output_data={"content": state_value, "token_usage": flow_usage},
                 duration_ms=int((time.time() - started) * 1000),
             )
             break
@@ -703,7 +1005,7 @@ async def run_flow(
         current_key = next_edge["target_key"] if next_edge else None
     if visited >= max_steps and current_key:
         raise ValueError("Flow 超过最大节点执行次数，请检查循环配置")
-    return state_value
+    return state_value, flow_usage, flow_llm_calls
 
 
 async def chat_stream(
@@ -732,8 +1034,8 @@ async def chat_stream(
     event_queue: asyncio.Queue = asyncio.Queue()
 
     # 后台执行任务：根据 target_type 调 run_crew 或 run_flow
-    # 返回值是最终完整文本（run_crew/run_flow 内部会通过 event_queue 推实时事件）
-    async def execute_target() -> str:
+    # 返回值是 (最终文本, token_usage_dict, llm_calls_list) 三元组
+    async def execute_target() -> Tuple[str, Dict[str, int], List[Dict[str, Any]]]:
         if target_type == "crew":
             return await run_crew(
                 target_definition,
@@ -770,14 +1072,26 @@ async def chat_stream(
                 event.pop("content", ""),
                 **event,
             )
-        # 后台任务跑完，拿最终完整结果
-        final_text = await execution_task
+        # 后台任务跑完，拿 (最终结果, token_usage, llm_calls) 三元组
+        final_result = await execution_task
     finally:
         # 兜底：如果主流程异常退出但后台任务还在跑，取消它避免泄漏
         if not execution_task.done():
             execution_task.cancel()
 
-    log.info("[CrewAI][会话#%s] target=%s:%s", session_id, target_type, target_definition.get("name"))
-    # 最后推一个 result 事件，包含完整回复文本（上层 chat.py 会用它落库）
+    final_text = ""
+    token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    llm_calls: List[Dict[str, Any]] = []
+    if final_result and isinstance(final_result, tuple) and len(final_result) >= 3:
+        final_text = final_result[0] or ""
+        token_usage = final_result[1] or token_usage
+        llm_calls = final_result[2] or []
+
+    log.info("[CrewAI][会话#%s] target=%s:%s tokens=%s llm_calls=%d",
+             session_id, target_type, target_definition.get("name"),
+             token_usage, len(llm_calls))
+    # 推 usage 事件：告知前端 token 消耗 + 每次 LLM 调用的明细
+    yield _sse_event("usage", "", calls=llm_calls, **token_usage)
+    # 推 result 事件：包含完整回复文本（上层 chat.py 会用它落库）
     yield _sse_event("result", final_text or "")
     yield _sse_event("done")

@@ -64,9 +64,31 @@ async def _create_chat_response(user: Dict, message: str, session_id: int):
 
     # ===== 第 4 步：创建 Trace 调用链记录（trace_runs 表） =====
     # 用于后续在 Trace 页查看本次对话的完整调用过程
+    # model 字段记录本次对话使用的主模型，用于 Trace 列表展示
     model = ""
-    if session["target_type"] == "crew" and target.get("agents"):
-        model = target["agents"][0].get("model", "")
+    if session["target_type"] == "crew":
+        if target.get("agents"):
+            model = target["agents"][0].get("model", "")
+    elif session["target_type"] == "flow":
+        # Flow 情况下，从所有 crew 节点里取第一个有 model 的 Agent 作为主模型
+        # Flow 可能串多个 Crew，每个 Crew 模型不同，这里只取一个做展示用
+        crew_ids = [
+            node.get("crew_id") for node in (target.get("nodes") or [])
+            if node.get("node_type") == "crew" and node.get("crew_id")
+        ]
+        if crew_ids:
+            # 按 crew_ids 顺序优先取（保留 flow 节点顺序），找不到再兜底取任意一个
+            placeholders_in = ",".join(["%s"] * len(crew_ids))
+            placeholders_field = ",".join(["%s"] * len(crew_ids))
+            row = await fetch_one(
+                "SELECT a.model FROM agents a "
+                "JOIN crew_agents ca ON ca.agent_id=a.id "
+                f"WHERE ca.crew_id IN ({placeholders_in}) AND a.model IS NOT NULL AND a.model != '' "
+                f"ORDER BY FIELD(ca.crew_id, {placeholders_field}), ca.crew_id, ca.agent_id LIMIT 1",
+                tuple(crew_ids) + tuple(crew_ids),
+            )
+            if row:
+                model = row.get("model", "")
     trace_id = await create_trace(
         user_id=user["user_id"], target_type=session["target_type"],
         target_id=session["target_id"], target_name=target.get("name", ""),
@@ -76,10 +98,14 @@ async def _create_chat_response(user: Dict, message: str, session_id: int):
 
     # ===== 第 5 步：定义 SSE 流式生成器 =====
     # 这个生成器会被 StreamingResponse 包装后返回给前端
-    # 它一边消费 chat_stream 产出的事件，一边做"副作用"：拼接助手回复文本
+    # 它一边消费 chat_stream 产出的事件，一边做"副作用"：拼接助手回复文本 + 统计 token
     async def generate():
         current_phase_response = []   # 当前阶段（Task）累积的文本片段
         final_response = None         # 最终完整回复（优先用 result 事件的内容）
+        # 本轮对话的 token 消耗（来自 usage 事件），默认 0
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
         try:
             # 消费 chat_stream 产出的 SSE 事件
             async for chunk in chat_stream(
@@ -97,6 +123,11 @@ async def _create_chat_response(user: Dict, message: str, session_id: int):
                         # 文本片段 → 累积起来（用于最终落库）
                         elif event.get("type") == "chunk":
                             current_phase_response.append(event.get("content", ""))
+                        # Token 消耗统计 → 保存起来（完成 Trace 时落库）
+                        elif event.get("type") == "usage":
+                            prompt_tokens = int(event.get("prompt_tokens", 0) or 0)
+                            completion_tokens = int(event.get("completion_tokens", 0) or 0)
+                            total_tokens = int(event.get("total_tokens", 0) or 0)
                         # 最终结果 → 直接使用（优先级高于累积）
                         elif event.get("type") == "result":
                             final_response = event.get("content", "")
@@ -108,14 +139,24 @@ async def _create_chat_response(user: Dict, message: str, session_id: int):
         # ===== 客户端断开连接（如用户关了页面） =====
         except asyncio.CancelledError:
             partial_response = final_response if final_response is not None else "".join(current_phase_response)
-            await finish_trace(trace_id, "cancelled", partial_response, "客户端断开连接", int((time.time() - trace_started) * 1000))
+            await finish_trace(
+                trace_id, "cancelled", partial_response, "客户端断开连接",
+                int((time.time() - trace_started) * 1000),
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            )
             return
 
         # ===== 执行过程中抛异常 =====
         except Exception as exc:
             log.exception("[Trace#%s] CrewAI 执行失败", trace_id)
             partial_response = final_response if final_response is not None else "".join(current_phase_response)
-            await finish_trace(trace_id, "error", partial_response, str(exc), int((time.time() - trace_started) * 1000))
+            await finish_trace(
+                trace_id, "error", partial_response, str(exc),
+                int((time.time() - trace_started) * 1000),
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            )
             # 给前端推一条 error 事件，让前端 UI 显示错误提示
             yield f"data:{json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n"
             return
@@ -128,7 +169,12 @@ async def _create_chat_response(user: Dict, message: str, session_id: int):
                 "INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
                 (session_id, "assistant", assistant_text, _now()),
             )
-        await finish_trace(trace_id, "success", assistant_text, duration_ms=int((time.time() - trace_started) * 1000))
+        await finish_trace(
+            trace_id, "success", assistant_text,
+            duration_ms=int((time.time() - trace_started) * 1000),
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
 
     # 返回 StreamingResponse，设置 SSE 必需的响应头
     # X-Accel-Buffering: no —— 关闭 Nginx 缓冲，保证流式实时推送

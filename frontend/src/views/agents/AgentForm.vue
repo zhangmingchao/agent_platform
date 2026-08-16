@@ -112,6 +112,12 @@ onMounted(async () => {
   if (isEdit.value) {
     const data = await request.get(`/api/agents/${route.params.id}`)
     Object.assign(form, data, {
+      // aiomysql 返回 TINYINT 为 int 0/1，checkbox 需要严格的 true/false 布尔
+      enabled: Boolean(data.enabled ?? true),
+      allow_delegation: Boolean(data.allow_delegation ?? false),
+      reasoning: Boolean(data.reasoning ?? false),
+      planning: Boolean(data.planning ?? false),
+      memory: Boolean(data.memory ?? false),
       skill_ids: data.skills?.map(item => item.id) || [],
       mcp_ids: data.mcps?.map(item => item.id) || []
     })

@@ -81,8 +81,19 @@ onMounted(async () => {
   const data = await request.get(`/api/crews/${route.params.id}`)
   const keyById = Object.fromEntries((data.tasks || []).map(task => [task.id, `task_${task.id}`]))
   Object.assign(form, data, {
+    // aiomysql 返回 TINYINT 为 int 0/1，checkbox 需要严格的 true/false 布尔
+    planning: Boolean(data.planning ?? false),
+    memory: Boolean(data.memory ?? false),
+    cache_enabled: Boolean(data.cache_enabled ?? false),
+    verbose: Boolean(data.verbose ?? false),
+    enabled: Boolean(data.enabled ?? true),
+    max_rpm: data.max_rpm ?? null,
     agent_ids: (data.agents || []).map(item => item.id),
-    tasks: (data.tasks || []).map(task => ({ ...task, client_key: keyById[task.id], dependency_keys: (task.dependency_ids || []).map(id => keyById[id]).filter(Boolean), skill_ids: task.skill_ids || [], mcp_ids: task.mcp_ids || [] }))
+    tasks: (data.tasks || []).map(task => ({ ...task, client_key: keyById[task.id], dependency_keys: (task.dependency_ids || []).map(id => keyById[id]).filter(Boolean), skill_ids: task.skill_ids || [], mcp_ids: task.mcp_ids || [],
+      async_execution: Boolean(task.async_execution ?? false),
+      human_input: Boolean(task.human_input ?? false),
+      markdown: Boolean(task.markdown ?? true),
+    }))
   })
 })
 
