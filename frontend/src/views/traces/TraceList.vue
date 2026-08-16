@@ -133,17 +133,6 @@ const loadTraces = async () => {
   loading.value = true
   try {
     traces.value = await request.get('/api/traces', { params: { limit: 200, _t: Date.now() } })
-    modals.value = await request.get('/api/llm-models/list')
-    debugger
-    const modalMap = computed(() => {
-      return modals.value.reduce((acc, item) => {
-        acc[item.model_key] = item;  // 以 id 为键，整个对象为值
-        return acc;
-      }, {});
-    });
-    traces.value.forEach(item => {
-      item.model = modalMap.value[item.model_key]
-    })
   } finally {
     loading.value = false
   }
