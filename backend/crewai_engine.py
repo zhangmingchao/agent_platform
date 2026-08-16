@@ -471,20 +471,43 @@ async def run_crew(
         "stream": event_queue is not None,
     }
     crew = Crew(**crew_kwargs)
+    # 记录 Crew 开始执行的时间，用于后续计算耗时
     started = time.time()
     try:
+        # 启动 CrewAI 团队异步执行（前面所有代码都在为这一行做准备）
+        # 返回的 execution 是 CrewOutput 对象，既是最终结果也是异步迭代器
         execution = await crew.kickoff_async()
+
+        # ===== 流式模式：把执行过程实时推给前端 =====
         if event_queue is not None:
+            # 记录当前所处的"阶段"（task_index + agent_role）
+            # 用于检测"是否进入了新的 Task/Agent 阶段"，进入新阶段时推一次提示
             current_stream_phase: Optional[tuple] = None
+
+            # 异步循环接收大模型流式返回的每个小片段
             async for stream_chunk in execution:
+                # 1. 解析这个 chunk 的类型
+                #    chunk_type 是个枚举对象，先取 .chunk_type 再取 .value，拿不到就降级为 "text"
                 chunk_type = getattr(getattr(stream_chunk, "chunk_type", None), "value", "text")
+
+                # 2. 解析这个 chunk 属于第几个 Task（拿不到默认 0）
                 task_index = int(getattr(stream_chunk, "task_index", 0) or 0)
+
+                # 3. 解析 Task 名称：优先用 chunk 自带的，没有就从本地 task_definitions 配置里查
+                #    （兼容 CrewAI 不同版本返回字段不一致的情况）
                 task_name = getattr(stream_chunk, "task_name", "") or (
                     task_definitions[task_index].get("name", "")
                     if task_index < len(task_definitions) else ""
                 )
+
+                # 4. 解析当前是哪个 Agent 在执行（Role 字段）
                 agent_role = getattr(stream_chunk, "agent_role", "") or ""
+
+                # 5. 组装"当前阶段标识"，用于检测阶段切换
                 stream_phase = (task_index, agent_role)
+
+                # 6. 如果进入了新的阶段（task 或 agent 变了）→ 推一个"阶段开始"事件给前端
+                #    前端可以据此显示"正在执行 Task 2（数据分析师）"之类的提示
                 if stream_phase != current_stream_phase:
                     current_stream_phase = stream_phase
                     phase_label = f"正在执行 Task：{task_name or task_index + 1}"
@@ -492,41 +515,54 @@ async def run_crew(
                         phase_label += f"（{agent_role}）"
                     await _emit_runtime_event(
                         event_queue,
-                        "phase_start",
-                        phase_label,
+                        "phase_start",           # 事件类型：阶段开始
+                        phase_label,             # 显示文案
                         stage="task",
                         task_index=task_index,
                         task_name=task_name,
                         agent_role=agent_role,
                     )
+
+                # 7. 如果是工具调用事件 → 推"正在调用工具"提示，然后跳过（不输出文本）
                 if chunk_type == "tool_call":
                     tool_call = getattr(stream_chunk, "tool_call", None)
+                    # 工具名兼容两种字段名：tool_name 或 name
                     tool_name = getattr(tool_call, "tool_name", "") or getattr(tool_call, "name", "")
                     await _emit_runtime_event(
                         event_queue,
-                        "status",
+                        "status",                # 事件类型：状态提示
                         f"正在调用工具{f'：{tool_name}' if tool_name else ''}",
                         stage="tool",
                         task_name=task_name,
                         agent_role=agent_role,
                     )
-                    continue
+                    continue   # 工具调用事件不包含文本内容，跳过后续处理
+
+                # 8. 普通文本 chunk → 推给前端显示（打字机效果的核心来源）
                 content = getattr(stream_chunk, "content", "")
                 if content:
                     await _emit_runtime_event(
                         event_queue,
-                        "chunk",
-                        content,
+                        "chunk",                 # 事件类型：文本片段
+                        content,                 # 实际的文字内容
                         stage="task",
                         task_index=task_index,
                         task_name=task_name,
                         agent_role=agent_role,
                     )
+
+            # 流式遍历结束后，从 execution.result 拿最终完整结果
             output = execution.result
+
+        # ===== 非流式模式：直接拿 execution 作为结果（不需要推事件） =====
         else:
             output = execution
+
+    # ===== 异常处理：记录错误到 Trace，然后向上抛 =====
     except Exception as exc:
+        # 先把已缓存的工具调用事件写到 trace_spans（保证部分 trace 不丢）
         await _flush_tool_events(trace_id, recorder.events)
+        # 写一条 status=error 的 crew span，记录失败信息
         await _trace_span(
             trace_id,
             span_type="crew",
@@ -536,7 +572,7 @@ async def run_crew(
             error_text=str(exc),
             duration_ms=int((time.time() - started) * 1000),
         )
-        raise
+        raise   # 重新抛出异常，让上层（chat_stream）处理 SSE 错误推送
 
     await _flush_tool_events(trace_id, recorder.events)
     for definition, task_output in zip(task_definitions, getattr(output, "tasks_output", [])):
@@ -679,12 +715,24 @@ async def chat_stream(
     session_id: int,
     trace_id: Optional[int] = None,
 ) -> AsyncGenerator[str, None]:
+    """SSE 流式对话入口：
+    1. 启动一个后台 asyncio Task 执行真正的 Crew/Flow
+    2. 后台任务通过 event_queue 推送实时事件（chunk / phase_start / status 等）
+    3. 主流程循环消费队列，把事件转成 SSE 格式 yield 给上层
+    4. 任务完成后推送一个 result 事件（包含最终完整回复）
+    """
+    # 全局 API Key 未配置 → 直接返回错误，不进入执行流程
     if not DEEPSEEK_API_KEY:
         yield _sse_event("chunk", "API Key 未配置")
         yield _sse_event("done")
         return
+
+    # 异步事件队列：后台执行任务往里 put，主流程从里面 get
+    # 这是"长任务执行 + 实时流式推送"解耦的关键
     event_queue: asyncio.Queue = asyncio.Queue()
 
+    # 后台执行任务：根据 target_type 调 run_crew 或 run_flow
+    # 返回值是最终完整文本（run_crew/run_flow 内部会通过 event_queue 推实时事件）
     async def execute_target() -> str:
         if target_type == "crew":
             return await run_crew(
@@ -706,22 +754,30 @@ async def chat_stream(
             )
         raise ValueError(f"不支持的执行目标: {target_type}")
 
+    # 把执行任务作为一个独立的 asyncio Task 启动（后台异步跑）
     execution_task = asyncio.create_task(execute_target())
     try:
+        # 主循环：后台任务没结束 或 队列还有事件没消费 → 继续循环
         while not execution_task.done() or not event_queue.empty():
             try:
+                # 0.2 秒内从队列取一个事件，超时就 continue（避免阻塞，能响应客户端断开）
                 event = await asyncio.wait_for(event_queue.get(), timeout=0.2)
             except asyncio.TimeoutError:
                 continue
+            # 把事件转成 SSE 格式 yield 给上层（StreamingResponse）
             yield _sse_event(
                 event.pop("type"),
                 event.pop("content", ""),
                 **event,
             )
+        # 后台任务跑完，拿最终完整结果
         final_text = await execution_task
     finally:
+        # 兜底：如果主流程异常退出但后台任务还在跑，取消它避免泄漏
         if not execution_task.done():
             execution_task.cancel()
+
     log.info("[CrewAI][会话#%s] target=%s:%s", session_id, target_type, target_definition.get("name"))
+    # 最后推一个 result 事件，包含完整回复文本（上层 chat.py 会用它落库）
     yield _sse_event("result", final_text or "")
     yield _sse_event("done")
