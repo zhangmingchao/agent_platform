@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,11 +14,6 @@ from ..services.mcp_config_service import (
 
 router = APIRouter(prefix="/api/mcp-configs", tags=["MCP Configurations"])
 log = logging.getLogger("agent-platform")
-
-
-async def _run_mcp_request(func, *args):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: func(*args))
 
 
 @router.get("")
@@ -66,7 +60,7 @@ async def api_list_mcp_tools(config_id: int, user: dict = Depends(get_current_us
 
     try:
         client = McpClient(cfg["base_url"], cfg["endpoint"])
-        tools = await _run_mcp_request(client.list_tools)
+        tools = await client.list_tools()
         return {"tools": tools}
     except Exception as exc:
         log.exception("获取 MCP 工具失败: config_id=%s", config_id)
@@ -89,7 +83,7 @@ async def api_call_mcp_tool(config_id: int, request: Request, user: dict = Depen
 
     try:
         client = McpClient(cfg["base_url"], cfg["endpoint"])
-        result = await _run_mcp_request(client.call_tool_raw, tool_name, arguments)
+        result = await client.call_tool_raw(tool_name, arguments)
         return {"result": result}
     except Exception as exc:
         log.exception("调用 MCP 工具失败: config_id=%s tool=%s", config_id, tool_name)

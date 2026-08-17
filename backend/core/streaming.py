@@ -2,7 +2,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Dict, List, Optional
 
 from .trace_handler import TraceContext
 
@@ -22,6 +22,7 @@ async def stream_agent_response(
     agent_executor,
     user_message: str,
     thread_id: str,
+    history_messages: Optional[List[Dict]] = None,
     max_tool_rounds: int = 6,
     trace_ctx: Optional[TraceContext] = None,
 ) -> AsyncGenerator[str, None]:
@@ -37,10 +38,28 @@ async def stream_agent_response(
 
     If trace_ctx is provided, writes trace spans to MySQL for each LLM/tool call.
     """
-    from langchain_core.messages import HumanMessage
+    from langchain_core.messages import AIMessage, HumanMessage
 
     today = datetime.now().strftime("%Y-%m-%d")
-    prompt = f"[当前日期：{today}] {user_message}"
+
+    # 将 MySQL 中的持久化聊天记录恢复成 LangChain 消息对象。
+    # 最新一条用户消息已在 chat.py 中先写入数据库，因此这里会一起读出来。
+    messages = []
+    for item in history_messages or []:
+        role = item.get("role")
+        content = item.get("content") or ""
+        if not content:
+            continue
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+
+    # 日期提示只加到当前用户这轮，避免污染历史消息。
+    if messages and isinstance(messages[-1], HumanMessage):
+        messages[-1].content = f"[当前日期：{today}] {messages[-1].content}"
+    else:
+        messages.append(HumanMessage(content=f"[当前日期：{today}] {user_message}"))
 
     config = {
         "configurable": {"thread_id": thread_id},
@@ -49,7 +68,7 @@ async def stream_agent_response(
 
     try:
         async for event in agent_executor.astream_events(
-            {"messages": [HumanMessage(content=prompt)]},
+            {"messages": messages},
             config=config,
             version="v2",
         ):

@@ -30,16 +30,16 @@ def build_llm(
     )
 
 
-def build_all_tools(skills: List[Dict], mcp_configs: List[Dict]) -> list:
+async def build_all_tools(skills: List[Dict], mcp_configs: List[Dict]) -> list:
     """Build all LangChain tools from skills and MCP configs."""
     tools = []
     tools.extend(build_skill_tools(skills))
-    tools.extend(build_mcp_langchain_tools(mcp_configs))
+    tools.extend(await build_mcp_langchain_tools(mcp_configs))
     log.info(f"[Tools] loaded {len(tools)} tools total")
     return tools
 
 
-def create_agent_instance(
+async def create_agent_instance(
     agent: Dict,
     skills: List[Dict],
     mcp_configs: List[Dict],
@@ -66,7 +66,7 @@ def create_agent_instance(
     system_prompt = agent.get("system_prompt", "")
 
     llm = build_llm(model_name, temperature, api_key, base_url)
-    tools = build_all_tools(skills, mcp_configs)
+    tools = await build_all_tools(skills, mcp_configs)
 
     try:
         agent_executor = create_react_agent(

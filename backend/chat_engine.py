@@ -5,6 +5,7 @@ Handles multi-round tool call loops.
 import json
 import time
 import logging
+import inspect
 from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Optional
 
@@ -163,7 +164,7 @@ def execute_skill_file(skills_map: Dict[str, Dict], skill_name: str, path: str) 
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
-def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) -> tuple:
+async def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) -> tuple:
     """
     Build all tools for an agent.
     Returns: (tools_list, executors_dict)
@@ -184,13 +185,13 @@ def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) -> tuple
     for mcp_cfg in mcp_configs:
         try:
             client = McpClient(mcp_cfg["base_url"], mcp_cfg["endpoint"])
-            mcp_tools = client.list_tools()
+            mcp_tools = await client.list_tools()
             openai_tools = mcp_tools_to_openai_format(mcp_tools)
             tools.extend(openai_tools)
             for mt in mcp_tools:
                 def make_executor(c, n):
-                    def executor(**kwargs):
-                        return c.call_tool(n, kwargs)
+                    async def executor(**kwargs):
+                        return await c.call_tool(n, kwargs)
                     return executor
                 executors[mt["name"]] = make_executor(client, mt["name"])
             log.info(f"[MCP] {mcp_cfg['name']} 加载了 {len(mcp_tools)} 个工具")
@@ -233,7 +234,7 @@ async def chat_stream(
     messages.append({"role": "user", "content": prompt})
 
     discovery_start = time.time()
-    tools, executors = build_all_tools(agent, skills, mcp_configs)
+    tools, executors = await build_all_tools(agent, skills, mcp_configs)
     await _trace_span(
         trace_id,
         span_type="setup",
@@ -327,6 +328,8 @@ async def chat_stream(
                 tool_error = ""
                 try:
                     result = executor(**func_args)
+                    if inspect.isawaitable(result):
+                        result = await result
                     elapsed = int((time.time() - tool_start) * 1000)
                     result_str = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
                     _log_tool_result(func_name, result_str, elapsed)

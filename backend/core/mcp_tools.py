@@ -41,9 +41,9 @@ def _create_pydantic_schema(input_schema: dict) -> type:
     return create_model("MCPToolInput", **fields)
 
 
-def mcp_tools_to_langchain(client: McpClient) -> List[StructuredTool]:
+async def mcp_tools_to_langchain(client: McpClient) -> List[StructuredTool]:
     """Discover MCP tools and convert to LangChain StructuredTool."""
-    mcp_tools = client.list_tools()
+    mcp_tools = await client.list_tools()
     langchain_tools = []
 
     for tool in mcp_tools:
@@ -53,12 +53,12 @@ def mcp_tools_to_langchain(client: McpClient) -> List[StructuredTool]:
         args_schema = _create_pydantic_schema(input_schema)
 
         def make_executor(c, n):
-            def executor(**kwargs):
-                return c.call_tool(n, kwargs)
+            async def executor(**kwargs):
+                return await c.call_tool(n, kwargs)
             return executor
 
         lc_tool = StructuredTool.from_function(
-            func=make_executor(client, name),
+            coroutine=make_executor(client, name),
             name=name,
             description=description,
             args_schema=args_schema,
@@ -69,17 +69,14 @@ def mcp_tools_to_langchain(client: McpClient) -> List[StructuredTool]:
     return langchain_tools
 
 
-def build_mcp_langchain_tools(mcp_configs: List[Dict]) -> List[StructuredTool]:
+async def build_mcp_langchain_tools(mcp_configs: List[Dict]) -> List[StructuredTool]:
     """Build LangChain tools from all MCP configs."""
-    import asyncio
-
     all_tools = []
-    loop = asyncio.get_event_loop()
 
     for mcp_cfg in mcp_configs:
         try:
             client = McpClient(mcp_cfg["base_url"], mcp_cfg["endpoint"])
-            tools = mcp_tools_to_langchain(client)
+            tools = await mcp_tools_to_langchain(client)
             all_tools.extend(tools)
             log.info(f"[MCP] {mcp_cfg['name']} loaded {len(tools)} tools")
         except Exception as e:

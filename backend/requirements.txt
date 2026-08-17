@@ -25,4 +25,4 @@ langgraph-checkpoint>=0.0.1
 langsmith>=0.1.0
 
 # HTTP client (for MCP)
-requests>=2.25.0
+httpx>=0.25.0

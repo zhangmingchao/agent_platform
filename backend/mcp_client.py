@@ -6,7 +6,7 @@ import json
 import uuid
 import time
 import logging
-import requests
+import httpx
 from typing import Dict, List, Optional
 
 log = logging.getLogger("agent-platform")
@@ -18,7 +18,7 @@ class McpClient:
         self.session_id: Optional[str] = None
         self.initialized = False
 
-    def _send_request(self, method: str, params: dict = None) -> dict:
+    async def _send_request(self, method: str, params: dict = None) -> dict:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -37,9 +37,9 @@ class McpClient:
         log.info(f"[MCP请求] method={method} | url={self.mcp_url}")
         t0 = time.time()
 
-        resp = requests.post(self.mcp_url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
-        resp.encoding = "utf-8"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(self.mcp_url, json=payload, headers=headers)
+            resp.raise_for_status()
         elapsed = int((time.time() - t0) * 1000)
 
         if not self.session_id and "Mcp-Session-Id" in resp.headers:
@@ -73,7 +73,7 @@ class McpClient:
                 raise Exception(f"MCP error: {data['error']}")
             return data
 
-    def _send_notification(self, method: str, params: dict = None):
+    async def _send_notification(self, method: str, params: dict = None):
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -85,32 +85,33 @@ class McpClient:
         if params:
             payload["params"] = params
 
-        resp = requests.post(self.mcp_url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(self.mcp_url, json=payload, headers=headers)
+            resp.raise_for_status()
 
-    def initialize(self) -> dict:
+    async def initialize(self) -> dict:
         log.info(f"[MCP] 正在初始化会话 | url={self.mcp_url}")
-        result = self._send_request("initialize", {
+        result = await self._send_request("initialize", {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
             "clientInfo": {"name": "agent-platform", "version": "1.0.0"}
         })
-        self._send_notification("notifications/initialized")
+        await self._send_notification("notifications/initialized")
         self.initialized = True
         log.info(f"[MCP] 初始化成功")
         return result
 
-    def list_tools(self) -> List[dict]:
+    async def list_tools(self) -> List[dict]:
         if not self.initialized:
-            self.initialize()
-        result = self._send_request("tools/list")
+            await self.initialize()
+        result = await self._send_request("tools/list")
         tools = result.get("tools", [])
         log.info(f"[MCP] 获取到 {len(tools)} 个工具")
         return tools
 
-    def call_tool_raw(self, name: str, arguments: dict = None) -> dict:
+    async def call_tool_raw(self, name: str, arguments: dict = None) -> dict:
         if not self.initialized:
-            self.initialize()
+            await self.initialize()
 
         params = {"name": name}
         if arguments:
@@ -118,14 +119,14 @@ class McpClient:
 
         log.info(f"[MCP工具调用] name={name} | args={json.dumps(arguments or {}, ensure_ascii=False)}")
         t0 = time.time()
-        result = self._send_request("tools/call", params)
+        result = await self._send_request("tools/call", params)
         elapsed = int((time.time() - t0) * 1000)
 
         log.info(f"[MCP工具结果] name={name} | 耗时={elapsed}ms")
         return result
 
-    def call_tool(self, name: str, arguments: dict = None) -> str:
-        result = self.call_tool_raw(name, arguments)
+    async def call_tool(self, name: str, arguments: dict = None) -> str:
+        result = await self.call_tool_raw(name, arguments)
 
         content = result.get("content", [])
         if content and isinstance(content, list):
@@ -157,8 +158,8 @@ def build_mcp_executors(mcp_clients: Dict[str, McpClient]) -> Dict[str, callable
     executors = {}
     for tool_name, (client, _) in mcp_clients.items():
         def make_executor(c, n):
-            def executor(**kwargs):
-                return c.call_tool(n, kwargs)
+            async def executor(**kwargs):
+                return await c.call_tool(n, kwargs)
             return executor
         executors[tool_name] = make_executor(client, tool_name)
     return executors
