@@ -2,7 +2,7 @@
 import logging
 import time
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 from ..database import execute
 
@@ -12,11 +12,21 @@ log = logging.getLogger("agent-platform")
 class TraceContext:
     """Manages a single trace run and its spans during agent execution."""
 
-    def __init__(self, session_id: int, user_id: int, agent_id: int, model_name: str = ""):
+    def __init__(
+        self,
+        session_id: Optional[int],
+        user_id: int,
+        agent_id: int,
+        model_name: str = "",
+        workflow_run_id: Optional[int] = None,
+        workflow_step_id: Optional[int] = None,
+    ):
         self.session_id = session_id
         self.user_id = user_id
         self.agent_id = agent_id
         self.model_name = model_name
+        self.workflow_run_id = workflow_run_id
+        self.workflow_step_id = workflow_step_id
         self.run_id = None
         self.spans: Dict[str, dict] = {}
         self.start_time = time.time()
@@ -25,10 +35,22 @@ class TraceContext:
         """Create trace_run in DB."""
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         self.run_id = await execute(
-            "INSERT INTO trace_runs (session_id, user_id, agent_id, status, input_text, model, started_at, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (self.session_id, self.user_id, self.agent_id, "running",
-             input_text[:5000], self.model_name, now, now),
+            "INSERT INTO trace_runs "
+            "(session_id, user_id, agent_id, workflow_run_id, workflow_step_id, "
+            "status, input_text, model, started_at, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                self.session_id,
+                self.user_id,
+                self.agent_id,
+                self.workflow_run_id,
+                self.workflow_step_id,
+                "running",
+                input_text[:5000],
+                self.model_name,
+                now,
+                now,
+            ),
         )
         log.info("[Trace] run #%s started (session=%s)", self.run_id, self.session_id)
         return self.run_id
@@ -51,7 +73,7 @@ class TraceContext:
         duration = int((time.time() - span["start"]) * 1000)
         await execute(
             "UPDATE trace_spans SET output_data=%s, tokens_used=%s, duration_ms=%s, status=%s WHERE id=%s",
-            (output[:5000], tokens, duration, "ok", span["span_id"]),
+            (output[:5000], tokens, duration, "success", span["span_id"]),
         )
 
     async def on_tool_start(self, run_id: str, name: str, input_data: str):
@@ -72,7 +94,7 @@ class TraceContext:
         duration = int((time.time() - span["start"]) * 1000)
         await execute(
             "UPDATE trace_spans SET output_data=%s, duration_ms=%s, status=%s WHERE id=%s",
-            (output[:5000], duration, "ok", span["span_id"]),
+            (output[:5000], duration, "success", span["span_id"]),
         )
 
     async def finish(self, output_text: str, total_tokens: int = 0):
@@ -80,7 +102,7 @@ class TraceContext:
         duration = int((time.time() - self.start_time) * 1000)
         await execute(
             "UPDATE trace_runs SET status=%s, output_text=%s, total_tokens=%s, total_duration_ms=%s WHERE id=%s",
-            ("ok", output_text[:5000], total_tokens, duration, self.run_id),
+            ("success", output_text[:5000], total_tokens, duration, self.run_id),
         )
         log.info("[Trace] run #%s finished (%dms)", self.run_id, duration)
 

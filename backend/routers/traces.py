@@ -11,12 +11,16 @@ router = APIRouter(prefix="/api/traces", tags=["Traces"])
 async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 200):
     traces = await fetch_all(
         "SELECT t.id, t.status, t.input_text, t.output_text, t.model, "
+        "t.workflow_run_id, t.workflow_step_id, wr.workflow_id, ws.step_order, ws.role_name, "
         "t.total_tokens, t.total_duration_ms as duration_ms, t.started_at, "
-        "a.name as agent_name, s.title as session_title, "
+        "a.name as agent_name, s.title as session_title, w.name as workflow_name, "
         "(SELECT COUNT(*) FROM trace_spans WHERE run_id=t.id) as span_count "
         "FROM trace_runs t "
         "LEFT JOIN agents a ON t.agent_id=a.id "
         "LEFT JOIN chat_sessions s ON t.session_id=s.id "
+        "LEFT JOIN multi_agent_runs wr ON t.workflow_run_id=wr.id "
+        "LEFT JOIN multi_agent_run_steps ws ON t.workflow_step_id=ws.id "
+        "LEFT JOIN multi_agent_workflows w ON wr.workflow_id=w.id "
         "WHERE t.user_id=%s "
         "ORDER BY t.started_at DESC "
         "LIMIT %s",
@@ -29,11 +33,15 @@ async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 2
 async def api_get_trace(trace_id: int, user: dict = Depends(get_current_user)):
     trace = await fetch_one(
         "SELECT t.id, t.status, t.input_text, t.output_text, t.error_text, t.model, "
+        "t.workflow_run_id, t.workflow_step_id, wr.workflow_id, ws.step_order, ws.role_name, "
         "t.total_tokens, t.total_duration_ms as duration_ms, t.started_at, t.created_at, "
-        "a.name as agent_name, s.title as session_title "
+        "a.name as agent_name, s.title as session_title, w.name as workflow_name "
         "FROM trace_runs t "
         "LEFT JOIN agents a ON t.agent_id=a.id "
         "LEFT JOIN chat_sessions s ON t.session_id=s.id "
+        "LEFT JOIN multi_agent_runs wr ON t.workflow_run_id=wr.id "
+        "LEFT JOIN multi_agent_run_steps ws ON t.workflow_step_id=ws.id "
+        "LEFT JOIN multi_agent_workflows w ON wr.workflow_id=w.id "
         "WHERE t.id=%s AND t.user_id=%s",
         (trace_id, user["user_id"])
     )

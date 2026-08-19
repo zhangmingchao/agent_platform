@@ -50,6 +50,30 @@ const routes = [
         meta: { title: '对话' }
       },
       {
+        path: 'workflows',
+        name: 'WorkflowList',
+        component: () => import('../views/workflows/WorkflowList.vue'),
+        meta: { title: '多 Agent 工作流' }
+      },
+      {
+        path: 'workflows/new',
+        name: 'WorkflowCreate',
+        component: () => import('../views/workflows/WorkflowForm.vue'),
+        meta: { title: '创建工作流' }
+      },
+      {
+        path: 'workflows/:id/edit',
+        name: 'WorkflowEdit',
+        component: () => import('../views/workflows/WorkflowForm.vue'),
+        meta: { title: '编辑工作流' }
+      },
+      {
+        path: 'workflows/:id/run',
+        name: 'WorkflowRun',
+        component: () => import('../views/workflows/WorkflowRun.vue'),
+        meta: { title: '运行工作流' }
+      },
+      {
         path: 'skills',
         name: 'SkillList',
         component: () => import('../views/skills/SkillList.vue'),

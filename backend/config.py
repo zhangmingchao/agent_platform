@@ -40,6 +40,12 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "20000"))
 MAX_TOOL_ROUNDS = 6
 
+# --- Skill HTTP Actions ---
+SKILL_ACTION_ALLOW_PRIVATE_NETWORK = os.getenv(
+    "SKILL_ACTION_ALLOW_PRIVATE_NETWORK",
+    "false",
+).lower() in ("1", "true", "yes", "on")
+
 # --- LangSmith (Trace) ---
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY", "")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "agent-platform-langchain")

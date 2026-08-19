@@ -20,6 +20,10 @@
           <el-icon><User /></el-icon>
           <span>Agent 管理</span>
         </el-menu-item>
+        <el-menu-item index="/workflows">
+          <el-icon><Operation /></el-icon>
+          <span>多 Agent 工作流</span>
+        </el-menu-item>
         <el-menu-item index="/models">
           <el-icon><Coin /></el-icon>
           <span>模型管理</span>
@@ -108,7 +112,11 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => {
+  if (route.path.startsWith('/workflows')) return '/workflows'
+  if (route.path.startsWith('/agents')) return '/agents'
+  return route.path
+})
 const currentTitle = computed(() => route.meta?.title || '')
 
 const showUpdatePassword = ref(false)

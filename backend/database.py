@@ -179,6 +179,8 @@ async def init_db():
                     session_id INT,
                     user_id INT NOT NULL,
                     agent_id INT NOT NULL,
+                    workflow_run_id INT DEFAULT NULL,
+                    workflow_step_id INT DEFAULT NULL,
                     status VARCHAR(20) DEFAULT 'running',
                     input_text TEXT,
                     output_text TEXT,
@@ -189,7 +191,9 @@ async def init_db():
                     started_at DATETIME NOT NULL,
                     created_at DATETIME NOT NULL,
                     INDEX idx_session (session_id),
-                    INDEX idx_user (user_id)
+                    INDEX idx_user (user_id),
+                    INDEX idx_workflow_run (workflow_run_id),
+                    INDEX idx_workflow_step (workflow_step_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
                 """
@@ -211,6 +215,64 @@ async def init_db():
                     CONSTRAINT fk_span_run FOREIGN KEY (run_id) REFERENCES trace_runs(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS multi_agent_workflows (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    name VARCHAR(200) NOT NULL,
+                    description TEXT,
+                    mode VARCHAR(50) DEFAULT 'sequential',
+                    config_json JSON NOT NULL,
+                    is_active TINYINT DEFAULT 1,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    INDEX idx_user (user_id),
+                    CONSTRAINT fk_workflow_user FOREIGN KEY (user_id) REFERENCES users(id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS multi_agent_runs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    workflow_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    status VARCHAR(20) DEFAULT 'running',
+                    current_node_id VARCHAR(100) DEFAULT NULL,
+                    context_json JSON DEFAULT NULL,
+                    input_text TEXT,
+                    output_text TEXT,
+                    error_text TEXT,
+                    started_at DATETIME NOT NULL,
+                    finished_at DATETIME DEFAULT NULL,
+                    created_at DATETIME NOT NULL,
+                    INDEX idx_workflow (workflow_id),
+                    INDEX idx_user (user_id),
+                    CONSTRAINT fk_run_workflow FOREIGN KEY (workflow_id) REFERENCES multi_agent_workflows(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_run_user FOREIGN KEY (user_id) REFERENCES users(id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS multi_agent_run_steps (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    run_id INT NOT NULL,
+                    step_order INT NOT NULL,
+                    agent_id INT NOT NULL,
+                    trace_run_id INT DEFAULT NULL,
+                    role_name VARCHAR(100),
+                    instruction TEXT,
+                    input_text TEXT,
+                    output_text TEXT,
+                    status VARCHAR(20) DEFAULT 'running',
+                    error_text TEXT,
+                    started_at DATETIME NOT NULL,
+                    finished_at DATETIME DEFAULT NULL,
+                    created_at DATETIME NOT NULL,
+                    INDEX idx_run (run_id),
+                    INDEX idx_trace_run (trace_run_id),
+                    CONSTRAINT fk_run_step_run FOREIGN KEY (run_id) REFERENCES multi_agent_runs(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_run_step_agent FOREIGN KEY (agent_id) REFERENCES agents(id),
+                    CONSTRAINT fk_run_step_trace FOREIGN KEY (trace_run_id) REFERENCES trace_runs(id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
             ]
 
             for sql in statements:
@@ -228,6 +290,72 @@ async def init_db():
                         "ALTER TABLE agents ADD COLUMN model_config_id INT DEFAULT NULL AFTER model"
                     )
                     log.info("[DB] added model_config_id column to agents table")
+            except Exception:
+                pass
+
+            migrations = [
+                (
+                    "trace_runs",
+                    "workflow_run_id",
+                    "ALTER TABLE trace_runs ADD COLUMN workflow_run_id INT DEFAULT NULL AFTER agent_id",
+                ),
+                (
+                    "trace_runs",
+                    "workflow_step_id",
+                    "ALTER TABLE trace_runs ADD COLUMN workflow_step_id INT DEFAULT NULL AFTER workflow_run_id",
+                ),
+                (
+                    "multi_agent_run_steps",
+                    "trace_run_id",
+                    "ALTER TABLE multi_agent_run_steps ADD COLUMN trace_run_id INT DEFAULT NULL AFTER agent_id",
+                ),
+                (
+                    "multi_agent_runs",
+                    "current_node_id",
+                    "ALTER TABLE multi_agent_runs ADD COLUMN current_node_id VARCHAR(100) DEFAULT NULL AFTER status",
+                ),
+                (
+                    "multi_agent_runs",
+                    "context_json",
+                    "ALTER TABLE multi_agent_runs ADD COLUMN context_json JSON DEFAULT NULL AFTER current_node_id",
+                ),
+                (
+                    "multi_agent_run_steps",
+                    "node_id",
+                    "ALTER TABLE multi_agent_run_steps ADD COLUMN node_id VARCHAR(100) DEFAULT NULL AFTER agent_id",
+                ),
+                (
+                    "multi_agent_run_steps",
+                    "node_type",
+                    "ALTER TABLE multi_agent_run_steps ADD COLUMN node_type VARCHAR(50) DEFAULT NULL AFTER node_id",
+                ),
+            ]
+            for table_name, column_name, alter_sql in migrations:
+                try:
+                    await cur.execute(
+                        "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                        "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND COLUMN_NAME=%s",
+                        (DB_NAME, table_name, column_name),
+                    )
+                    if not await cur.fetchone():
+                        await cur.execute(alter_sql)
+                        log.info("[DB] added %s column to %s table", column_name, table_name)
+                except Exception:
+                    pass
+
+            # Migration: make agent_id nullable in multi_agent_run_steps
+            try:
+                await cur.execute(
+                    "SELECT IS_NULLABLE FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='multi_agent_run_steps' AND COLUMN_NAME='agent_id'",
+                    (DB_NAME,)
+                )
+                row = await cur.fetchone()
+                if row and row[0] == 'NO':
+                    await cur.execute(
+                        "ALTER TABLE multi_agent_run_steps MODIFY COLUMN agent_id INT DEFAULT NULL"
+                    )
+                    log.info("[DB] modified agent_id to allow NULL in multi_agent_run_steps")
             except Exception:
                 pass
 

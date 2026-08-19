@@ -1,4 +1,5 @@
 """Skill business operations."""
+import json
 import os
 import logging
 import shutil
@@ -265,6 +266,25 @@ def read_skill_file(skill_id: int, relative_path: str) -> str:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError("仅支持编辑 UTF-8 文本文件") from exc
+
+
+def read_skill_action_manifest(skill_id: int) -> Dict:
+    """Read optional skill.json action manifest from a Skill package."""
+    skill_dir = Path(SKILLS_DIR) / str(skill_id)
+    manifest_path = skill_dir / "skill.json"
+    if not manifest_path.is_file():
+        return {}
+    if manifest_path.stat().st_size > MAX_EDITABLE_SKILL_FILE_SIZE:
+        raise ValueError("skill.json 超过 1MB 限制")
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ValueError("skill.json 必须是 UTF-8 编码") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"skill.json 不是合法 JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("skill.json 顶层必须是 JSON 对象")
+    return data
 
 
 async def update_skill_file(skill_id: int, user_id: int, relative_path: str, content: str) -> None:

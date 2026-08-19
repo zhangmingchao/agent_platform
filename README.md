@@ -187,6 +187,18 @@ python -m backend.main
 | GET | `/api/sessions/{id}/messages` | 历史消息 |
 | POST | `/api/chat/stream` | SSE 流式对话（JSON 请求体） |
 
+### 多 Agent 工作流
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/workflows` | 工作流列表 |
+| POST | `/api/workflows` | 创建工作流 |
+| GET | `/api/workflows/{id}` | 工作流详情 |
+| PUT | `/api/workflows/{id}` | 更新工作流 |
+| DELETE | `/api/workflows/{id}` | 删除工作流 |
+| POST | `/api/workflows/{id}/run` | 运行工作流 |
+| GET | `/api/workflows/{id}/runs` | 工作流运行记录 |
+| GET | `/api/workflows/runs/{run_id}` | 运行详情与步骤输出 |
+
 ### Trace 调用链
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -200,7 +212,32 @@ python -m backend.main
 3. **配置 MCP** → 添加 MCP Server，查看工具并通过 JSON 参数调试调用
 4. **创建 Agent** → 设置名称、系统提示词、最大迭代次数，并关联 Skill 和 MCP
 5. **开始对话** → 选择 Agent 创建会话，开始流式对话
-6. **查看 Trace** → 在 Trace 调用链菜单查看每轮 LLM 和工具调用详情
+6. **创建多 Agent 工作流** → 将多个 Agent 编排为顺序执行步骤
+7. **查看 Trace** → 在 Trace 调用链菜单查看每轮 LLM 和工具调用详情
+
+多 Agent 工作流示例：
+
+```json
+{
+  "name": "需求分析与审查",
+  "description": "先分析需求，再审查输出",
+  "config": {
+    "mode": "sequential",
+    "steps": [
+      {
+        "agent_id": 1,
+        "role": "需求分析师",
+        "instruction": "分析用户需求，输出结构化实施方案。"
+      },
+      {
+        "agent_id": 2,
+        "role": "审查员",
+        "instruction": "审查上一位 Agent 的方案，指出风险并给出最终建议。"
+      }
+    ]
+  }
+}
+```
 
 ## 数据库结构
 
@@ -215,6 +252,9 @@ chat_sessions  会话表（id, user_id, agent_id, title）
 chat_messages  消息表（id, session_id, role, content）
 trace_runs     对话 Trace（user_id, agent_id, session_id, status, input/output, duration）
 trace_spans    Trace 节点（trace_id, span_type, round_no, input/output, error, duration）
+multi_agent_workflows  多 Agent 工作流配置
+multi_agent_runs       多 Agent 工作流运行记录
+multi_agent_run_steps  多 Agent 工作流步骤记录
 ```
 
 `agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，默认值为 `6`。已有数据库会在后端启动时自动补充该字段。
@@ -226,6 +266,7 @@ trace_spans    Trace 节点（trace_id, span_type, round_no, input/output, error
 ```text
 my-skill.zip
 ├── SKILL.md
+├── skill.json              # 可选：声明 HTTP Action 工具
 └── references/
     ├── guide.md
     └── example.json
@@ -235,7 +276,33 @@ my-skill.zip
 - 页面支持查看和编辑 UTF-8 文本文件，单文件上限为 1 MB。
 - `.md` 文件支持编辑、实时预览和分栏模式。
 - `SKILL.md` 是运行时指令主数据源；数据库 `skills.content` 保留兼容快照。
+- `skill.json` 可选，用于声明可执行 HTTP Action。没有该文件时，Skill 仍按提示词/资料包模式运行。
 - ZIP 最多包含 200 个有效文件，解压总大小不能超过 20 MB。
+
+`skill.json` 示例：
+
+```json
+{
+  "tools": [
+    {
+      "name": "query_weather",
+      "description": "查询指定城市的天气",
+      "type": "http",
+      "method": "GET",
+      "url": "https://api.example.com/weather",
+      "parameters": {
+        "city": {
+          "type": "string",
+          "description": "城市名",
+          "required": true
+        }
+      }
+    }
+  ]
+}
+```
+
+HTTP Action 工具名需为 1-64 位的字母、数字、下划线或短横线。`GET` 请求会把参数放入 query string，其他方法会把参数作为 JSON body 发送。URL 支持 `{param}` 路径占位，例如 `https://api.example.com/weather/{city}`。
 
 ## Trace 调用链
 

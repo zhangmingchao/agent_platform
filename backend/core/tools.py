@@ -7,6 +7,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from ..services.skill_service import read_skill_entrypoint, read_skill_file
+from .skill_actions import build_skill_action_tools
 
 log = logging.getLogger("agent-platform")
 
@@ -74,4 +75,4 @@ Invoke a skill by its name to get full instructions and context for the task."""
         args_schema=SkillFileInput,
     )
 
-    return [skill_tool, file_tool]
+    return [skill_tool, file_tool, *build_skill_action_tools(skills)]

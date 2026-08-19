@@ -17,6 +17,14 @@
       </el-table-column>
       <el-table-column prop="agent_name" label="Agent" width="160" show-overflow-tooltip />
       <el-table-column prop="session_title" label="会话" width="180" show-overflow-tooltip />
+      <el-table-column label="工作流" width="220" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.workflow_name">
+            {{ row.workflow_name }} / Run #{{ row.workflow_run_id }} / Step {{ row.step_order }}
+          </span>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="input_text" label="用户输入" min-width="260" show-overflow-tooltip />
       <el-table-column prop="model" label="模型" width="150" />
       <el-table-column prop="span_count" label="节点" width="80" />
@@ -45,6 +53,12 @@
             <el-descriptions-item label="Agent">{{ currentTrace.agent_name }}</el-descriptions-item>
             <el-descriptions-item label="模型">{{ currentTrace.model }}</el-descriptions-item>
             <el-descriptions-item label="会话">{{ currentTrace.session_title }}</el-descriptions-item>
+            <el-descriptions-item label="工作流">
+              <span v-if="currentTrace.workflow_name">
+                {{ currentTrace.workflow_name }} / Run #{{ currentTrace.workflow_run_id }} / Step {{ currentTrace.step_order }}
+              </span>
+              <span v-else>-</span>
+            </el-descriptions-item>
             <el-descriptions-item label="总耗时">{{ formatDuration(currentTrace.duration_ms) }}</el-descriptions-item>
             <el-descriptions-item label="开始时间">{{ formatDate(currentTrace.started_at) }}</el-descriptions-item>
           </el-descriptions>
@@ -106,8 +120,10 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import request from '../../utils/request'
 
+const route = useRoute()
 const traces = ref([])
 const loading = ref(false)
 const drawerVisible = ref(false)
@@ -115,10 +131,10 @@ const detailLoading = ref(false)
 const currentTrace = ref(null)
 
 const statusType = (status) => ({
-  success: 'success', error: 'danger', cancelled: 'warning', running: 'primary'
+  success: 'success', ok: 'success', error: 'danger', cancelled: 'warning', running: 'primary'
 }[status] || 'info')
 const statusText = (status) => ({
-  success: '成功', error: '失败', cancelled: '已取消', running: '运行中'
+  success: '成功', ok: '成功', error: '失败', cancelled: '已取消', running: '运行中'
 }[status] || status)
 const spanTypeText = (type) => ({ llm: 'LLM', tool: '工具', setup: '准备' }[type] || type)
 const formatDuration = (ms = 0) => ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms || 0} ms`
@@ -148,7 +164,13 @@ const openTrace = async (row) => {
   }
 }
 
-onMounted(loadTraces)
+onMounted(async () => {
+  await loadTraces()
+  const traceId = Number(route.query.trace_id)
+  if (traceId) {
+    await openTrace({ id: traceId })
+  }
+})
 </script>
 
 <style scoped>
