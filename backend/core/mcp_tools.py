@@ -1,4 +1,4 @@
-"""Convert MCP tools to LangChain StructuredTool instances."""
+"""将 MCP 工具转换为 LangChain StructuredTool 实例。"""
 import json
 import logging
 from typing import Dict, List
@@ -12,7 +12,7 @@ log = logging.getLogger("agent-platform")
 
 
 def _create_pydantic_schema(input_schema: dict) -> type:
-    """Create a Pydantic model from an MCP input schema."""
+    """从 MCP 输入模式创建 Pydantic 模型。"""
     properties = input_schema.get("properties", {})
     required = input_schema.get("required", [])
 
@@ -42,7 +42,7 @@ def _create_pydantic_schema(input_schema: dict) -> type:
 
 
 async def mcp_tools_to_langchain(client: McpClient) -> List[StructuredTool]:
-    """Discover MCP tools and convert to LangChain StructuredTool."""
+    """发现 MCP 工具并转换为 LangChain StructuredTool。"""
     mcp_tools = await client.list_tools()
     langchain_tools = []
 
@@ -70,7 +70,7 @@ async def mcp_tools_to_langchain(client: McpClient) -> List[StructuredTool]:
 
 
 async def build_mcp_langchain_tools(mcp_configs: List[Dict]) -> List[StructuredTool]:
-    """Build LangChain tools from all MCP configs."""
+    """从所有 MCP 配置构建 LangChain 工具。"""
     all_tools = []
 
     for mcp_cfg in mcp_configs:

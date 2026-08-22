@@ -1,4 +1,4 @@
-"""SSE streaming wrapper for LangGraph agent events with trace integration."""
+"""LangGraph 智能体事件的 SSE 流式包装器，集成链路追踪。"""
 import json
 import logging
 from datetime import datetime
@@ -10,7 +10,7 @@ log = logging.getLogger("agent-platform")
 
 
 def sse_event(event_type: str, content: str = "") -> str:
-    """Encode one SSE event as single-line JSON."""
+    """将一个 SSE 事件编码为单行 JSON。"""
     payload = json.dumps(
         {"type": event_type, "content": content},
         ensure_ascii=False,
@@ -27,16 +27,16 @@ async def stream_agent_response(
     trace_ctx: Optional[TraceContext] = None,
 ) -> AsyncGenerator[str, None]:
     """
-    Stream agent response as SSE events.
+    以 SSE 事件流式输出智能体响应。
 
-    Yields:
-    - chunk: token streaming content
-    - tool_start: tool name being called
-    - tool_end: tool result (truncated for UI)
-    - done: agent finished
-    - error: error message
+    产生的事件类型：
+    - chunk: Token 流式内容
+    - tool_start: 正在调用的工具名称
+    - tool_end: 工具结果（UI 展示时截断）
+    - done: 智能体执行完毕
+    - error: 错误信息
 
-    If trace_ctx is provided, writes trace spans to MySQL for each LLM/tool call.
+    如果提供了 trace_ctx，则为每次 LLM/工具调用写入 MySQL 追踪 Span。
     """
     from langchain_core.messages import AIMessage, HumanMessage
 

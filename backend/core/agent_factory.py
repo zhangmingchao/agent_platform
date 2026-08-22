@@ -1,4 +1,4 @@
-"""Agent factory — creates LangGraph ReAct agents with tools, memory, streaming, and model config."""
+"""智能体工厂 —— 创建集成工具、记忆、流式输出和模型配置的 LangGraph ReAct 智能体。"""
 import logging
 from typing import Dict, List, Optional
 
@@ -21,7 +21,7 @@ def build_llm(
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
 ) -> ChatOpenAI:
-    """Create a ChatOpenAI instance. Uses model_config if provided, falls back to DeepSeek."""
+    """创建 ChatOpenAI 实例。优先使用传入的 model_config，否则回退到 DeepSeek。"""
     return ChatOpenAI(
         model=model_name,
         base_url=base_url or DEEPSEEK_BASE_URL,
@@ -31,7 +31,7 @@ def build_llm(
 
 
 async def build_all_tools(skills: List[Dict], mcp_configs: List[Dict]) -> list:
-    """Build all LangChain tools from skills and MCP configs."""
+    """从技能和 MCP 配置构建所有 LangChain 工具。"""
     tools = []
     tools.extend(build_skill_tools(skills))
     tools.extend(await build_mcp_langchain_tools(mcp_configs))
@@ -46,10 +46,10 @@ async def create_agent_instance(
     model_config: Optional[Dict] = None,
 ):
     """
-    Create a LangGraph ReAct agent with tools, memory, and system prompt.
+    创建一个集成工具、记忆和系统提示词的 LangGraph ReAct 智能体。
 
-    If model_config is provided (from user's model settings), use its api_key/base_url/model_id.
-    Otherwise fall back to DeepSeek config from environment variables.
+    如果提供了 model_config（来自用户的模型设置），则使用其 api_key/base_url/model_id。
+    否则回退到环境变量中的 DeepSeek 配置。
     """
     if model_config:
         model_name = model_config.get("model_id", DEEPSEEK_MODEL)
@@ -90,7 +90,7 @@ async def create_agent_instance(
 
 
 def get_model_name(agent: Dict, model_config: Optional[Dict] = None) -> str:
-    """Get the model display name for trace logging."""
+    """获取用于链路追踪日志的模型显示名称。"""
     if model_config:
         return model_config.get("model_id", agent.get("model", DEEPSEEK_MODEL))
     return agent.get("model", DEEPSEEK_MODEL)

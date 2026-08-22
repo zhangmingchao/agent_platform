@@ -1,4 +1,4 @@
-"""Local trace handler — captures agent execution events and writes to MySQL."""
+"""本地链路追踪处理器 —— 捕获智能体执行事件并写入 MySQL。"""
 import logging
 import time
 from datetime import datetime
@@ -10,7 +10,7 @@ log = logging.getLogger("agent-platform")
 
 
 class TraceContext:
-    """Manages a single trace run and its spans during agent execution."""
+    """管理单次追踪运行及其在智能体执行期间的 Span。"""
 
     def __init__(
         self,
@@ -32,7 +32,7 @@ class TraceContext:
         self.start_time = time.time()
 
     async def start(self, input_text: str):
-        """Create trace_run in DB."""
+        """在数据库中创建 trace_run 记录。"""
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         self.run_id = await execute(
             "INSERT INTO trace_runs "
@@ -56,7 +56,7 @@ class TraceContext:
         return self.run_id
 
     async def on_llm_start(self, run_id: str, name: str, input_data: str):
-        """Create a trace_span for LLM call."""
+        """为 LLM 调用创建 trace_span。"""
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         span_id = await execute(
             "INSERT INTO trace_spans (run_id, span_type, name, input_data, status, started_at, created_at) "
@@ -66,7 +66,7 @@ class TraceContext:
         self.spans[run_id] = {"span_id": span_id, "start": time.time()}
 
     async def on_llm_end(self, run_id: str, output: str, tokens: int = 0):
-        """Update span with output and duration."""
+        """更新 Span 的输出和耗时。"""
         span = self.spans.get(run_id)
         if not span:
             return
@@ -77,7 +77,7 @@ class TraceContext:
         )
 
     async def on_tool_start(self, run_id: str, name: str, input_data: str):
-        """Create a trace_span for tool call."""
+        """为工具调用创建 trace_span。"""
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         span_id = await execute(
             "INSERT INTO trace_spans (run_id, span_type, name, input_data, status, started_at, created_at) "
@@ -87,7 +87,7 @@ class TraceContext:
         self.spans[run_id] = {"span_id": span_id, "start": time.time()}
 
     async def on_tool_end(self, run_id: str, output: str):
-        """Update span with output and duration."""
+        """更新 Span 的输出和耗时。"""
         span = self.spans.get(run_id)
         if not span:
             return
@@ -98,7 +98,7 @@ class TraceContext:
         )
 
     async def finish(self, output_text: str, total_tokens: int = 0):
-        """Mark trace_run as finished."""
+        """标记 trace_run 为已完成。"""
         duration = int((time.time() - self.start_time) * 1000)
         await execute(
             "UPDATE trace_runs SET status=%s, output_text=%s, total_tokens=%s, total_duration_ms=%s WHERE id=%s",
@@ -107,7 +107,7 @@ class TraceContext:
         log.info("[Trace] run #%s finished (%dms)", self.run_id, duration)
 
     async def error(self, error_msg: str):
-        """Mark trace_run as failed."""
+        """标记 trace_run 为失败。"""
         duration = int((time.time() - self.start_time) * 1000)
         await execute(
             "UPDATE trace_runs SET status=%s, error_text=%s, total_duration_ms=%s WHERE id=%s",

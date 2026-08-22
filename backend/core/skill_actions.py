@@ -1,4 +1,4 @@
-"""Skill Action tools declared by skill.json manifests."""
+"""由 skill.json 清单声明的技能动作工具。"""
 import json
 import logging
 import re
@@ -145,7 +145,7 @@ def _normalize_action(raw_action: Dict, skill: Dict) -> Optional[Dict]:
 
 
 def build_skill_action_tools(skills: List[Dict]) -> List[StructuredTool]:
-    """Build LangChain tools from optional skill.json manifests."""
+    """从可选的 skill.json 清单构建 LangChain 工具。"""
     tools = []
     used_names = set()
 

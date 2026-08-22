@@ -1,4 +1,4 @@
-"""Skill business operations."""
+"""Skill 业务操作。"""
 import json
 import os
 import logging
@@ -15,7 +15,7 @@ from ..database import execute, fetch_all, fetch_one
 log = logging.getLogger("agent-platform")
 
 MAX_SKILL_ARCHIVE_FILES = 200
-MAX_SKILL_ARCHIVE_SIZE = 20 * 1024 * 1024  # 20 MiB after decompression
+MAX_SKILL_ARCHIVE_SIZE = 20 * 1024 * 1024  # 解压后 20 MiB
 MAX_EDITABLE_SKILL_FILE_SIZE = 1024 * 1024  # 1 MiB
 
 
@@ -71,7 +71,7 @@ async def update_skill_metadata(
     name: str,
     description: str,
 ) -> Optional[Dict]:
-    """Update the display metadata without changing the Skill package files."""
+    """更新显示元数据，不修改 Skill 包文件。"""
     existing = await fetch_one(
         "SELECT id FROM skills WHERE id=%s AND user_id=%s",
         (skill_id, user_id),
@@ -86,7 +86,7 @@ async def update_skill_metadata(
 
 
 def _decode_zip_filename(filename: str) -> str:
-    """Repair UTF-8 filenames decoded as CP437 by ZIP tools without the UTF-8 flag."""
+    """修复 ZIP 工具在未设置 UTF-8 标志时按 CP437 解码的 UTF-8 文件名。"""
     try:
         return filename.encode("cp437").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
@@ -94,7 +94,7 @@ def _decode_zip_filename(filename: str) -> str:
 
 
 def _is_ignored_archive_path(path: PurePosixPath) -> bool:
-    """Ignore macOS metadata and IDE files that are not part of a Skill."""
+    """忽略不属于 Skill 的 macOS 元数据文件和 IDE 文件。"""
     return (
         "__MACOSX" in path.parts
         or ".idea" in path.parts
@@ -106,7 +106,7 @@ def _is_ignored_archive_path(path: PurePosixPath) -> bool:
 def _safe_archive_members(
     archive: zipfile.ZipFile,
 ) -> Tuple[List[Tuple[zipfile.ZipInfo, PurePosixPath]], int]:
-    """Validate and normalize archive members before extracting."""
+    """在解压前验证并规范化压缩包成员。"""
     members = []
     for member in archive.infolist():
         if member.is_dir():
@@ -133,8 +133,8 @@ def _safe_archive_members(
     if total_size > MAX_SKILL_ARCHIVE_SIZE:
         raise ValueError("解压后文件大小超过 20MB 限制")
 
-    # Finder often zips the selected folder itself. If every valid file shares
-    # one outer directory, remove it so <skill_id>/ directly contains SKILL.md.
+    # Finder 经常会将选中的文件夹本身一并压缩。如果所有有效文件都共享同一个外层目录，
+    # 则移除该外层目录，使 <skill_id>/ 直接包含 SKILL.md。
     first_parts = {path.parts[0] for _, path in members if len(path.parts) > 1}
     if len(first_parts) == 1 and all(len(path.parts) > 1 for _, path in members):
         members = [
@@ -145,7 +145,7 @@ def _safe_archive_members(
 
 
 def read_skill_archive(archive_content: bytes) -> Tuple[str, str, str]:
-    """Read SKILL.md metadata/content from a zip archive without writing it to disk."""
+    """从 ZIP 压缩包中读取 SKILL.md 元数据和内容，无需写入磁盘。"""
     try:
         with zipfile.ZipFile(BytesIO(archive_content)) as archive:
             members, _ = _safe_archive_members(archive)
@@ -168,7 +168,7 @@ def read_skill_archive(archive_content: bytes) -> Tuple[str, str, str]:
 
 
 def extract_skill_archive(skill_id: int, archive_content: bytes) -> str:
-    """Extract a validated skill archive to data/skills/<skill_id>/ safely."""
+    """将已验证的 Skill 压缩包安全地解压到 data/skills/<skill_id>/ 目录。"""
     target_dir = Path(SKILLS_DIR) / str(skill_id)
     try:
         with zipfile.ZipFile(BytesIO(archive_content)) as archive:
@@ -190,7 +190,7 @@ def extract_skill_archive(skill_id: int, archive_content: bytes) -> str:
 
 
 def parse_skill_metadata(content: str, default_name: str) -> Tuple[str, str]:
-    """Extract the optional title and description from a SKILL.md document."""
+    """从 SKILL.md 文档中提取可选的标题和描述。"""
     name = default_name
     description = ""
     for line in content.split("\n")[:5]:
@@ -203,7 +203,7 @@ def parse_skill_metadata(content: str, default_name: str) -> Tuple[str, str]:
 
 
 def _resolve_skill_file(skill_id: int, relative_path: str) -> Path:
-    """Resolve a user supplied path and keep it strictly inside one Skill folder."""
+    """解析用户提供的路径，并确保其严格限制在单个 Skill 文件夹内。"""
     skill_dir = (Path(SKILLS_DIR) / str(skill_id)).resolve()
     candidate = (skill_dir / relative_path).resolve()
     if skill_dir != candidate and skill_dir not in candidate.parents:
@@ -212,7 +212,7 @@ def _resolve_skill_file(skill_id: int, relative_path: str) -> Path:
 
 
 def find_skill_entrypoint(skill_id: int) -> Optional[Path]:
-    """Locate SKILL.md, preferring the normalized <skill_id>/SKILL.md layout."""
+    """定位 SKILL.md 文件，优先使用规范化的 <skill_id>/SKILL.md 布局。"""
     skill_dir = Path(SKILLS_DIR) / str(skill_id)
     direct_entrypoint = skill_dir / "SKILL.md"
     if direct_entrypoint.is_file():
@@ -220,7 +220,7 @@ def find_skill_entrypoint(skill_id: int) -> Optional[Path]:
     if not skill_dir.is_dir():
         return None
 
-    # Compatibility for archives extracted before outer-folder normalization.
+    # 兼容在外层目录规范化之前解压的压缩包。
     candidates = [
         path for path in skill_dir.rglob("*")
         if path.is_file()
@@ -231,7 +231,7 @@ def find_skill_entrypoint(skill_id: int) -> Optional[Path]:
 
 
 def read_skill_entrypoint(skill_id: int, legacy_content: str = "") -> str:
-    """Read executable Skill instructions from disk, falling back for legacy rows."""
+    """从磁盘读取可执行的 Skill 指令，旧记录则回退使用数据库内容。"""
     entrypoint = find_skill_entrypoint(skill_id)
     if not entrypoint:
         log.warning("[Skill] id=%s 缺少 SKILL.md，使用数据库兼容内容", skill_id)
@@ -245,7 +245,7 @@ def read_skill_entrypoint(skill_id: int, legacy_content: str = "") -> str:
 
 
 def list_skill_files(skill_id: int) -> List[Dict]:
-    """Return files extracted from a Skill zip package, using relative paths."""
+    """返回 Skill ZIP 包中解压出的文件，使用相对路径。"""
     skill_dir = Path(SKILLS_DIR) / str(skill_id)
     if not skill_dir.is_dir():
         return []
@@ -269,7 +269,7 @@ def read_skill_file(skill_id: int, relative_path: str) -> str:
 
 
 def read_skill_action_manifest(skill_id: int) -> Dict:
-    """Read optional skill.json action manifest from a Skill package."""
+    """从 Skill 包中读取可选的 skill.json 动作清单。"""
     skill_dir = Path(SKILLS_DIR) / str(skill_id)
     manifest_path = skill_dir / "skill.json"
     if not manifest_path.is_file():
@@ -288,7 +288,7 @@ def read_skill_action_manifest(skill_id: int) -> Dict:
 
 
 async def update_skill_file(skill_id: int, user_id: int, relative_path: str, content: str) -> None:
-    """Save a Skill package text file."""
+    """保存 Skill 包中的文本文件。"""
     path = _resolve_skill_file(skill_id, relative_path)
     if not path.is_file():
         raise ValueError("文件不存在")
@@ -296,7 +296,7 @@ async def update_skill_file(skill_id: int, user_id: int, relative_path: str, con
         raise ValueError("文件超过 1MB，不支持保存")
     path.write_text(content, encoding="utf-8")
 
-    # Keep a compatibility snapshot for old code/data migrations. Runtime reads disk first.
+    # 为旧代码/数据迁移保留兼容快照。运行时优先读取磁盘。
     if path.name.lower() == "skill.md":
         await execute(
             "UPDATE skills SET content=%s WHERE id=%s AND user_id=%s",

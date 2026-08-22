@@ -1,4 +1,4 @@
-"""Redis client for token storage."""
+"""用于 Token 存储的 Redis 客户端。"""
 import logging
 from typing import Optional
 
@@ -12,7 +12,7 @@ _pool: Optional[aioredis.ConnectionPool] = None
 
 
 async def get_redis() -> aioredis.Redis:
-    """Get Redis connection from pool."""
+    """从连接池获取 Redis 连接。"""
     global _pool
     if _pool is None:
         _pool = aioredis.ConnectionPool(
@@ -26,7 +26,7 @@ async def get_redis() -> aioredis.Redis:
 
 
 async def close_redis():
-    """Close Redis connection pool on shutdown."""
+    """关闭时释放 Redis 连接池。"""
     global _pool
     if _pool is not None:
         await _pool.disconnect()
@@ -34,19 +34,19 @@ async def close_redis():
 
 
 async def set_token(token: str, user_id: int):
-    """Store token → user_id in Redis with TTL matching JWT expiry."""
+    """将 token → user_id 存入 Redis，TTL 与 JWT 过期时间一致。"""
     r = await get_redis()
     await r.setex(f"token:{token}", JWT_EXPIRE_HOURS * 3600, str(user_id))
 
 
 async def get_token_user_id(token: str) -> Optional[int]:
-    """Get user_id by token from Redis. Returns None if not found."""
+    """根据 token 从 Redis 获取 user_id，未找到返回 None。"""
     r = await get_redis()
     val = await r.get(f"token:{token}")
     return int(val) if val else None
 
 
 async def delete_token(token: str):
-    """Delete token from Redis (logout)."""
+    """从 Redis 删除 token（登出）。"""
     r = await get_redis()
     await r.delete(f"token:{token}")

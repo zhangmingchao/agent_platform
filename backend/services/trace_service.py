@@ -1,4 +1,4 @@
-"""Persistence helpers for chat traces and spans."""
+"""聊天链路追踪和 span 的持久化辅助函数。"""
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional

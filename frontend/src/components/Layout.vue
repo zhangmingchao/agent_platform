@@ -148,7 +148,7 @@ const handleLogout = async () => {
   try {
     await request.post('/api/auth/logout')
   } catch (e) {
-    // token may already be expired, ignore
+    // token 可能已过期，忽略
   }
   userStore.logout()
   router.push('/login')
@@ -173,7 +173,7 @@ const submitPassword = async () => {
       current_password: updatePasswordForm.currentPassword,
       new_password: updatePasswordForm.newPassword
     })
-    // Delete token from Redis
+    // 从 Redis 删除 token
     try { await request.post('/api/auth/logout') } catch (e) {}
     userStore.logout()
     ElMessage.success('密码修改成功，请重新登录')

@@ -195,7 +195,7 @@ const loadData = async () => {
         modelSource.value = 'builtin'
       }
     }
-  } catch (e) { /* handled */ }
+  } catch (e) { /* 已处理 */ }
 }
 
 const handleSubmit = async () => {

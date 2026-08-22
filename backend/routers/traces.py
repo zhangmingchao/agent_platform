@@ -1,4 +1,4 @@
-"""Traces router — local MySQL-based trace querying."""
+"""链路追踪路由 — 基于本地 MySQL 的追踪查询。"""
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import get_current_user

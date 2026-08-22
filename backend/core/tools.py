@@ -1,4 +1,4 @@
-"""LangChain tool definitions for Skills."""
+"""技能相关的 LangChain 工具定义。"""
 import json
 import logging
 from typing import Dict, List
@@ -13,16 +13,16 @@ log = logging.getLogger("agent-platform")
 
 
 class SkillInput(BaseModel):
-    command: str = Field(description="The skill name to execute")
+    command: str = Field(description="要执行的技能名称")
 
 
 class SkillFileInput(BaseModel):
-    skill_name: str = Field(description="The owning Skill name")
-    path: str = Field(description="Relative path inside the Skill package")
+    skill_name: str = Field(description="所属的技能名称")
+    path: str = Field(description="技能包内的相对路径")
 
 
 def build_skill_tools(skills: List[Dict]) -> List[StructuredTool]:
-    """Build LangChain StructuredTools from skill definitions."""
+    """从技能定义构建 LangChain StructuredTool。"""
     if not skills:
         return []
 

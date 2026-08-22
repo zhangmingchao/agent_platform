@@ -1,4 +1,4 @@
-"""Agent Platform FastAPI application entry point (LangChain edition)."""
+"""Agent Platform FastAPI 应用入口（LangChain 版本）。"""
 
 import logging
 import os

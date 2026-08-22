@@ -1,6 +1,6 @@
 """
-Database layer - MySQL with aiomysql for async operations.
-Tables: users, models, agents, agent_skills, agent_mcps, skills, mcp_configs,
+数据库层 —— 基于 aiomysql 的 MySQL 异步操作。
+数据表：users, models, agents, agent_skills, agent_mcps, skills, mcp_configs,
         chat_sessions, chat_messages, trace_runs, trace_spans
 """
 import aiomysql
@@ -278,7 +278,7 @@ async def init_db():
             for sql in statements:
                 await cur.execute(sql)
 
-            # Migration: add model_config_id to agents if missing
+            # 数据迁移：如果 agents 表缺少 model_config_id 字段则添加
             try:
                 await cur.execute(
                     "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
@@ -343,7 +343,7 @@ async def init_db():
                 except Exception:
                     pass
 
-            # Migration: make agent_id nullable in multi_agent_run_steps
+            # 数据迁移：将 multi_agent_run_steps 中的 agent_id 改为可空
             try:
                 await cur.execute(
                     "SELECT IS_NULLABLE FROM information_schema.COLUMNS "

@@ -1,4 +1,4 @@
-"""Multi-agent workflow persistence and runtime service."""
+"""多 Agent 工作流持久化与运行时服务。"""
 import asyncio
 import json
 import re
@@ -37,7 +37,7 @@ def _parse_config(config) -> Dict:
     return config
 
 
-# ── Sequential config helpers ──────────────────────────────────────────
+# ── 顺序配置辅助函数 ──────────────────────────────────────────
 
 def _normalize_steps(config: Dict) -> List[Dict]:
     if _is_graph_config(config):
@@ -63,7 +63,7 @@ def _normalize_steps(config: Dict) -> List[Dict]:
     return normalized
 
 
-# ── Graph (DAG) config helpers ─────────────────────────────────────────
+# ── 图（DAG）配置辅助函数 ─────────────────────────────────────────
 
 def _is_graph_config(config: Dict) -> bool:
     return isinstance(config.get("nodes"), list) and isinstance(config.get("edges"), list)
@@ -199,7 +199,7 @@ def _find_merge_point(config: Dict, branch_starts: List[str]) -> Optional[str]:
     return next(iter(common)) if common else None
 
 
-# ── Model / agent loading helpers ──────────────────────────────────────
+# ── 模型 / Agent 加载辅助函数 ──────────────────────────────────────
 
 async def _load_model_config(agent: Dict, user_id: int) -> Optional[Dict]:
     model_config_id = agent.get("model_config_id")
@@ -214,7 +214,7 @@ async def _validate_workflow_agents(user_id: int, config: Dict) -> None:
             raise HTTPException(status_code=400, detail=f"Agent 不存在或无权限: {step['agent_id']}")
 
 
-# ── CRUD ───────────────────────────────────────────────────────────────
+# ── 增删改查 ───────────────────────────────────────────────────────────────
 
 async def list_workflows(user_id: int) -> List[Dict]:
     workflows = await fetch_all(

@@ -1,4 +1,4 @@
-"""Chat orchestration service for session memory, agent execution, and persistence."""
+"""聊天编排服务，负责会话记忆、Agent 执行与数据持久化。"""
 import asyncio
 import json
 import logging
@@ -30,7 +30,7 @@ async def _load_model_config(agent, user_id):
 
 
 async def prepare_chat_run(user: dict, message: str, session_id: int) -> dict:
-    """Load all runtime data needed to execute one chat request."""
+    """加载执行一次聊天请求所需的全部运行时数据。"""
     session = await fetch_one(
         "SELECT id, agent_id FROM chat_sessions WHERE id=%s AND user_id=%s",
         (session_id, user["user_id"]),
@@ -93,7 +93,7 @@ async def prepare_chat_run(user: dict, message: str, session_id: int) -> dict:
 
 
 async def stream_chat(user: dict, message: str, session_id: int):
-    """Run the agent and yield SSE chunks while persisting the assistant reply."""
+    """运行 Agent 并生成 SSE 数据块，同时持久化助手回复。"""
     run = await prepare_chat_run(user, message, session_id)
     full_response = []
 

@@ -1,1 +1,1 @@
-"""LangChain core module — agent factory, tools, MCP integration, streaming."""
+"""LangChain 核心模块 —— 智能体工厂、工具、MCP 集成、流式输出。"""

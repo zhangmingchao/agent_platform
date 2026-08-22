@@ -15,7 +15,7 @@
     </el-form>
 
     <div class="wf-canvas-shell">
-      <!-- Palette -->
+      <!-- 节点面板 -->
       <div class="wf-palette">
         <div class="palette-title">节点类型</div>
         <div class="palette-item" draggable @dragstart="onDragStart($event, 'agent')" @click="addNodeAtCenter('agent')">
@@ -34,7 +34,7 @@
         <div class="palette-hint">拖拽到画布或点击添加</div>
       </div>
 
-      <!-- Canvas -->
+      <!-- 画布 -->
       <div class="wf-canvas" @drop="onDrop" @dragover.prevent @dragenter.prevent>
         <VueFlow
           :nodes="nodes"
@@ -53,7 +53,7 @@
         </VueFlow>
       </div>
 
-      <!-- Config Panel -->
+      <!-- 配置面板 -->
       <div class="wf-config">
         <template v-if="selectedNode">
           <div class="config-title">节点配置</div>
@@ -63,7 +63,7 @@
               <el-input v-model="selectedNode.data.label" placeholder="节点名称" />
             </el-form-item>
 
-            <!-- Agent config -->
+            <!-- Agent 配置 -->
             <template v-if="selectedNode.type === 'agent'">
               <el-form-item label="Agent">
                 <el-select v-model="selectedNode.data.agent_id" filterable placeholder="选择 Agent" style="width:100%" @change="onAgentChange">
@@ -81,7 +81,7 @@
               </el-form-item>
             </template>
 
-            <!-- Condition config -->
+            <!-- 条件分支配置 -->
             <template v-if="selectedNode.type === 'condition'">
               <el-form-item label="说明">
                 <div class="cond-hint">按顺序匹配，命中则走对应分支。未命中走"默认"分支。</div>
@@ -100,7 +100,7 @@
               <el-button text type="primary" size="small" @click="addCondition">+ 添加分支</el-button>
             </template>
 
-            <!-- Parallel config -->
+            <!-- 并行节点配置 -->
             <template v-if="selectedNode.type === 'parallel'">
               <el-form-item label="说明">
                 <div class="cond-hint">并行节点会同时执行所有下游连接的节点，结果合并后传给下一个节点。</div>
@@ -388,7 +388,7 @@ onMounted(async () => {
 </style>
 
 <style>
-/* Vue Flow node styles (global) */
+/* Vue Flow 节点样式（全局） */
 .vf-node {
   background: #fff;
   border: 2px solid #e5e7eb;

@@ -1,4 +1,4 @@
-"""Models router — user-level LLM model management."""
+"""模型路由 — 用户级 LLM 模型管理。"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 

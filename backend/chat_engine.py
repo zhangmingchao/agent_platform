@@ -1,6 +1,6 @@
 """
-Chat Engine - Core streaming conversation with Agent + Skill + MCP.
-Handles multi-round tool call loops.
+聊天引擎 —— 核心流式对话，集成 Agent + 技能 + MCP。
+处理多轮工具调用循环。
 """
 import json
 import time
@@ -22,7 +22,7 @@ SEP = "━" * 60
 
 
 async def _trace_span(trace_id: Optional[int], **kwargs) -> None:
-    """Trace persistence must never break the user's chat request."""
+    """链路追踪持久化绝不能打断用户的聊天请求。"""
     if not trace_id:
         return
     try:
@@ -32,7 +32,7 @@ async def _trace_span(trace_id: Optional[int], **kwargs) -> None:
 
 
 def _sse_event(event_type: str, content: str = "") -> str:
-    """Encode one SSE event as single-line JSON so newlines are preserved."""
+    """将一个 SSE 事件编码为单行 JSON，以保留换行符。"""
     payload = json.dumps(
         {"type": event_type, "content": content},
         ensure_ascii=False,
@@ -77,7 +77,7 @@ def _log_final_response(text: str):
 
 
 def build_skill_tool(skills: List[Dict]) -> Dict:
-    """Build a unified Skill tool from multiple skill definitions."""
+    """从多个技能定义构建统一的技能工具。"""
     available = []
     for s in skills:
         available.append(
@@ -113,7 +113,7 @@ Invoke a skill by its name to get full instructions and context for the task."""
 
 
 def build_skill_file_tool(skills: List[Dict]) -> Dict:
-    """Allow the model to read referenced text files from an activated Skill package."""
+    """允许模型从已激活的技能包中读取引用的文本文件。"""
     skill_names = [skill["name"] for skill in skills]
     return {
         "type": "function",
@@ -146,7 +146,7 @@ def execute_skill(skills_map: Dict[str, Dict], command: str) -> str:
     skill = skills_map.get(command)
     if not skill:
         return f"Unknown skill: {command}"
-    # Skill 的可执行内容以 data/skills/<id>/SKILL.md 为准；content 仅兼容旧数据。
+    # 技能的可执行内容以 data/skills/<id>/SKILL.md 为准；content 仅兼容旧数据。
     content = read_skill_entrypoint(skill["id"], skill.get("content", ""))
     log.info(f"[Skill执行] name={command} | 内容长度={len(content)}")
     return content
@@ -166,8 +166,8 @@ def execute_skill_file(skills_map: Dict[str, Dict], skill_name: str, path: str) 
 
 async def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) -> tuple:
     """
-    Build all tools for an agent.
-    Returns: (tools_list, executors_dict)
+    为 Agent 构建所有工具。
+    返回：(工具列表, 执行器字典)
     """
     tools = []
     executors = {}
@@ -211,7 +211,7 @@ async def chat_stream(
     trace_id: Optional[int] = None,
 ) -> AsyncGenerator[str, None]:
     """
-    Core streaming chat with multi-round tool call loop.
+    核心流式聊天，支持多轮工具调用循环。
     """
     model_name = agent.get("model", DEEPSEEK_MODEL)
     temperature = agent.get("temperature", 0.7)

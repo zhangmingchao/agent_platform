@@ -1,4 +1,4 @@
-"""Model management service — user-level LLM model configurations."""
+"""模型管理服务 — 用户级 LLM 模型配置。"""
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -13,7 +13,7 @@ def _now():
 
 
 async def list_models(user_id: int) -> List[Dict]:
-    """List all models for a user."""
+    """列出用户的所有模型。"""
     return await fetch_all(
         "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, is_active, "
         "created_at, updated_at FROM models WHERE user_id=%s ORDER BY created_at DESC",
@@ -22,7 +22,7 @@ async def list_models(user_id: int) -> List[Dict]:
 
 
 async def get_model(model_id: int, user_id: int) -> Optional[Dict]:
-    """Get a single model by ID, including api_key for agent factory."""
+    """根据 ID 获取单个模型，包含供 Agent 工厂使用的 api_key。"""
     return await fetch_one(
         "SELECT * FROM models WHERE id=%s AND user_id=%s",
         (model_id, user_id)
@@ -30,7 +30,7 @@ async def get_model(model_id: int, user_id: int) -> Optional[Dict]:
 
 
 async def get_model_safe(model_id: int, user_id: int) -> Optional[Dict]:
-    """Get model without api_key (for API responses)."""
+    """获取不包含 api_key 的模型信息（用于 API 响应）。"""
     return await fetch_one(
         "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, is_active, "
         "created_at, updated_at FROM models WHERE id=%s AND user_id=%s",
@@ -39,7 +39,7 @@ async def get_model_safe(model_id: int, user_id: int) -> Optional[Dict]:
 
 
 async def create_model(user_id: int, data: Dict) -> Dict:
-    """Create a new model configuration."""
+    """创建新的模型配置。"""
     now = _now()
     model_id = await execute(
         "INSERT INTO models (user_id, name, provider, model_id, api_key, base_url, "
@@ -64,7 +64,7 @@ async def create_model(user_id: int, data: Dict) -> Dict:
 
 
 async def update_model(model_id: int, user_id: int, data: Dict) -> Optional[Dict]:
-    """Update an existing model."""
+    """更新现有模型。"""
     existing = await fetch_one(
         "SELECT id FROM models WHERE id=%s AND user_id=%s",
         (model_id, user_id)
@@ -93,8 +93,8 @@ async def update_model(model_id: int, user_id: int, data: Dict) -> Optional[Dict
 
 
 async def delete_model(model_id: int, user_id: int) -> bool:
-    """Delete a model. Also clear model_config_id from agents referencing it."""
-    # Clear references in agents
+    """删除模型。同时清除引用该模型的 Agent 中的 model_config_id。"""
+    # 清除 Agent 中的引用
     await execute(
         "UPDATE agents SET model_config_id=NULL WHERE model_config_id=%s AND user_id=%s",
         (model_id, user_id)

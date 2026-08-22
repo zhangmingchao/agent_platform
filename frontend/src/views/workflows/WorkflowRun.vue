@@ -9,7 +9,7 @@
     </div>
 
     <div class="run-layout">
-      <!-- Left: Input panel -->
+      <!-- 左侧：输入面板 -->
       <div class="run-input-panel">
         <div class="panel-title">任务输入</div>
         <el-input
@@ -43,7 +43,7 @@
         </template>
       </div>
 
-      <!-- Center: Canvas (graph) or sequential output -->
+      <!-- 中间：流程图（画布）或顺序输出 -->
       <div class="run-canvas-panel" v-if="isGraphWorkflow">
         <div class="canvas-header">
           <span class="canvas-title">执行流程图</span>
@@ -73,7 +73,7 @@
         </div>
       </div>
 
-      <!-- Right: Node detail panel -->
+      <!-- 右侧：节点详情面板 -->
       <div class="run-detail-panel" v-if="isGraphWorkflow">
         <template v-if="selectedStep">
           <div class="panel-title">节点详情</div>
@@ -108,7 +108,7 @@
       </div>
     </div>
 
-    <!-- Sequential steps output (non-graph workflows) -->
+    <!-- 顺序步骤输出（非图工作流） -->
     <div class="seq-output" v-if="!isGraphWorkflow">
       <el-tabs v-model="activeTab" class="result-tabs">
         <el-tab-pane label="本次结果" name="current">
@@ -116,7 +116,7 @@
           <template v-else>
             <el-alert :title="runStatusTitle(currentRun.status)" :type="runStatusAlert(currentRun.status)" :closable="false" show-icon />
 
-            <!-- Streaming event log -->
+            <!-- 流式事件日志 -->
             <div class="result-section" v-if="currentRun.streamLogs && currentRun.streamLogs.length">
               <div class="section-title">执行日志</div>
               <div class="stream-log">
@@ -127,7 +127,7 @@
               </div>
             </div>
 
-            <!-- Live streaming output -->
+            <!-- 实时流式输出 -->
             <div class="result-section" v-if="currentRun.activeNodeId">
               <div class="section-title">实时输出 ({{ activeStepName }})</div>
               <pre class="result-text streaming">{{ activeStepOutput || '等待输出...' }}</pre>
@@ -181,7 +181,7 @@
       </el-tabs>
     </div>
 
-    <!-- Graph workflow: streaming output + final results + run history -->
+    <!-- 图工作流：流式输出 + 最终结果 + 运行记录 -->
     <div class="graph-output" v-if="isGraphWorkflow">
       <el-tabs v-model="activeTab" class="result-tabs">
         <el-tab-pane label="实时输出" name="current">
@@ -200,13 +200,13 @@
               </div>
             </div>
 
-            <!-- Live streaming output for active node -->
+            <!-- 当前活动节点的实时流式输出 -->
             <div class="result-section" v-if="currentRun.activeNodeId">
               <div class="section-title">实时输出 ({{ activeStepName }})</div>
               <pre class="result-text streaming">{{ activeStepOutput || '等待输出...' }}</pre>
             </div>
 
-            <!-- Final output -->
+            <!-- 最终输出 -->
             <div class="result-section" v-if="currentRun.output || currentRun.output_text">
               <div class="section-title">最终输出</div>
               <pre class="result-text">{{ currentRun.output || currentRun.output_text }}</pre>
@@ -216,7 +216,7 @@
               <pre class="result-text error">{{ currentRun.error_text }}</pre>
             </div>
 
-            <!-- Node outputs -->
+            <!-- 节点输出 -->
             <div class="result-section">
               <div class="section-title">节点输出</div>
               <el-collapse>
@@ -822,7 +822,7 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
-/* Vue Flow node status styles (global) */
+/* Vue Flow 节点状态样式（全局） */
 .vf-node {
   background: #fff;
   border: 2px solid #e5e7eb;
@@ -889,7 +889,7 @@ onBeforeUnmount(() => {
 .vue-flow__edge-textwrapper { font-size: 11px; font-weight: 600; }
 .vue-flow__edge-text { font-size: 11px; font-weight: 600; fill: #92400e; }
 
-/* Node status colors */
+/* 节点状态颜色 */
 .vue-flow__node.status-pending .vf-node {
   opacity: 0.5;
   border-color: #d1d5db;

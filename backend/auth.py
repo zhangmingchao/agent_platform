@@ -1,5 +1,5 @@
 """
-Authentication module — JWT + Redis token management with FastAPI Depends support.
+认证模块 —— 基于 JWT + Redis 的 Token 管理，支持 FastAPI Depends 依赖注入。
 """
 import jwt
 import logging
@@ -24,7 +24,7 @@ async def authenticate_user(username: str, password: str) -> Optional[Dict]:
 
 
 def create_token(user_id: int, username: str) -> str:
-    """Create JWT token. Caller must also call set_token() to store in Redis."""
+    """创建 JWT Token。调用方还需调用 set_token() 将 Token 存入 Redis。"""
     payload = {
         "user_id": user_id,
         "username": username,
@@ -34,7 +34,7 @@ def create_token(user_id: int, username: str) -> str:
 
 
 async def login_and_store_token(user_id: int, username: str) -> str:
-    """Create JWT token and store in Redis."""
+    """创建 JWT Token 并存入 Redis。"""
     token = create_token(user_id, username)
     await set_token(token, user_id)
     log.info("[Auth] login user=%s, token stored in Redis", username)
@@ -43,9 +43,9 @@ async def login_and_store_token(user_id: int, username: str) -> str:
 
 async def get_current_user(request: Request) -> Dict:
     """
-    Required auth — raises 401 if not authenticated.
-    Can be used as Depends(get_current_user) or called directly with request.
-    Checks Redis for token validity, then decodes JWT for user info.
+    强制认证 —— 未认证时抛出 401 错误。
+    可作为 Depends(get_current_user) 使用，或直接传入 request 调用。
+    先检查 Redis 中 Token 是否有效，再解码 JWT 获取用户信息。
     """
     auth_header = request.headers.get("Authorization", "")
     token = None
@@ -57,12 +57,12 @@ async def get_current_user(request: Request) -> Dict:
     if not token:
         raise HTTPException(status_code=401, detail="未登录")
 
-    # Check Redis — token must exist
+    # 检查 Redis —— Token 必须存在
     user_id = await get_token_user_id(token)
     if not user_id:
         raise HTTPException(status_code=401, detail="token无效或已过期，请重新登录")
 
-    # Decode JWT for username
+    # 解码 JWT 获取用户名
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         return {"user_id": payload["user_id"], "username": payload["username"]}
@@ -74,8 +74,8 @@ async def get_current_user(request: Request) -> Dict:
 
 async def get_current_user_optional(request: Request) -> Optional[Dict]:
     """
-    Optional auth — returns user dict if authenticated, None otherwise.
-    Use for endpoints like logout/register that don't require auth but benefit from it.
+    可选认证 —— 已认证则返回用户字典，否则返回 None。
+    适用于登出/注册等不需要强制认证但能从中受益的接口。
     """
     auth_header = request.headers.get("Authorization", "")
     token = None
@@ -99,7 +99,7 @@ async def get_current_user_optional(request: Request) -> Optional[Dict]:
 
 
 async def logout_token(request: Request) -> bool:
-    """Delete token from Redis (logout). Returns True if token was found."""
+    """从 Redis 删除 Token（登出）。Token 存在时返回 True。"""
     auth_header = request.headers.get("Authorization", "")
     token = None
     if auth_header.startswith("Bearer "):

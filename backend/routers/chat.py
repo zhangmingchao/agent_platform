@@ -1,4 +1,4 @@
-"""Chat router — HTTP endpoints for LangGraph streaming chat."""
+"""聊天路由 — 提供 LangGraph 流式聊天的 HTTP 接口。"""
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 

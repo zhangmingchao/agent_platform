@@ -1,4 +1,4 @@
-"""MCP configuration business operations."""
+"""MCP 配置业务操作。"""
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional

@@ -121,7 +121,7 @@ onMounted(async () => {
     recentAgents.value = agents.slice(0, 5)
     recentSessions.value = sessions.slice(0, 5)
   } catch (e) {
-    // handled by interceptor
+    // 错误已由拦截器统一处理
   }
 })
 </script>

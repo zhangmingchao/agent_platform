@@ -31,7 +31,7 @@ class ChangePasswordRequest(BaseModel):
 
 @router.post("/login")
 async def api_login(req: LoginRequest):
-    """Login — creates JWT and stores token in Redis."""
+    """登录 — 创建 JWT 并将令牌存储到 Redis。"""
     user = await fetch_one(
         "SELECT id, username FROM users WHERE username=%s AND password=%s",
         (req.username, req.password)
@@ -45,7 +45,7 @@ async def api_login(req: LoginRequest):
 
 @router.post("/register")
 async def api_register(req: RegisterRequest):
-    """Register — no auth required."""
+    """注册 — 无需身份验证。"""
     existing = await fetch_one("SELECT id FROM users WHERE username=%s", (req.username,))
     if existing:
         raise HTTPException(status_code=400, detail="用户名已存在")
@@ -58,7 +58,7 @@ async def api_register(req: RegisterRequest):
 
 @router.get("/me")
 async def api_me(user: dict = Depends(get_current_user)):
-    """Get current user info — requires auth."""
+    """获取当前用户信息 — 需要身份验证。"""
     return user
 
 
@@ -67,7 +67,7 @@ async def api_change_password(
     data: ChangePasswordRequest,
     user: dict = Depends(get_current_user),
 ):
-    """Change password — requires auth."""
+    """修改密码 — 需要身份验证。"""
     if data.new_password == data.current_password:
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
 
@@ -91,7 +91,7 @@ async def api_change_password(
 
 @router.post("/logout")
 async def api_logout(request: Request):
-    """Logout — deletes token from Redis. No auth required (optional auth)."""
+    """退出登录 — 从 Redis 删除令牌。无需身份验证（可选验证）。"""
     deleted = await logout_token(request)
     if deleted:
         return {"success": True, "message": "已退出登录"}

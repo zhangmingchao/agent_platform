@@ -1,6 +1,6 @@
 """
-MCP Client - connects to MCP Server via Streamable HTTP (JSON-RPC 2.0).
-Dynamically discovers tools and executes them.
+MCP 客户端 —— 通过可流式 HTTP（JSON-RPC 2.0）连接 MCP 服务器。
+动态发现工具并执行。
 """
 import json
 import uuid
