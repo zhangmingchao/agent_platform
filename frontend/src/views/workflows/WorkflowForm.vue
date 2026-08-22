@@ -273,7 +273,21 @@ const loadWorkflow = async () => {
   form.description = wf.description || ''
   const config = wf.config || {}
   nodes.value = (config.nodes || []).map(n => ({ ...n, data: { ...n.data } }))
-  edges.value = (config.edges || []).map(e => ({ ...e, type: 'smoothstep', animated: true }))
+  const condNodes = {}
+  for (const n of config.nodes || []) {
+    if (n.type === 'condition') condNodes[n.id] = n.data?.conditions || []
+  }
+  edges.value = (config.edges || []).map(e => {
+    const sh = e.source_handle ?? e.sourceHandle ?? null
+    const th = e.target_handle ?? e.targetHandle ?? null
+    let label = ''
+    if (sh && sh.startsWith('cond-')) {
+      const idx = parseInt(sh.replace('cond-', ''))
+      const conds = condNodes[e.source] || []
+      if (conds[idx]) label = conds[idx].label || ''
+    }
+    return { ...e, sourceHandle: sh, targetHandle: th, type: 'smoothstep', animated: true, label }
+  })
   nodeCounter = nodes.value.length
 }
 
@@ -437,4 +451,16 @@ onMounted(async () => {
 .vue-flow__edge-path { stroke-width: 2; }
 .vue-flow__edge.animated .vue-flow__edge-path { stroke-dasharray: 6; animation: dashmove 0.5s linear infinite; }
 @keyframes dashmove { to { stroke-dashoffset: -6; } }
+.vue-flow__edge-textwrapper {
+  font-size: 11px;
+  font-weight: 600;
+}
+.vue-flow__edge-text {
+  font-size: 11px;
+  font-weight: 600;
+  fill: #92400e;
+  background: #fef3c7;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
 </style>

@@ -115,22 +115,44 @@
           <el-empty v-if="!currentRun" description="还没有运行结果" />
           <template v-else>
             <el-alert :title="runStatusTitle(currentRun.status)" :type="runStatusAlert(currentRun.status)" :closable="false" show-icon />
-            <div class="result-section">
+
+            <!-- Streaming event log -->
+            <div class="result-section" v-if="currentRun.streamLogs && currentRun.streamLogs.length">
+              <div class="section-title">执行日志</div>
+              <div class="stream-log">
+                <div v-for="(log, i) in currentRun.streamLogs" :key="i" class="log-item" :class="log.type">
+                  <span class="log-time">{{ new Date(log.timestamp).toLocaleTimeString('zh-CN') }}</span>
+                  <span class="log-text">{{ log.text }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Live streaming output -->
+            <div class="result-section" v-if="currentRun.activeNodeId">
+              <div class="section-title">实时输出 ({{ activeStepName }})</div>
+              <pre class="result-text streaming">{{ activeStepOutput || '等待输出...' }}</pre>
+            </div>
+
+            <div class="result-section" v-if="currentRun.output || currentRun.output_text">
               <div class="section-title">最终输出</div>
-              <pre class="result-text">{{ currentRun.output || currentRun.output_text || currentRun.error_text || '运行中...' }}</pre>
+              <pre class="result-text">{{ currentRun.output || currentRun.output_text }}</pre>
+            </div>
+            <div class="result-section" v-if="currentRun.error_text">
+              <div class="section-title">错误信息</div>
+              <pre class="result-text error">{{ currentRun.error_text }}</pre>
             </div>
             <div class="result-section">
               <div class="section-title">步骤输出</div>
               <el-collapse>
                 <el-collapse-item
                   v-for="step in currentRun.steps || []"
-                  :key="step.step_order"
-                  :title="`Step ${step.step_order} · ${step.role || step.role_name || ''} · ${step.agent_name || agentName(step.agent_id)}`"
+                  :key="step.node_id || step.step_order"
+                  :title="`${step.role_name || step.role || 'Step ' + step.step_order} [${step.status}]`"
                 >
                   <div class="trace-link" v-if="step.trace_run_id">
                     <el-button type="primary" link @click="$router.push(`/traces?trace_id=${step.trace_run_id}`)">查看 Trace</el-button>
                   </div>
-                  <pre class="result-text">{{ step.output || step.output_text || step.error_text || '无输出' }}</pre>
+                  <pre class="result-text">{{ step.streamOutput || step.output_text || step.error_text || '无输出' }}</pre>
                 </el-collapse-item>
               </el-collapse>
             </div>
@@ -159,13 +181,32 @@
       </el-tabs>
     </div>
 
-    <!-- Graph workflow: final output + run history -->
+    <!-- Graph workflow: streaming output + final results + run history -->
     <div class="graph-output" v-if="isGraphWorkflow">
       <el-tabs v-model="activeTab" class="result-tabs">
-        <el-tab-pane label="最终输出" name="current">
+        <el-tab-pane label="实时输出" name="current">
           <el-empty v-if="!currentRun" description="还没有运行结果" />
           <template v-else>
             <el-alert :title="runStatusTitle(currentRun.status)" :type="runStatusAlert(currentRun.status)" :closable="false" show-icon />
+
+            <!-- Streaming event log -->
+            <div class="result-section" v-if="currentRun.streamLogs && currentRun.streamLogs.length">
+              <div class="section-title">执行日志</div>
+              <div class="stream-log">
+                <div v-for="(log, i) in currentRun.streamLogs" :key="i" class="log-item" :class="log.type">
+                  <span class="log-time">{{ new Date(log.timestamp).toLocaleTimeString('zh-CN') }}</span>
+                  <span class="log-text">{{ log.text }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Live streaming output for active node -->
+            <div class="result-section" v-if="currentRun.activeNodeId">
+              <div class="section-title">实时输出 ({{ activeStepName }})</div>
+              <pre class="result-text streaming">{{ activeStepOutput || '等待输出...' }}</pre>
+            </div>
+
+            <!-- Final output -->
             <div class="result-section" v-if="currentRun.output || currentRun.output_text">
               <div class="section-title">最终输出</div>
               <pre class="result-text">{{ currentRun.output || currentRun.output_text }}</pre>
@@ -174,18 +215,20 @@
               <div class="section-title">错误信息</div>
               <pre class="result-text error">{{ currentRun.error_text }}</pre>
             </div>
+
+            <!-- Node outputs -->
             <div class="result-section">
-              <div class="section-title">节点执行记录</div>
+              <div class="section-title">节点输出</div>
               <el-collapse>
                 <el-collapse-item
                   v-for="step in currentRun.steps || []"
-                  :key="step.id || step.step_order"
-                  :title="`Step ${step.step_order} · ${step.role_name || step.node_id || ''} · ${agentName(step.agent_id)}`"
+                  :key="step.node_id || step.id || step.step_order"
+                  :title="`${step.role_name || step.node_id || 'Step ' + step.step_order} [${step.status}]`"
                 >
                   <div class="trace-link" v-if="step.trace_run_id">
                     <el-button type="primary" link @click="$router.push(`/traces?trace_id=${step.trace_run_id}`)">查看 Trace</el-button>
                   </div>
-                  <pre class="result-text">{{ step.output_text || step.error_text || '无输出' }}</pre>
+                  <pre class="result-text">{{ step.streamOutput || step.output_text || step.error_text || '无输出' }}</pre>
                 </el-collapse-item>
               </el-collapse>
             </div>
@@ -311,7 +354,22 @@ const workflowSteps = computed(() => workflow.value?.config?.steps || [])
 
 const flowEdges = computed(() => {
   const edges = workflow.value?.config?.edges || []
-  return edges.map(e => ({ ...e, type: 'smoothstep', animated: true }))
+  const nodes = workflow.value?.config?.nodes || []
+  const condNodes = {}
+  for (const n of nodes) {
+    if (n.type === 'condition') condNodes[n.id] = n.data?.conditions || []
+  }
+  return edges.map(e => {
+    const sh = e.source_handle ?? e.sourceHandle ?? null
+    const th = e.target_handle ?? e.targetHandle ?? null
+    let label = ''
+    if (sh && sh.startsWith('cond-')) {
+      const idx = parseInt(sh.replace('cond-', ''))
+      const conds = condNodes[e.source] || []
+      if (conds[idx]) label = conds[idx].label || ''
+    }
+    return { ...e, sourceHandle: sh, targetHandle: th, type: 'smoothstep', animated: true, label }
+  })
 })
 
 const flowNodes = computed(() => {
@@ -340,6 +398,15 @@ const selectedStep = computed(() => {
   const steps = currentRun.value?.steps || []
   return steps.find(s => s.node_id === selectedNodeId.value) || null
 })
+
+const activeStep = computed(() => {
+  const nodeId = currentRun.value?.activeNodeId
+  if (!nodeId) return null
+  return currentRun.value?.steps?.find(s => s.node_id === nodeId) || null
+})
+
+const activeStepOutput = computed(() => activeStep.value?.streamOutput || '')
+const activeStepName = computed(() => activeStep.value?.role_name || activeStep.value?.node_id || '')
 
 const formatDate = (d) => d ? new Date(d).toLocaleString('zh-CN') : ''
 const statusType = (status) => status === 'success' ? 'success' : status === 'error' ? 'danger' : 'warning'
@@ -376,40 +443,17 @@ const handleRun = async () => {
   }
   running.value = true
   selectedNodeId.value = null
-  try {
-    currentRun.value = await request.post(`/api/workflows/${route.params.id}/run`, {
-      input: input.value
-    })
-    activeTab.value = 'current'
-    ElMessage.success(`已创建运行任务 #${currentRun.value.run_id}`)
-    loadRuns()
-    connectRunEvents(currentRun.value.run_id)
-  } catch (e) {
-    running.value = false
-    throw e
-  }
-}
 
-const loadRunDetail = async (runId) => {
-  runDetail.value = await request.get(`/api/workflows/runs/${runId}`)
-  detailVisible.value = true
-}
-
-const applyRunSnapshot = (snapshot) => {
   currentRun.value = {
-    ...snapshot,
-    run_id: snapshot.id || snapshot.run_id,
-    input: snapshot.input_text || snapshot.input,
-    output: snapshot.output_text || snapshot.output,
-    steps: snapshot.steps || []
+    status: 'running',
+    steps: [],
+    streamLogs: [],
+    activeNodeId: null,
+    input: input.value,
+    output: null,
   }
-  if (snapshot.status !== 'running') {
-    running.value = false
-    loadRuns()
-  }
-}
+  activeTab.value = 'current'
 
-const connectRunEvents = async (runId) => {
   if (streamController.value) {
     streamController.value.abort()
   }
@@ -418,12 +462,22 @@ const connectRunEvents = async (runId) => {
   const token = localStorage.getItem('token')
 
   try {
-    const response = await fetch(`/api/workflows/runs/${runId}/events`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      signal: controller.signal
+    const run = await request.post(`/api/workflows/${route.params.id}/run`, {
+      input: input.value,
     })
+    currentRun.value.run_id = run.run_id
+    currentRun.value.workflow_id = run.workflow_id
+
+    const response = await fetch(`/api/workflows/runs/${run.run_id}/events`, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+    })
+
     if (!response.ok || !response.body) {
-      throw new Error('无法连接工作流事件流')
+      throw new Error('无法订阅工作流事件')
     }
 
     const reader = response.body.getReader()
@@ -438,20 +492,124 @@ const connectRunEvents = async (runId) => {
       buffer = events.pop() || ''
 
       for (const rawEvent of events) {
-        const dataLine = rawEvent.split('\n').find(line => line.startsWith('data: '))
+        const lines = rawEvent.split('\n')
+        const eventLine = lines.find(l => l.startsWith('event: '))
+        const dataLine = lines.find(l => l.startsWith('data: '))
         if (!dataLine) continue
+        const eventType = eventLine ? eventLine.slice(7).trim() : 'message'
         const payload = JSON.parse(dataLine.slice(6))
-        if (payload.status) {
-          applyRunSnapshot(payload)
-        }
+        handleStreamEvent(eventType, payload)
       }
     }
+    loadRuns()
   } catch (e) {
     if (!controller.signal.aborted) {
-      ElMessage.error(e.message || '工作流事件流中断')
+      ElMessage.error(e.message || '工作流事件订阅失败')
       running.value = false
     }
   }
+}
+
+const handleStreamEvent = (eventType, data) => {
+  const log = (type, nodeId, text) => {
+    currentRun.value.streamLogs.push({ type, node_id: nodeId, text, timestamp: Date.now() })
+  }
+
+  switch (eventType) {
+    case 'start':
+      currentRun.value.run_id = data.run_id
+      currentRun.value.workflow_id = data.workflow_id
+      log('start', null, `运行 #${data.run_id} 已启动`)
+      break
+
+    case 'node_start': {
+      currentRun.value.activeNodeId = data.node_id
+      const existing = currentRun.value.steps.find(s => s.node_id === data.node_id)
+      if (!existing) {
+        currentRun.value.steps.push({
+          node_id: data.node_id,
+          node_type: data.node_type,
+          role_name: data.label,
+          step_order: data.step_order,
+          status: 'running',
+          streamOutput: '',
+          output_text: '',
+        })
+      } else {
+        existing.status = 'running'
+      }
+      log('node_start', data.node_id, `▶ ${data.label} 开始执行`)
+      break
+    }
+
+    case 'token': {
+      const step = currentRun.value.steps.find(s => s.node_id === data.node_id)
+      if (step) {
+        step.streamOutput += data.content
+      }
+      break
+    }
+
+    case 'node_done': {
+      const step = currentRun.value.steps.find(s => s.node_id === data.node_id)
+      if (step) {
+        step.status = 'success'
+        step.output_text = data.output
+      }
+      log('node_done', data.node_id, `✓ ${step?.role_name || data.node_id} 完成`)
+      break
+    }
+
+    case 'branch':
+      log('branch', data.node_id, `→ 条件分支: ${data.branch_label || '分支 ' + (data.branch_idx + 1)}`)
+      break
+
+    case 'parallel_start':
+      log('parallel_start', data.node_id, `⚡ 并行执行 ${data.branch_count} 个分支`)
+      break
+
+    case 'parallel_done':
+      log('parallel_done', data.node_id, `⚡ 并行执行完成，结果已合并`)
+      break
+
+    case 'tool_start':
+      log('tool_start', data.node_id, `🔧 调用工具: ${data.tool}`)
+      break
+
+    case 'tool_end':
+      log('tool_end', data.node_id, `🔧 工具 ${data.tool} 返回`)
+      break
+
+    case 'done':
+      currentRun.value.status = 'success'
+      currentRun.value.output = data.output
+      currentRun.value.activeNodeId = null
+      running.value = false
+      log('done', null, '✅ 工作流执行完成')
+      if (data.run_id) {
+        request.get(`/api/workflows/runs/${data.run_id}`).then(run => {
+          const savedLogs = currentRun.value.streamLogs
+          const savedSteps = currentRun.value.steps
+          currentRun.value = { ...run, streamLogs: savedLogs, steps: run.steps?.length ? run.steps : savedSteps }
+        })
+      }
+      loadRuns()
+      break
+
+    case 'error':
+      currentRun.value.status = 'error'
+      currentRun.value.error_text = data.detail
+      currentRun.value.activeNodeId = null
+      running.value = false
+      log('error', null, `❌ 执行失败: ${data.detail}`)
+      loadRuns()
+      break
+  }
+}
+
+const loadRunDetail = async (runId) => {
+  runDetail.value = await request.get(`/api/workflows/runs/${runId}`)
+  detailVisible.value = true
 }
 
 onMounted(async () => {
@@ -623,6 +781,44 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   padding: 16px;
 }
+.stream-log {
+  background: #1e293b;
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.log-item {
+  display: flex;
+  gap: 8px;
+  color: #cbd5e1;
+}
+.log-time {
+  color: #64748b;
+  flex-shrink: 0;
+  font-size: 11px;
+  padding-top: 1px;
+}
+.log-text {
+  color: #e2e8f0;
+}
+.log-item.node_start .log-text { color: #60a5fa; }
+.log-item.node_done .log-text { color: #4ade80; }
+.log-item.branch .log-text { color: #fbbf24; }
+.log-item.parallel_start .log-text { color: #a78bfa; }
+.log-item.parallel_done .log-text { color: #a78bfa; }
+.log-item.tool_start .log-text { color: #f97316; }
+.log-item.tool_end .log-text { color: #f97316; }
+.log-item.error .log-text { color: #f87171; }
+.log-item.done .log-text { color: #4ade80; }
+.result-text.streaming {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  min-height: 60px;
+}
 </style>
 
 <style>
@@ -690,6 +886,8 @@ onBeforeUnmount(() => {
 .vue-flow__edge-path { stroke-width: 2; }
 .vue-flow__edge.animated .vue-flow__edge-path { stroke-dasharray: 6; animation: dashmove 0.5s linear infinite; }
 @keyframes dashmove { to { stroke-dashoffset: -6; } }
+.vue-flow__edge-textwrapper { font-size: 11px; font-weight: 600; }
+.vue-flow__edge-text { font-size: 11px; font-weight: 600; fill: #92400e; }
 
 /* Node status colors */
 .vue-flow__node.status-pending .vf-node {

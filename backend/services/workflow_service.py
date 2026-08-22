@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
 
 from ..core.agent_factory import create_agent_instance, get_model_name
+from ..core.event_publisher import RedisStreamEventPublisher
 from ..core.trace_handler import TraceContext
 from ..database import execute, fetch_all, fetch_one
 from .agent_service import get_agent
@@ -307,7 +308,7 @@ async def delete_workflow(workflow_id: int, user_id: int) -> bool:
     return True
 
 
-# ── Agent step execution ───────────────────────────────────────────────
+# ── Agent 节点执行 ─────────────────────────────────────────────────────
 
 async def _invoke_agent_step(
     *,
@@ -320,7 +321,15 @@ async def _invoke_agent_step(
     role: str,
     instruction: str,
     input_text: str,
+    node_id: str,
+    publisher: RedisStreamEventPublisher,
 ) -> tuple[str, int]:
+    """执行一个 Agent 节点，并将模型及工具事件统一交给 EventPublisher。
+
+    返回节点最终文本和 Trace Run ID。这里不直接处理 SSE，确保同一套执行逻辑可以
+    服务于后台任务、事件订阅以及未来的独立 Worker。
+    """
+    # 每次执行时根据 Agent 配置装配 Skill、MCP 工具和模型。
     skills_data = await get_agent_skills(agent["id"])
     mcps_data = await get_agent_mcps(agent["id"])
     model_config = await _load_model_config(agent, user_id)
@@ -354,6 +363,7 @@ async def _invoke_agent_step(
         "recursion_limit": max(8, min(int(agent.get("iteration_count") or 6) * 2 + 5, 80)),
     }
 
+    # token 既实时发布到 Stream，也在服务端拼接成节点最终输出用于持久化。
     full_response = []
     try:
         async for event in agent_executor.astream_events(
@@ -373,6 +383,11 @@ async def _invoke_agent_step(
                 chunk = event["data"].get("chunk")
                 if chunk and chunk.content:
                     full_response.append(chunk.content)
+                    await publisher.publish(
+                        "token",
+                        {"node_id": node_id, "content": chunk.content},
+                        node_id=node_id,
+                    )
 
             elif kind == "on_chat_model_end":
                 output = str(event.get("data", {}).get("output", ""))
@@ -382,6 +397,11 @@ async def _invoke_agent_step(
                 tool_name = event.get("name", "")
                 input_data = str(event.get("data", {}).get("input", ""))
                 await trace_ctx.on_tool_start(event_run_id, tool_name, input_data)
+                await publisher.publish(
+                    "tool_start",
+                    {"node_id": node_id, "tool": tool_name},
+                    node_id=node_id,
+                )
 
             elif kind == "on_tool_end":
                 output = event.get("data", {}).get("output", "")
@@ -390,6 +410,15 @@ async def _invoke_agent_step(
                 else:
                     output_str = str(output)
                 await trace_ctx.on_tool_end(event_run_id, output_str)
+                await publisher.publish(
+                    "tool_end",
+                    {
+                        "node_id": node_id,
+                        "tool": event.get("name", ""),
+                        "output": output_str[:200],
+                    },
+                    node_id=node_id,
+                )
 
         output_text = "".join(full_response).strip()
         if not output_text:
@@ -401,7 +430,7 @@ async def _invoke_agent_step(
         raise
 
 
-# ── Workflow run management ───────────────────────────────────────────
+# ── 工作流运行管理 ────────────────────────────────────────────────────
 
 async def run_workflow(workflow_id: int, user_id: int, input_text: str) -> Dict:
     workflow = await get_workflow(workflow_id, user_id)
@@ -415,6 +444,7 @@ async def run_workflow(workflow_id: int, user_id: int, input_text: str) -> Dict:
 
 
 async def create_workflow_run(workflow_id: int, user_id: int, input_text: str) -> int:
+    """校验工作流并创建一条运行记录，返回新生成的 run_id。"""
     workflow = await get_workflow(workflow_id, user_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="工作流不存在")
@@ -432,6 +462,11 @@ async def create_workflow_run(workflow_id: int, user_id: int, input_text: str) -
 
 
 async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
+    """工作流的统一执行入口。
+
+    顺序工作流和 DAG 工作流都从这里进入，并共享同一个 Redis EventPublisher。
+    运行状态以 MySQL 为最终结果，执行过程事件写入 Redis Stream 供 SSE 订阅。
+    """
     run = await get_workflow_run(run_id, user_id)
     if not run:
         raise HTTPException(status_code=404, detail="运行记录不存在")
@@ -452,126 +487,167 @@ async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
 
     workflow_id = run["workflow_id"]
     config = workflow["config"]
+    publisher = RedisStreamEventPublisher(run_id)
 
-    if _is_graph_config(config):
-        return await _execute_dag(run_id, user_id, workflow_id, config, run["input_text"])
-    return await _execute_sequential(run_id, user_id, workflow_id, config, run["input_text"])
+    try:
+        # start 必须是本次 run 的第一条事件，订阅端据此初始化运行信息。
+        await publisher.publish(
+            "start",
+            {
+                "run_id": run_id,
+                "workflow_id": workflow_id,
+                "input": run["input_text"],
+            },
+        )
+        if _is_graph_config(config):
+            # 图式配置走 DAG；传统 steps 配置走顺序执行，两者共用节点执行函数。
+            result = await _execute_dag(
+                run_id, user_id, workflow_id, config, run["input_text"], publisher,
+            )
+        else:
+            result = await _execute_sequential(
+                run_id, user_id, workflow_id, config, run["input_text"], publisher,
+            )
+
+        await execute(
+            "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, "
+            "current_node_id=%s WHERE id=%s",
+            ("success", result["output"], _now(), None, run_id),
+        )
+        await publisher.publish(
+            "done",
+            {"run_id": run_id, "status": "success", "output": result["output"]},
+        )
+        return result
+    except Exception as exc:
+        # 无论失败发生在 Agent、工具还是事件发布阶段，都要先落库终止 running 状态。
+        error_text = str(exc)
+        await execute(
+            "UPDATE multi_agent_runs SET status=%s, error_text=%s, finished_at=%s WHERE id=%s",
+            ("error", error_text, _now(), run_id),
+        )
+        try:
+            await publisher.publish(
+                "error",
+                {"run_id": run_id, "detail": error_text},
+            )
+        except Exception:
+            # 原始异常可能就是 Redis 故障。即使 error 事件无法写入，也必须保留数据库错误状态。
+            pass
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=f"工作流执行失败: {error_text}") from exc
 
 
 async def _execute_sequential(
     run_id: int, user_id: int, workflow_id: int, config: Dict, initial_input: str,
+    publisher: RedisStreamEventPublisher,
 ) -> Dict:
+    """依次执行传统 steps 配置，前一步输出作为后一步输入。"""
     steps = _normalize_steps(config)
     current_input = initial_input
     step_results = []
 
-    try:
-        for idx, step in enumerate(steps, start=1):
-            agent = await get_agent(step["agent_id"], user_id)
-            if not agent:
-                raise HTTPException(status_code=400, detail=f"Agent 不存在或无权限: {step['agent_id']}")
+    for idx, step in enumerate(steps, start=1):
+        agent = await get_agent(step["agent_id"], user_id)
+        if not agent:
+            raise HTTPException(status_code=400, detail=f"Agent 不存在或无权限: {step['agent_id']}")
 
-            step_id = await execute(
-                "INSERT INTO multi_agent_run_steps "
-                "(run_id, step_order, agent_id, role_name, instruction, input_text, status, started_at, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    run_id, idx, step["agent_id"], step["role"], step["instruction"],
-                    current_input, "running", _now(), _now(),
-                ),
-            )
-
-            try:
-                output_text, trace_run_id = await _invoke_agent_step(
-                    agent=agent,
-                    user_id=user_id,
-                    workflow_id=workflow_id,
-                    run_id=run_id,
-                    workflow_step_id=step_id,
-                    step_order=idx,
-                    role=step["role"],
-                    instruction=step["instruction"],
-                    input_text=current_input,
-                )
-            except Exception as exc:
-                await execute(
-                    "UPDATE multi_agent_run_steps SET status=%s, error_text=%s, finished_at=%s WHERE id=%s",
-                    ("error", str(exc), _now(), step_id),
-                )
-                raise
-
-            await execute(
-                "UPDATE multi_agent_run_steps SET output_text=%s, status=%s, finished_at=%s WHERE id=%s",
-                (output_text, "success", _now(), step_id),
-            )
-            step_results.append({
+        node_id = f"step-{idx}"
+        # 先发布 node_start，再执行 Agent，使前端能够及时切换节点状态。
+        await publisher.publish(
+            "node_start",
+            {
+                "node_id": node_id,
+                "node_type": "agent",
+                "label": step["role"],
                 "step_order": idx,
-                "agent_id": step["agent_id"],
-                "agent_name": agent.get("name"),
-                "role": step["role"],
-                "trace_run_id": trace_run_id,
-                "output": output_text,
-            })
-            current_input = output_text
+            },
+            node_id=node_id,
+        )
 
-        await execute(
-            "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s WHERE id=%s",
-            ("success", current_input, _now(), run_id),
+        step_id = await execute(
+            "INSERT INTO multi_agent_run_steps "
+            "(run_id, step_order, agent_id, role_name, instruction, input_text, status, started_at, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                run_id, idx, step["agent_id"], step["role"], step["instruction"],
+                current_input, "running", _now(), _now(),
+            ),
         )
-        return {
-            "run_id": run_id,
-            "workflow_id": workflow_id,
-            "status": "success",
-            "input": initial_input,
-            "output": current_input,
-            "steps": step_results,
-        }
-    except Exception as exc:
-        error_text = str(exc)
-        await execute(
-            "UPDATE multi_agent_runs SET status=%s, error_text=%s, finished_at=%s WHERE id=%s",
-            ("error", error_text, _now(), run_id),
-        )
-        if isinstance(exc, HTTPException):
+
+        try:
+            output_text, trace_run_id = await _invoke_agent_step(
+                agent=agent,
+                user_id=user_id,
+                workflow_id=workflow_id,
+                run_id=run_id,
+                workflow_step_id=step_id,
+                step_order=idx,
+                role=step["role"],
+                instruction=step["instruction"],
+                input_text=current_input,
+                node_id=node_id,
+                publisher=publisher,
+            )
+        except Exception as exc:
+            await execute(
+                "UPDATE multi_agent_run_steps SET status=%s, error_text=%s, finished_at=%s WHERE id=%s",
+                ("error", str(exc), _now(), step_id),
+            )
             raise
-        raise HTTPException(status_code=500, detail=f"工作流执行失败: {error_text}") from exc
+
+        await execute(
+            "UPDATE multi_agent_run_steps SET output_text=%s, status=%s, finished_at=%s WHERE id=%s",
+            (output_text, "success", _now(), step_id),
+        )
+        step_results.append({
+            "step_order": idx,
+            "agent_id": step["agent_id"],
+            "agent_name": agent.get("name"),
+            "role": step["role"],
+            "trace_run_id": trace_run_id,
+            "output": output_text,
+        })
+        await publisher.publish(
+            "node_done",
+            {"node_id": node_id, "output": output_text},
+            node_id=node_id,
+        )
+        current_input = output_text
+
+    return {
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "status": "success",
+        "input": initial_input,
+        "output": current_input,
+        "steps": step_results,
+    }
 
 
-# ── DAG execution (parallel + conditional branches) ────────────────────
+# ── DAG 执行（条件分支与并行分支）─────────────────────────────────────
 
 async def _execute_dag(
     run_id: int, user_id: int, workflow_id: int, config: Dict, initial_input: str,
+    publisher: RedisStreamEventPublisher,
 ) -> Dict:
+    """从入口节点开始执行 DAG，并返回最终输出。"""
     nodes_map = _graph_nodes(config)
     start_id = _start_node_id(config)
     step_counter = [0]
 
-    try:
-        final_output = await _walk_graph(
-            config, nodes_map, start_id, initial_input,
-            run_id, user_id, workflow_id, step_counter,
-        )
-        await execute(
-            "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, "
-            "current_node_id=%s WHERE id=%s",
-            ("success", final_output, _now(), None, run_id),
-        )
-        return {
-            "run_id": run_id,
-            "workflow_id": workflow_id,
-            "status": "success",
-            "input": initial_input,
-            "output": final_output,
-        }
-    except Exception as exc:
-        error_text = str(exc)
-        await execute(
-            "UPDATE multi_agent_runs SET status=%s, error_text=%s, finished_at=%s WHERE id=%s",
-            ("error", error_text, _now(), run_id),
-        )
-        if isinstance(exc, HTTPException):
-            raise
-        raise HTTPException(status_code=500, detail=f"工作流执行失败: {error_text}") from exc
+    final_output = await _walk_graph(
+        config, nodes_map, start_id, initial_input,
+        run_id, user_id, workflow_id, step_counter, publisher,
+    )
+    return {
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "status": "success",
+        "input": initial_input,
+        "output": final_output,
+    }
 
 
 async def _walk_graph(
@@ -583,11 +659,14 @@ async def _walk_graph(
     user_id: int,
     workflow_id: int,
     step_counter: list,
+    publisher: RedisStreamEventPublisher,
     stop_node_id: Optional[str] = None,
 ) -> str:
-    """Walk the DAG from *node_id*.  When *stop_node_id* is set the walk halts
-    just before reaching that node — used to confine each parallel branch to
-    the sub-graph that precedes the merge point."""
+    """从 node_id 开始遍历 DAG。
+
+    stop_node_id 用于并行分支：每个分支执行到公共合并节点之前停止，等待所有分支
+    完成后再由上层合并结果并继续执行公共后续节点。
+    """
     visited: Set[str] = set()
 
     while node_id and node_id != stop_node_id:
@@ -606,7 +685,7 @@ async def _walk_graph(
             (node_id, run_id),
         )
 
-        # ── pass-through nodes ──────────────────────────────────────
+        # 输入/开始节点仅负责连接流程，本身不执行 Agent。
         if node_type in ("input", "start"):
             node_id = _next_node(config, node_id)
             continue
@@ -614,7 +693,7 @@ async def _walk_graph(
         if node_type == "output":
             break
 
-        # ── agent node: execute LLM ──────────────────────────────────
+        # Agent 节点：执行 LLM、Skill 和 MCP 工具，并发布完整生命周期事件。
         if node_type == "agent":
             step_counter[0] += 1
             order = step_counter[0]
@@ -630,6 +709,17 @@ async def _walk_graph(
 
             role = str(data.get("role") or data.get("label") or node_id)[:100]
             instruction = str(data.get("instruction") or "").strip()
+
+            await publisher.publish(
+                "node_start",
+                {
+                    "node_id": node_id,
+                    "node_type": "agent",
+                    "label": role,
+                    "step_order": order,
+                },
+                node_id=node_id,
+            )
 
             step_id = await execute(
                 "INSERT INTO multi_agent_run_steps "
@@ -654,6 +744,8 @@ async def _walk_graph(
                     role=role,
                     instruction=instruction,
                     input_text=current_input,
+                    node_id=node_id,
+                    publisher=publisher,
                 )
             except Exception as exc:
                 await execute(
@@ -669,17 +761,38 @@ async def _walk_graph(
                 (output_text, "success", _now(), step_id),
             )
 
+            await publisher.publish(
+                "node_done",
+                {"node_id": node_id, "output": output_text},
+                node_id=node_id,
+            )
+
             current_input = output_text
             node_id = _next_node(config, node_id)
             continue
 
-        # ── condition node: pick a branch ────────────────────────────
+        # 条件节点：根据当前输入选择唯一目标分支，并记录选择结果。
         if node_type == "condition":
             branch_idx = _evaluate_condition_branch(node, current_input)
-            node_id = _condition_branch_target(config, node_id, branch_idx)
+            conditions = (node.get("data") or {}).get("conditions") or []
+            branch_label = ""
+            if branch_idx < len(conditions):
+                branch_label = conditions[branch_idx].get("label", "")
+            target_id = _condition_branch_target(config, node_id, branch_idx)
+            await publisher.publish(
+                "branch",
+                {
+                    "node_id": node_id,
+                    "branch_idx": branch_idx,
+                    "branch_label": branch_label,
+                    "target_node_id": target_id,
+                },
+                node_id=node_id,
+            )
+            node_id = target_id
             continue
 
-        # ── parallel node: fan-out + merge ──────────────────────────
+        # 并行节点：多个分支共享当前输入并发执行，完成后合并各分支输出。
         if node_type == "parallel":
             targets = _all_targets(config, node_id)
             if not targets:
@@ -690,10 +803,16 @@ async def _walk_graph(
 
             merge_point = _find_merge_point(config, targets)
 
+            await publisher.publish(
+                "parallel_start",
+                {"node_id": node_id, "branch_count": len(targets)},
+                node_id=node_id,
+            )
+
             branch_tasks = [
                 _walk_graph(
                     config, nodes_map, t, current_input,
-                    run_id, user_id, workflow_id, step_counter,
+                    run_id, user_id, workflow_id, step_counter, publisher,
                     stop_node_id=merge_point,
                 )
                 for t in targets
@@ -710,16 +829,27 @@ async def _walk_graph(
                 merged_parts.append(r if isinstance(r, str) else str(r))
 
             current_input = "\n\n---\n\n".join(merged_parts)
+            # 合并结果将作为公共后续节点的输入。
+            await publisher.publish(
+                "parallel_done",
+                {
+                    "node_id": node_id,
+                    "branch_count": len(targets),
+                    "merged_output": current_input,
+                },
+                node_id=node_id,
+            )
             node_id = merge_point
             continue
 
-        # unknown type — skip
+        # 未识别的节点类型按透传节点处理，继续沿第一条出边执行。
         node_id = _next_node(config, node_id)
 
     return current_input
 
 
 async def start_workflow_run(workflow_id: int, user_id: int, input_text: str) -> Dict:
+    """仅创建运行记录，不在当前 HTTP 请求中执行工作流。"""
     run_id = await create_workflow_run(workflow_id, user_id, input_text)
     return {
         "run_id": run_id,

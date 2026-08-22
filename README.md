@@ -34,7 +34,7 @@ agent_platform/
 │   ├── mcp_client.py        # MCP 客户端（Streamable HTTP）
 │   ├── chat_engine.py       # 流式对话核心（多轮 Tool Call）
 │   ├── requirements.txt     # Python 依赖
-│   ├── sql/init.sql         # MySQL 初始化脚本
+│   ├── sql/init.sql         # MySQL 非破坏性初始化脚本
 │   └── data/skills/{id}/    # 解压后的 Skill 包（SKILL.md、references 等）
 ├── frontend/
 │   ├── src/
@@ -57,9 +57,10 @@ agent_platform/
 | FastAPI | Web 框架 |
 | Uvicorn | ASGI 服务器 |
 | aiomysql | 异步 MySQL |
+| Redis Stream | 工作流事件存储与 SSE 实时订阅 |
 | PyJWT | JWT 认证 |
-| OpenAI SDK | LLM 调用 |
-| Requests | MCP 通信 |
+| LangChain / LangGraph | Agent、工具调用与工作流执行 |
+| HTTPX | MCP 通信 |
 
 ### 前端
 | 技术 | 用途 |
@@ -74,14 +75,7 @@ agent_platform/
 
 ## 快速开始
 
-### 1. MySQL 初始化
-
-```bash
-# 创建数据库和表结构
-mysql -u root -p < backend/sql/init.sql
-```
-
-### 2. 后端启动
+### 1. 后端启动
 
 ```bash
 cd agent_platform
@@ -98,18 +92,26 @@ export DB_HOST="127.0.0.1"
 export DB_PORT="3306"
 export DB_USER="root"
 export DB_PASSWORD="123456"
-export DB_NAME="agent_platform"
+export DB_NAME="agent_platform_langchain"
 
-# 启动服务
+# 启动服务（首次启动会自动创建数据库、表结构和必要字段）
 python -m backend.main
 ```
 
 后端启动后：
 - API 地址: `http://127.0.0.1:20000`
 - 默认账号: `admin / 123456`
-- 数据库: MySQL（使用 `agent_platform` 数据库）
+- 数据库: MySQL（默认使用 `agent_platform_langchain` 数据库）
 
-### 3. 前端开发
+后端启动时会自动创建数据库和表结构。也可以在首次启动前手动初始化：
+
+```bash
+mysql -u root -p < backend/sql/init.sql
+```
+
+`init.sql` 使用 `CREATE TABLE IF NOT EXISTS`，不会主动删除已有表或数据；现有数据库的版本升级仍由后端启动迁移逻辑处理。
+
+### 2. 前端开发
 
 ```bash
 cd agent_platform/frontend
@@ -119,7 +121,7 @@ npm run dev
 
 前端开发服务器: `http://127.0.0.1:20001`（自动代理 `/api` 到后端 20000 端口）
 
-### 4. 生产部署
+### 3. 生产部署
 
 ```bash
 # 构建前端
@@ -198,6 +200,7 @@ python -m backend.main
 | POST | `/api/workflows/{id}/run` | 运行工作流 |
 | GET | `/api/workflows/{id}/runs` | 工作流运行记录 |
 | GET | `/api/workflows/runs/{run_id}` | 运行详情与步骤输出 |
+| GET | `/api/workflows/runs/{run_id}/events` | 订阅 Redis Stream 工作流事件（SSE） |
 
 ### Trace 调用链
 | 方法 | 路径 | 说明 |
@@ -243,21 +246,22 @@ python -m backend.main
 
 ```
 users          用户表（id, username, password, created_at）
-agents         Agent 表（id, user_id, name, description, system_prompt, model, temperature, iteration_count）
+models         模型配置表（provider, model_id, api_key, base_url, temperature, max_tokens）
+agents         Agent 表（含 model_config_id、system_prompt、temperature、iteration_count）
 skills         Skill 表（id, user_id, name, description, content）
 mcp_configs    MCP 配置表（id, user_id, name, base_url, endpoint, description）
 agent_skills   Agent-Skill 关联表（agent_id, skill_id）
 agent_mcps     Agent-MCP 关联表（agent_id, mcp_id）
 chat_sessions  会话表（id, user_id, agent_id, title）
 chat_messages  消息表（id, session_id, role, content）
-trace_runs     对话 Trace（user_id, agent_id, session_id, status, input/output, duration）
-trace_spans    Trace 节点（trace_id, span_type, round_no, input/output, error, duration）
-multi_agent_workflows  多 Agent 工作流配置
-multi_agent_runs       多 Agent 工作流运行记录
-multi_agent_run_steps  多 Agent 工作流步骤记录
+trace_runs     对话/工作流 Trace（含 workflow_run_id、workflow_step_id、状态与耗时）
+trace_spans    Trace 节点（run_id、span_type、输入输出、错误、Token 与耗时）
+multi_agent_workflows  多 Agent 工作流配置（顺序或 DAG）
+multi_agent_runs       多 Agent 工作流运行状态与最终结果
+multi_agent_run_steps  工作流节点执行记录与 Trace 关联
 ```
 
-`agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，默认值为 `6`。已有数据库会在后端启动时自动补充该字段。
+`agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，默认值为 `6`。后端启动时会自动创建缺失的表，并补充当前版本需要的兼容字段。
 
 ## Skill 包格式
 
@@ -327,7 +331,13 @@ Trace 状态包括 `running`、`success`、`error` 和 `cancelled`。Trace 数�
 | `DB_PORT` | `3306` | MySQL 端口 |
 | `DB_USER` | `root` | MySQL 用户名 |
 | `DB_PASSWORD` | `123456` | MySQL 密码 |
-| `DB_NAME` | `agent_platform` | MySQL 数据库名 |
+| `DB_NAME` | `agent_platform_langchain` | MySQL 数据库名 |
+| `REDIS_HOST` | `127.0.0.1` | Redis 主机 |
+| `REDIS_PORT` | `6379` | Redis 端口 |
+| `REDIS_DB` | `0` | Redis 数据库编号 |
+| `REDIS_PASSWORD` | 无 | Redis 密码 |
+| `WORKFLOW_EVENT_STREAM_TTL_SECONDS` | `86400` | 工作流事件 Stream 保留时间（秒） |
+| `WORKFLOW_EVENT_STREAM_MAXLEN` | `20000` | 每个工作流事件 Stream 的近似最大长度 |
 
 ## License
 

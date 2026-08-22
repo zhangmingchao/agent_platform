@@ -4,6 +4,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 SKILLS_DIR = os.path.join(DATA_DIR, "skills")
 
+
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(SKILLS_DIR, exist_ok=True)
 
@@ -12,7 +13,7 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
 # --- LLM (DeepSeek, OpenAI-compatible) ---
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = ""
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
@@ -35,6 +36,12 @@ REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+WORKFLOW_EVENT_STREAM_TTL_SECONDS = int(
+    os.getenv("WORKFLOW_EVENT_STREAM_TTL_SECONDS", "86400")
+)
+WORKFLOW_EVENT_STREAM_MAXLEN = int(
+    os.getenv("WORKFLOW_EVENT_STREAM_MAXLEN", "20000")
+)
 
 # --- Server ---
 SERVER_PORT = int(os.getenv("SERVER_PORT", "20000"))
