@@ -27,6 +27,7 @@ def _now():
 
 
 def _parse_config(config) -> Dict:
+    # 对 工作流 中 的配置 节点与连线，json 校验
     if isinstance(config, str):
         try:
             config = json.loads(config)
@@ -92,23 +93,30 @@ def _graph_agent_steps(config: Dict) -> List[Dict]:
 
 
 def _graph_nodes(config: Dict) -> Dict[str, Dict]:
+    """将节点列表转为 {node_id: node} 的字典，方便 O(1) 查找。"""
     return {node.get("id"): node for node in config.get("nodes", []) if node.get("id")}
 
 
 def _outgoing_edges(config: Dict, node_id: str) -> List[Dict]:
+    """获取指定节点的所有出边（从该节点出发的连线）。"""
     return [edge for edge in config.get("edges", []) if edge.get("source") == node_id]
 
 
 def _next_node(config: Dict, node_id: str) -> Optional[str]:
+    """获取节点的下一个节点（第一条出边的目标）。
+    注意：普通 Agent 节点有多条出边时只走第一条，条件/并行节点不走这个函数。"""
     edges = _outgoing_edges(config, node_id)
     return edges[0].get("target") if edges else None
 
 
 def _all_targets(config: Dict, node_id: str) -> List[str]:
+    """获取节点所有下游目标节点 ID（用于并行节点的扇出）。"""
     return [e.get("target") for e in _outgoing_edges(config, node_id) if e.get("target")]
 
 
 def _start_node_id(config: Dict) -> str:
+    """找到 DAG 的入口节点：优先找 type 为 input/start 的节点，没有就取第一个节点。
+    注意：多个 input/start 节点时只取第一个，其他会被忽略。"""
     for node in config.get("nodes", []):
         if node.get("type") in ("input", "start"):
             return node.get("id")
@@ -116,45 +124,67 @@ def _start_node_id(config: Dict) -> str:
 
 
 def _evaluate_condition_branch(node: Dict, current_input: str) -> int:
+    """根据当前输入文本，按顺序匹配条件分支，返回命中的分支索引。
+
+    匹配规则：
+    1. 按条件数组顺序逐一检查，先匹配先命中（短路逻辑）
+    2. contains 类型：关键词是否在文本中出现
+    3. regex 类型：正则表达式是否匹配
+    4. else 类型在第一轮跳过，第二轮兜底
+    5. 没有任何 else 且全部未命中时，默认返回第 0 个分支
+    """
     data = node.get("data") or {}
     conditions = data.get("conditions") or []
     text = current_input or ""
 
+    # 第一轮：匹配非 else 的条件（contains / regex）
     for i, cond in enumerate(conditions):
         cond_type = cond.get("type", "else")
         if cond_type == "else":
-            continue
+            continue  # else 分支留到第二轮兜底
         value = str(cond.get("value") or "")
         if not value:
             continue
+        # 包含关键词匹配
         if cond_type == "contains" and value in text:
             return i
+        # 正则匹配
         if cond_type == "regex":
             try:
                 if re.search(value, text):
                     return i
             except re.error:
-                continue
+                continue  # 正则写错了就跳过该条件
 
+    # 第二轮：找 else 分支作为默认兜底
     for i, cond in enumerate(conditions):
         if cond.get("type") == "else":
             return i
+    # 没有 else 分支时，默认走第 0 条边
     return 0
 
 
 def _condition_branch_target(config: Dict, node_id: str, branch_idx: int) -> Optional[str]:
+    """根据分支索引找到条件节点对应分支的下游目标节点。
+
+    优先按 source_handle（即 cond-0 / cond-1 / ...）精确匹配，
+    匹配不到时降级为按边的数组下标取目标（兼容旧数据或单 Handle 场景）。
+    """
     edges = _outgoing_edges(config, node_id)
-    handle_id = f"cond-{branch_idx}"
+    handle_id = f"cond-{branch_idx}"  # 与前端 ConditionNode 的 Handle id 规则一致
     for edge in edges:
         sh = edge.get("source_handle") or edge.get("sourceHandle")
         if sh == handle_id:
             return edge.get("target")
+    # 降级：按边的顺序取（兼容未设置 source_handle 的情况）
     if branch_idx < len(edges):
         return edges[branch_idx].get("target")
     return None
 
 
 def _find_reachable(config: Dict, start_id: str) -> Set[str]:
+    """BFS 广度优先搜索：找出从 start_id 出发能到达的所有节点。
+    用于计算并行分支的公共汇合点。"""
     reachable: Set[str] = set()
     queue = [start_id]
     while queue:
@@ -169,19 +199,32 @@ def _find_reachable(config: Dict, start_id: str) -> Set[str]:
 
 
 def _find_merge_point(config: Dict, branch_starts: List[str]) -> Optional[str]:
+    """寻找并行分支的汇合点：所有分支都能到达的第一个公共节点。
+
+    算法：
+    1. 分别计算每个分支起点的可达节点集合
+    2. 取所有集合的交集（所有分支都能到达的节点）
+    3. 从第一个分支的下游开始 BFS，第一个落在交集中的节点就是汇合点
+    4. 这样可以保证是"最早"的汇合点，而不是任意公共节点
+
+    注意：复杂 DAG 中可能不是语义上最合理的汇合点，但对简单菱形结构有效。
+    """
     if not branch_starts:
         return None
+    # 只有一个分支时直接找下一个节点就行
     if len(branch_starts) == 1:
         return _next_node(config, branch_starts[0])
 
+    # 计算每个分支的可达集合，取交集得到所有分支的公共节点
     reachable_sets = [_find_reachable(config, start) for start in branch_starts]
     common = reachable_sets[0]
     for rs in reachable_sets[1:]:
-        common = common & rs
+        common = common & rs  # 集合交集
 
     if not common:
         return None
 
+    # 从第一个分支的下游开始 BFS，找到第一个公共节点（即最早的汇合点）
     for start in branch_starts:
         queue = list(_all_targets(config, start))
         visited: Set[str] = set()
@@ -191,11 +234,12 @@ def _find_merge_point(config: Dict, branch_starts: List[str]) -> Optional[str]:
                 continue
             visited.add(nid)
             if nid in common:
-                return nid
+                return nid  # 第一个遇到的公共节点就是汇合点
             for target in _all_targets(config, nid):
                 if target not in visited:
                     queue.append(target)
 
+    # 兜底：直接取交集中的任意一个
     return next(iter(common)) if common else None
 
 
@@ -632,11 +676,16 @@ async def _execute_dag(
     run_id: int, user_id: int, workflow_id: int, config: Dict, initial_input: str,
     publisher: RedisStreamEventPublisher,
 ) -> Dict:
-    """从入口节点开始执行 DAG，并返回最终输出。"""
-    nodes_map = _graph_nodes(config)
-    start_id = _start_node_id(config)
-    step_counter = [0]
+    """DAG 模式工作流的执行入口：找到入口节点，调用 _walk_graph 遍历整张图。
 
+    step_counter 用 list 包装是为了在递归调用 _walk_graph 时能共享计数
+    （Python 中 int 是不可变的，用 list 可以在子函数中修改并影响外层）。
+    """
+    nodes_map = _graph_nodes(config)       # 节点字典，O(1) 查找
+    start_id = _start_node_id(config)      # 找到入口节点（input/start 类型）
+    step_counter = [0]                     # 步骤计数器（用 list 以便递归时共享）
+
+    # 从入口节点开始遍历整个 DAG，得到最终输出
     final_output = await _walk_graph(
         config, nodes_map, start_id, initial_input,
         run_id, user_id, workflow_id, step_counter, publisher,
@@ -662,44 +711,58 @@ async def _walk_graph(
     publisher: RedisStreamEventPublisher,
     stop_node_id: Optional[str] = None,
 ) -> str:
-    """从 node_id 开始遍历 DAG。
+    """DAG 核心遍历函数：从 node_id 出发，沿出边一步步执行，直到遇到 stop_node_id 或终点。
 
-    stop_node_id 用于并行分支：每个分支执行到公共合并节点之前停止，等待所有分支
-    完成后再由上层合并结果并继续执行公共后续节点。
+    核心设计：
+    - 单 while 循环线性推进，普通节点（input/agent/output）一个接一个走
+    - 条件节点：计算分支，跳到对应下游节点继续走
+    - 并行节点：递归调用自己，用 asyncio.gather 并发执行所有分支
+    - stop_node_id：并行分支的停止标记，每个分支走到汇合点就停，等所有分支完成后
+      由外层合并结果，再从汇合点继续往下走
+
+    注意：这是深度优先的线性遍历，不是拓扑排序。简单链/树/菱形 DAG 没问题，
+    但复杂 DAG（多个上游汇聚到同一个节点）可能存在执行顺序和结果丢失问题。
     """
+    # 已访问节点集合，防止出现环时无限循环
     visited: Set[str] = set()
 
+    # 主循环：逐个节点推进，直到没有下一个节点或到达停止点（并行汇合点）
     while node_id and node_id != stop_node_id:
+        # 防环：已访问过的节点不再重复执行（注意：这也意味着汇聚节点的
+        # 第二个上游路径到达时会直接 break，可能丢失该路径的输入）
         if node_id in visited:
             break
         visited.add(node_id)
 
         node = nodes_map.get(node_id)
         if not node:
-            break
+            break  # 节点不存在就终止（边指向了不存在的节点）
 
         node_type = node.get("type", "agent")
 
+        # 更新运行记录中的当前节点 ID（前端展示用）
         await execute(
             "UPDATE multi_agent_runs SET current_node_id=%s WHERE id=%s",
             (node_id, run_id),
         )
 
-        # 输入/开始节点仅负责连接流程，本身不执行 Agent。
+        # ── input / start 节点：纯路由节点，不执行任何逻辑，直接找下一个 ──
         if node_type in ("input", "start"):
             node_id = _next_node(config, node_id)
             continue
 
+        # ── output 节点：终点，停止遍历 ──
         if node_type == "output":
             break
 
-        # Agent 节点：执行 LLM、Skill 和 MCP 工具，并发布完整生命周期事件。
+        # ── Agent 节点：核心执行节点，调用 LLM + Skill 工具 + MCP 工具 ──
         if node_type == "agent":
-            step_counter[0] += 1
+            step_counter[0] += 1    # 全局步骤序号 +1
             order = step_counter[0]
             data = node.get("data") or {}
             agent_id = data.get("agent_id")
 
+            # 校验 Agent 存在且属于当前用户
             agent = await get_agent(agent_id, user_id)
             if not agent:
                 raise HTTPException(
@@ -710,6 +773,7 @@ async def _walk_graph(
             role = str(data.get("role") or data.get("label") or node_id)[:100]
             instruction = str(data.get("instruction") or "").strip()
 
+            # 发布 node_start 事件（前端展示节点开始执行）
             await publisher.publish(
                 "node_start",
                 {
@@ -721,6 +785,7 @@ async def _walk_graph(
                 node_id=node_id,
             )
 
+            # 写入步骤记录到数据库（running 状态）
             step_id = await execute(
                 "INSERT INTO multi_agent_run_steps "
                 "(run_id, step_order, agent_id, node_id, node_type, role_name, "
@@ -734,6 +799,7 @@ async def _walk_graph(
             )
 
             try:
+                # 调用 Agent 执行（内部会有 LLM 流式输出、工具调用等）
                 output_text, trace_run_id = await _invoke_agent_step(
                     agent=agent,
                     user_id=user_id,
@@ -748,6 +814,7 @@ async def _walk_graph(
                     publisher=publisher,
                 )
             except Exception as exc:
+                # 执行失败：更新步骤状态为 error，异常继续向上抛
                 await execute(
                     "UPDATE multi_agent_run_steps SET status=%s, error_text=%s, "
                     "finished_at=%s WHERE id=%s",
@@ -755,30 +822,38 @@ async def _walk_graph(
                 )
                 raise
 
+            # 执行成功：更新步骤状态为 success
             await execute(
                 "UPDATE multi_agent_run_steps SET output_text=%s, status=%s, "
                 "finished_at=%s WHERE id=%s",
                 (output_text, "success", _now(), step_id),
             )
 
+            # 发布 node_done 事件（前端展示节点完成 + 输出）
             await publisher.publish(
                 "node_done",
                 {"node_id": node_id, "output": output_text},
                 node_id=node_id,
             )
 
+            # 当前节点的输出作为下一个节点的输入
             current_input = output_text
+            # 继续沿第一条出边走到下一个节点
             node_id = _next_node(config, node_id)
             continue
 
-        # 条件节点：根据当前输入选择唯一目标分支，并记录选择结果。
+        # ── 条件节点：根据当前输入文本匹配条件，选择一个分支继续执行 ──
         if node_type == "condition":
+            # 计算命中哪个分支（返回分支索引）
             branch_idx = _evaluate_condition_branch(node, current_input)
             conditions = (node.get("data") or {}).get("conditions") or []
+            # 获取分支的显示名称（前端展示用）
             branch_label = ""
             if branch_idx < len(conditions):
                 branch_label = conditions[branch_idx].get("label", "")
+            # 找到该分支连接的下游节点
             target_id = _condition_branch_target(config, node_id, branch_idx)
+            # 发布 branch 事件（前端展示选中了哪个分支）
             await publisher.publish(
                 "branch",
                 {
@@ -789,26 +864,34 @@ async def _walk_graph(
                 },
                 node_id=node_id,
             )
+            # 跳到命中分支的下游节点继续遍历
             node_id = target_id
             continue
 
-        # 并行节点：多个分支共享当前输入并发执行，完成后合并各分支输出。
+        # ── 并行节点：所有下游分支并发执行，完成后合并结果继续往下 ──
         if node_type == "parallel":
+            # 获取所有下游节点（并行分支的起点）
             targets = _all_targets(config, node_id)
             if not targets:
-                break
+                break  # 没有下游节点，直接结束
+            # 只有一个下游，退化成普通顺序执行，没必要搞并行
             if len(targets) == 1:
                 node_id = targets[0]
                 continue
 
+            # 找到所有分支的公共汇合点（并行之后在哪里汇合）
             merge_point = _find_merge_point(config, targets)
 
+            # 发布 parallel_start 事件（前端展示并行开始）
             await publisher.publish(
                 "parallel_start",
                 {"node_id": node_id, "branch_count": len(targets)},
                 node_id=node_id,
             )
 
+            # 为每个分支创建一个 _walk_graph 任务，并发执行
+            # stop_node_id=merge_point 表示每个分支走到汇合点就停下
+            # 等所有分支都到了再一起继续
             branch_tasks = [
                 _walk_graph(
                     config, nodes_map, t, current_input,
@@ -817,8 +900,11 @@ async def _walk_graph(
                 )
                 for t in targets
             ]
+            # asyncio.gather 并发执行所有分支任务
+            # return_exceptions=True 让异常也作为结果返回，不中断其他分支
             results = await asyncio.gather(*branch_tasks, return_exceptions=True)
 
+            # 收集各分支结果，检查是否有失败
             merged_parts = []
             for i, r in enumerate(results):
                 if isinstance(r, Exception):
@@ -828,8 +914,9 @@ async def _walk_graph(
                     )
                 merged_parts.append(r if isinstance(r, str) else str(r))
 
+            # 用分隔线合并所有分支的输出文本，作为汇合点之后节点的输入
             current_input = "\n\n---\n\n".join(merged_parts)
-            # 合并结果将作为公共后续节点的输入。
+            # 发布 parallel_done 事件（前端展示并行完成 + 合并结果）
             await publisher.publish(
                 "parallel_done",
                 {
@@ -839,12 +926,14 @@ async def _walk_graph(
                 },
                 node_id=node_id,
             )
+            # 从汇合点继续往下执行
             node_id = merge_point
             continue
 
-        # 未识别的节点类型按透传节点处理，继续沿第一条出边执行。
+        # 兜底：未识别的节点类型（未知 type）当透传节点处理，继续沿第一条出边走
         node_id = _next_node(config, node_id)
 
+    # 返回当前累计的输出文本（作为这一段 DAG 的最终输出）
     return current_input
 
 
