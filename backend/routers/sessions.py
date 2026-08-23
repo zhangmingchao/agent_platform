@@ -44,8 +44,8 @@ async def api_create_session(request: Request, user: dict = Depends(get_current_
         raise HTTPException(status_code=404, detail="Agent 不存在")
     session_id = await execute(
         "INSERT INTO chat_sessions (user_id, agent_id, title, created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s)",
-        (user["user_id"], agent_id, "新对话", _now(), _now()),
+        "VALUES (%s, %s, %s, now(),now())",
+        (user["user_id"], agent_id, "新对话"),
     )
     return {"session_id": session_id}
 
