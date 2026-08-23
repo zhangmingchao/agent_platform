@@ -12,7 +12,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "agent-platform-secret-2026")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
-# --- LLM (DeepSeek, OpenAI-compatible) ---
+# --- 大语言模型（DeepSeek，兼容 OpenAI 接口）---
 DEEPSEEK_API_KEY = ""
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
@@ -24,7 +24,7 @@ LLM_MODEL_OPTIONS = [
     {"value": "deepseek-v4-pro", "label": "deepseek-v4-pro"},
 ]
 
-# --- Database ---
+# --- 数据库 ---
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
@@ -43,17 +43,17 @@ WORKFLOW_EVENT_STREAM_MAXLEN = int(
     os.getenv("WORKFLOW_EVENT_STREAM_MAXLEN", "20000")
 )
 
-# --- Server ---
+# --- 服务器 ---
 SERVER_PORT = int(os.getenv("SERVER_PORT", "20000"))
 MAX_TOOL_ROUNDS = 6
 
-# --- Skill HTTP Actions ---
+# --- 技能 HTTP 动作 ---
 SKILL_ACTION_ALLOW_PRIVATE_NETWORK = os.getenv(
     "SKILL_ACTION_ALLOW_PRIVATE_NETWORK",
     "false",
 ).lower() in ("1", "true", "yes", "on")
 
-# --- LangSmith (Trace) ---
+# --- LangSmith（链路追踪）---
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY", "")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "agent-platform-langchain")
 
