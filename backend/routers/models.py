@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from ..auth import get_current_user
 from ..services.model_service import (
-    create_model, delete_model, get_model_safe, list_models, update_model
+    create_model, delete_model, get_model_safe, list_models, test_model_connection, update_model
 )
 
 router = APIRouter(prefix="/api", tags=["Models"])
@@ -57,3 +57,17 @@ async def api_delete_model(model_id: int, user: dict = Depends(get_current_user)
     if not success:
         raise HTTPException(status_code=404, detail="模型不存在")
     return {"success": True}
+
+
+@router.post("/models/{model_id}/test")
+async def api_test_model(model_id: int, user: dict = Depends(get_current_user)):
+    """测试已保存的模型连接是否可用。"""
+    result = await test_model_connection(model_id=model_id, user_id=user["user_id"])
+    return result
+
+
+@router.post("/models/test")
+async def api_test_model_config(data: ModelCreate, user: dict = Depends(get_current_user)):
+    """测试未保存的模型配置是否可用（编辑/创建时实时校验）。"""
+    result = await test_model_connection(config=data.dict())
+    return result

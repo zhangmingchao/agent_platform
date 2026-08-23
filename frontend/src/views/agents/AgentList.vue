@@ -14,7 +14,7 @@
           <InlineEdit :model-value="row.name" :maxlength="200" placeholder="未命名" @save="saveAgentField(row, 'name', $event)" />
         </template>
       </el-table-column>
-      <el-table-column label="描述">
+      <el-table-column label="描述" width="180" >
         <template #default="{ row }">
           <InlineEdit :model-value="row.description" placeholder="暂无描述" @save="saveAgentField(row, 'description', $event)" />
         </template>

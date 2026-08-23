@@ -1,15 +1,16 @@
 <template>
   <el-container class="layout-container">
-    <el-aside width="220px" class="layout-aside">
-      <div class="logo">
+    <el-aside :width="isCollapse ? '64px' : '220px'" class="layout-aside">
+      <div class="logo" @click="toggleCollapse" style="cursor: pointer;">
         <el-icon :size="24"><Robot /></el-icon>
-        <span>Agent Platform</span>
+        <span v-show="!isCollapse">Agent Platform</span>
       </div>
       <el-menu
         :default-active="activeMenu"
         router
         background-color="#1f2937"
         text-color="#9ca3af"
+        :collapse="isCollapse"
         active-text-color="#409EFF"
       >
         <el-menu-item index="/dashboard">
@@ -122,6 +123,10 @@ const currentTitle = computed(() => route.meta?.title || '')
 const showUpdatePassword = ref(false)
 const formLabelWidth = '140px'
 const loading = ref(false)
+const isCollapse = ref(false)
+const toggleCollapse = () => {
+  isCollapse.value = !isCollapse.value
+}
 
 const updatePasswordForm = reactive({
   currentPassword: '',

@@ -37,13 +37,13 @@
       <!-- 画布 -->
       <div class="wf-canvas" @drop="onDrop" @dragover.prevent @dragenter.prevent>
         <VueFlow
-          :nodes="nodes"
-          :edges="edges"
+          v-model:nodes="nodes"
+          v-model:edges="edges"
           :node-types="nodeTypes"
           :default-edge-options="{ type: 'smoothstep', animated: true }"
           fit-view-on-init
-          @connect="onConnect"
-          @node-click="onNodeClick"
+          @connect="handleConnect"
+          @node-click="handleNodeClick"
           @node-drag-stop="onNodeDragStop"
           @edge-click="onEdgeClick"
         >
@@ -169,16 +169,18 @@ const nodeTypes = {
 const nodes = ref([])
 const edges = ref([])
 
-const { addEdges, addNodes, screenToFlowCoordinate, onConnect, onNodeClick, removeNodes } = useVueFlow()
+const { addEdges, addNodes, screenToFlowCoordinate, removeNodes } = useVueFlow()
 
-onConnect((params) => {
+// VueFlow 组件事件直接传入连接参数。这里使用普通事件处理函数，避免把
+// useVueFlow 的事件订阅函数误当成模板点击处理函数，导致右侧配置区不更新。
+const handleConnect = (params) => {
   const edge = { ...params, id: `edge-${Date.now()}`, type: 'smoothstep', animated: true }
   addEdges([edge])
-})
+}
 
-onNodeClick(({ node }) => {
+const handleNodeClick = ({ node }) => {
   selectedNodeId.value = node.id
-})
+}
 
 const selectedNode = computed(() => nodes.value.find(n => n.id === selectedNodeId.value) || null)
 

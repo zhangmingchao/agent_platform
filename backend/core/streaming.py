@@ -18,6 +18,28 @@ def sse_event(event_type: str, content: str = "") -> str:
     return f"data:{payload}\n\n"
 
 
+def _build_multimodal_content(text: str, attachments_raw=None) -> object:
+    """根据文本和附件构造多模态 content。无图片时返回纯字符串。"""
+    if not attachments_raw:
+        return text
+
+    # attachments 可能是 JSON 字符串或已解析的列表
+    images = attachments_raw
+    if isinstance(attachments_raw, str):
+        try:
+            images = json.loads(attachments_raw)
+        except json.JSONDecodeError:
+            images = []
+    if not isinstance(images, list) or not images:
+        return text
+
+    content = [{"type": "text", "text": text}]
+    for img in images:
+        if isinstance(img, str) and img.startswith("data:image/"):
+            content.append({"type": "image_url", "image_url": {"url": img}})
+    return content
+
+
 async def stream_agent_response(
     agent_executor,
     user_message: str,
@@ -25,6 +47,7 @@ async def stream_agent_response(
     history_messages: Optional[List[Dict]] = None,
     max_tool_rounds: int = 6,
     trace_ctx: Optional[TraceContext] = None,
+    images: Optional[List[str]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     以 SSE 事件流式输出智能体响应。
@@ -51,15 +74,26 @@ async def stream_agent_response(
         if not content:
             continue
         if role == "user":
-            messages.append(HumanMessage(content=content))
+            msg_content = _build_multimodal_content(content, item.get("attachments"))
+            messages.append(HumanMessage(content=msg_content))
         elif role == "assistant":
             messages.append(AIMessage(content=content))
 
     # 日期提示只加到当前用户这轮，避免污染历史消息。
     if messages and isinstance(messages[-1], HumanMessage):
-        messages[-1].content = f"[当前日期：{today}] {messages[-1].content}"
+        if isinstance(messages[-1].content, str):
+            messages[-1].content = f"[当前日期：{today}] {messages[-1].content}"
+        elif isinstance(messages[-1].content, list):
+            for part in messages[-1].content:
+                if part.get("type") == "text":
+                    part["text"] = f"[当前日期：{today}] {part['text']}"
+                    break
     else:
-        messages.append(HumanMessage(content=f"[当前日期：{today}] {user_message}"))
+        if images:
+            content = _build_multimodal_content(f"[当前日期：{today}] {user_message}", images)
+            messages.append(HumanMessage(content=content))
+        else:
+            messages.append(HumanMessage(content=f"[当前日期：{today}] {user_message}"))
 
     config = {
         "configurable": {"thread_id": thread_id},

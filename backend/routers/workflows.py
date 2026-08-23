@@ -3,6 +3,7 @@
 import json
 import logging
 
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -124,11 +125,17 @@ async def api_stream_workflow_run_events(run_id: int, user: dict = Depends(get_c
         redis = await get_redis()
         stream_key = workflow_event_stream_key(run_id)
         while True:
-            results = await redis.xread(
-                streams={stream_key: cursor},
-                count=100,
-                block=15000,
-            )
+            try:
+                results = await redis.xread(
+                    streams={stream_key: cursor},
+                    count=100,
+                    block=15000,
+                )
+            except RedisTimeoutError:
+                # Redis 客户端的 socket 超时可能与 XREAD 阻塞时间接近。
+                # 没有新事件属于正常情况，保持 SSE 连接并继续读取即可。
+                yield ": heartbeat\n\n"
+                continue
             if not results:
                 # SSE 注释行不会触发前端业务事件，只用于维持代理和浏览器连接。
                 yield ": heartbeat\n\n"

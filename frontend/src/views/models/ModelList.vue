@@ -23,8 +23,9 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
+          <el-button type="success" link :loading="testingId === row.id" @click="handleTest(row)">测试</el-button>
           <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
           <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
         </template>
@@ -64,8 +65,23 @@
           <el-switch v-model="form.is_active" />
         </el-form-item>
       </el-form>
+      <!-- 测试结果 -->
+      <el-alert
+        v-if="testResult"
+        :title="testResult.success ? '连接成功' : '连接失败'"
+        :type="testResult.success ? 'success' : 'error'"
+        :description="testResult.detail + (testResult.response ? ' — 模型回复: ' + testResult.response : '')"
+        :closable="true"
+        show-icon
+        style="margin-bottom: 16px"
+        @close="testResult = null"
+      />
+
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="success" :loading="testingInDialog" @click="handleTestInDialog">
+          测试连接
+        </el-button>
         <el-button type="primary" @click="handleSubmit" :loading="saving">
           {{ isEdit ? '保存' : '创建' }}
         </el-button>
@@ -86,6 +102,9 @@ const saving = ref(false)
 const formRef = ref()
 const editId = ref(null)
 const isEdit = computed(() => !!editId.value)
+const testingId = ref(null)
+const testingInDialog = ref(false)
+const testResult = ref(null)
 
 const form = reactive({
   name: '',
@@ -167,6 +186,38 @@ const handleDelete = async (row) => {
   await request.delete(`/api/models/${row.id}`)
   ElMessage.success('删除成功')
   await loadModels()
+}
+
+const handleTest = async (row) => {
+  testingId.value = row.id
+  try {
+    const result = await request.post(`/api/models/${row.id}/test`)
+    if (result.success) {
+      ElMessage.success(`「${row.name}」连接成功 — 模型回复: ${result.response || '(空)'}`)
+    } else {
+      ElMessage.error(`「${row.name}」连接失败: ${result.detail}`)
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '测试请求失败')
+  } finally {
+    testingId.value = null
+  }
+}
+
+const handleTestInDialog = async () => {
+  if (!form.model_id || !form.api_key) {
+    ElMessage.warning('请先填写模型 ID 和 API Key')
+    return
+  }
+  testingInDialog.value = true
+  testResult.value = null
+  try {
+    testResult.value = await request.post('/api/models/test', form)
+  } catch (e) {
+    testResult.value = { success: false, detail: e.message || '测试请求失败' }
+  } finally {
+    testingInDialog.value = false
+  }
 }
 
 onMounted(loadModels)

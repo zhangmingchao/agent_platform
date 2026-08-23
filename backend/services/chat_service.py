@@ -29,7 +29,7 @@ async def _load_model_config(agent, user_id):
     return await get_model(model_config_id, user_id)
 
 
-async def prepare_chat_run(user: dict, message: str, session_id: int) -> dict:
+async def prepare_chat_run(user: dict, message: str, session_id: int, images: list = None) -> dict:
     """加载执行一次聊天请求所需的全部运行时数据。"""
     session = await fetch_one(
         "SELECT id, agent_id FROM chat_sessions WHERE id=%s AND user_id=%s",
@@ -42,9 +42,12 @@ async def prepare_chat_run(user: dict, message: str, session_id: int) -> dict:
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
 
+    # 将图片 base64 列表序列化为 JSON 存入 attachments 字段
+    attachments_json = json.dumps(images) if images else None
     user_message_id = await execute(
-        "INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (%s, %s, %s, %s)",
-        (session_id, "user", message, _now()),
+        "INSERT INTO chat_messages (session_id, role, content, attachments, created_at) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (session_id, "user", message, attachments_json, _now()),
     )
 
     msg_count = await fetch_one(
@@ -58,7 +61,7 @@ async def prepare_chat_run(user: dict, message: str, session_id: int) -> dict:
     # chat_messages 是持久化的会话记忆；每次执行前从 MySQL 恢复历史，
     # 可以保证 FastAPI 进程重启后 Agent 仍然能接上上下文。
     history_messages = await fetch_all(
-        "SELECT role, content FROM chat_messages "
+        "SELECT role, content, attachments FROM chat_messages "
         "WHERE session_id=%s AND role IN ('user', 'assistant') "
         "ORDER BY created_at ASC, id ASC",
         (session_id,),
@@ -92,9 +95,9 @@ async def prepare_chat_run(user: dict, message: str, session_id: int) -> dict:
     }
 
 
-async def stream_chat(user: dict, message: str, session_id: int):
+async def stream_chat(user: dict, message: str, session_id: int, images: list = None):
     """运行 Agent 并生成 SSE 数据块，同时持久化助手回复。"""
-    run = await prepare_chat_run(user, message, session_id)
+    run = await prepare_chat_run(user, message, session_id, images)
     full_response = []
 
     try:
@@ -105,6 +108,7 @@ async def stream_chat(user: dict, message: str, session_id: int):
             history_messages=run["history_messages"],
             max_tool_rounds=run["max_tool_rounds"],
             trace_ctx=run["trace_ctx"],
+            images=images,
         ):
             if chunk.startswith("data:"):
                 payload = chunk[5:]

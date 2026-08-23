@@ -56,6 +56,16 @@
           </div>
           <div class="message-content">
             <div class="message-role">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
+            <!-- 用户消息的图片附件 -->
+            <div v-if="msg.role === 'user' && msg.attachments && msg.attachments.length" class="msg-images">
+              <img
+                v-for="(img, i) in msg.attachments"
+                :key="i"
+                :src="img"
+                class="msg-image"
+                @click="previewImage(img)"
+              />
+            </div>
             <div
               :class="['message-text', { 'markdown-body': msg.role === 'assistant' }]"
               v-html="renderMessage(msg)"
@@ -80,25 +90,73 @@
             <div v-else-if="toolCalls.length === 0" class="thinking-indicator">
               AI 思考中<span class="dots">...</span>
             </div>
+            <el-button
+              v-if="streaming"
+              class="stop-btn"
+              type="danger"
+              size="small"
+              plain
+              @click="stopGenerate"
+            >
+              <el-icon><VideoPause /></el-icon>
+              停止生成
+            </el-button>
           </div>
         </div>
       </div>
 
       <div class="chat-input" v-if="currentSessionId">
-        <el-input
-          v-model="inputText"
-          type="textarea"
-          :rows="3"
-          placeholder="输入消息..."
-          @keydown.enter.exact.prevent="sendMessage"
-          :disabled="streaming"
-        />
-        <el-button type="primary" :loading="streaming" @click="sendMessage" style="margin-top: 8px">
-          <el-icon><Promotion /></el-icon>
-          发送
-        </el-button>
+        <!-- 图片预览区 -->
+        <div v-if="pendingImages.length > 0" class="image-preview-area">
+          <div v-for="(img, i) in pendingImages" :key="i" class="image-preview-item">
+            <img :src="img" class="preview-thumb" />
+            <el-button
+              class="remove-image"
+              type="danger"
+              circle
+              size="small"
+              @click="removeImage(i)"
+            >
+              <el-icon><Close /></el-icon>
+            </el-button>
+          </div>
+        </div>
+
+        <div class="input-row">
+          <el-input
+            v-model="inputText"
+            type="textarea"
+            :rows="3"
+            placeholder="输入消息..."
+            @keydown.enter.exact.prevent="sendMessage"
+            @paste="handlePaste"
+            :disabled="streaming"
+          />
+          <div class="input-actions">
+            <el-upload
+              :show-file-list="false"
+              :before-upload="handleImageSelect"
+              accept="image/*"
+              :disabled="streaming || pendingImages.length >= 3"
+            >
+              <el-button :disabled="streaming || pendingImages.length >= 3" title="上传图片">
+                <el-icon><Picture /></el-icon>
+              </el-button>
+            </el-upload>
+            <el-button type="primary" :loading="streaming" @click="sendMessage">
+              <el-icon><Promotion /></el-icon>
+              发送
+            </el-button>
+          </div>
+        </div>
+        <div class="input-hint">支持粘贴图片，单次最多 3 张，单张不超过 2MB</div>
       </div>
     </div>
+
+    <!-- 图片预览弹窗 -->
+    <el-dialog v-model="imageViewerVisible" title="图片预览" width="auto" @close="imageViewerVisible = false">
+      <img :src="viewerImage" style="max-width: 100%; max-height: 70vh; display: block; margin: 0 auto;" />
+    </el-dialog>
   </div>
 </template>
 
@@ -106,6 +164,7 @@
 import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { VideoPause } from '@element-plus/icons-vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import request from '../../utils/request'
@@ -134,9 +193,23 @@ const normalizeLegacyStreamMessage = (content = '') => {
   }
   return content
 }
-const renderMessage = (message) => message.role === 'assistant'
-  ? renderMarkdown(normalizeLegacyStreamMessage(message.content))
-  : escapeHtml(message.content)
+
+// 解析数据库中的 attachments 字段（可能是 JSON 字符串或列表）
+const parseAttachments = (raw) => {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) } catch { return [] }
+  }
+  return []
+}
+
+const renderMessage = (message) => {
+  if (message.role === 'assistant') {
+    return renderMarkdown(normalizeLegacyStreamMessage(message.content))
+  }
+  return escapeHtml(message.content)
+}
 
 const route = useRoute()
 const agentId = computed(() => route.params.id)
@@ -150,6 +223,10 @@ const streaming = ref(false)
 const streamingText = ref('')
 const toolCalls = ref([])
 const messagesContainer = ref(null)
+const pendingImages = ref([])
+const imageViewerVisible = ref(false)
+const viewerImage = ref('')
+const abortController = ref(null)
 
 const formatTime = (d) => {
   if (!d) return ''
@@ -175,7 +252,12 @@ const loadSessions = async () => {
 
 const selectSession = async (session) => {
   currentSessionId.value = session.id
-  messages.value = await request.get(`/api/sessions/${session.id}/messages`)
+  const msgs = await request.get(`/api/sessions/${session.id}/messages`)
+  // 解析每条消息的 attachments
+  messages.value = msgs.map(m => ({
+    ...m,
+    attachments: parseAttachments(m.attachments)
+  }))
   scrollToBottom()
 }
 
@@ -212,21 +294,108 @@ const deleteSession = async (session) => {
   ElMessage.success('会话已删除')
 }
 
+// ── 图片处理 ─────────────────────────────────
+
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        const maxWidth = 1024
+        const maxHeight = 1024
+        let { width, height } = img
+        if (width > maxWidth) {
+          height = Math.round(height * maxWidth / width)
+          width = maxWidth
+        }
+        if (height > maxHeight) {
+          width = Math.round(width * maxHeight / height)
+          height = maxHeight
+        }
+        canvas.width = width
+        canvas.height = height
+        ctx.drawImage(img, 0, 0, width, height)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        resolve(dataUrl)
+      }
+      img.onerror = reject
+      img.src = e.target.result
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+const handleImageSelect = async (file) => {
+  if (pendingImages.value.length >= 3) {
+    ElMessage.warning('单次最多发送 3 张图片')
+    return false
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.warning('单张图片不能超过 2MB')
+    return false
+  }
+  try {
+    const dataUrl = await compressImage(file)
+    pendingImages.value.push(dataUrl)
+  } catch {
+    ElMessage.error('图片处理失败')
+  }
+  return false  // 阻止 el-upload 自动上传
+}
+
+const handlePaste = (e) => {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (file) {
+        handleImageSelect(file)
+      }
+    }
+  }
+}
+
+const removeImage = (index) => {
+  pendingImages.value.splice(index, 1)
+}
+
+const previewImage = (url) => {
+  viewerImage.value = url
+  imageViewerVisible.value = true
+}
+
+// ── 发送消息 ─────────────────────────────────
+
 const sendMessage = async () => {
   const text = inputText.value.trim()
-  if (!text || streaming.value) return
+  if ((!text && pendingImages.value.length === 0) || streaming.value) return
 
   if (!currentSessionId.value) {
     await createSession()
   }
 
-  messages.value.push({ role: 'user', content: text })
+  // 本地先展示用户消息（含图片）
+  const userMsg = {
+    role: 'user',
+    content: text || '(图片)',
+    attachments: pendingImages.value.length ? [...pendingImages.value] : undefined
+  }
+  messages.value.push(userMsg)
   inputText.value = ''
+  const sentImages = [...pendingImages.value]
+  pendingImages.value = []
   scrollToBottom()
 
   streaming.value = true
   streamingText.value = ''
   toolCalls.value = []
+  abortController.value = new AbortController()
 
   try {
     const token = localStorage.getItem('token')
@@ -237,9 +406,11 @@ const sendMessage = async () => {
         'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({
-        message: text,
-        session_id: currentSessionId.value
-      })
+        message: text || '请描述这些图片',
+        session_id: currentSessionId.value,
+        images: sentImages.length ? sentImages : undefined
+      }),
+      signal: abortController.value.signal
     })
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
@@ -289,13 +460,33 @@ const sendMessage = async () => {
       messages.value.push({ role: 'assistant', content: streamingText.value })
     }
   } catch (e) {
-    ElMessage.error(e.message || '对话请求失败')
+    if (e.name === 'AbortError') {
+      // 用户主动停止，保留已生成的内容
+      if (streamingText.value) {
+        messages.value.push({ role: 'assistant', content: streamingText.value })
+      }
+    } else {
+      ElMessage.error(e.message || '对话请求失败')
+    }
   } finally {
     streaming.value = false
     streamingText.value = ''
     toolCalls.value = []
+    abortController.value = null
     loadSessions()
   }
+}
+
+const stopGenerate = () => {
+  if (abortController.value) {
+    abortController.value.abort()
+  }
+  streaming.value = false
+  if (streamingText.value) {
+    messages.value.push({ role: 'assistant', content: streamingText.value })
+  }
+  streamingText.value = ''
+  toolCalls.value = []
 }
 
 onMounted(async () => {
@@ -432,6 +623,21 @@ onMounted(async () => {
   color: #9ca3af;
   margin-bottom: 4px;
 }
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  justify-content: flex-end;
+}
+.msg-image {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid #e5e7eb;
+}
 .message-text {
   background: #f3f4f6;
   padding: 12px 16px;
@@ -539,10 +745,56 @@ onMounted(async () => {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
 }
+.stop-btn {
+  margin-top: 8px;
+}
 .chat-input {
   padding: 16px;
   border-top: 1px solid #e5e7eb;
   background: #fff;
+}
+.image-preview-area {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.image-preview-item {
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+.preview-thumb {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+.remove-image {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  z-index: 1;
+}
+.input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.input-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.input-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #9ca3af;
 }
 .session-delete {
   flex-shrink: 0;

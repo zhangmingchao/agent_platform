@@ -26,8 +26,8 @@
 
       <el-form-item label="模型来源">
         <el-radio-group v-model="modelSource" @change="onModelSourceChange">
-          <el-radio-button label="custom">自定义模型</el-radio-button>
-          <el-radio-button label="builtin">内置模型</el-radio-button>
+          <el-radio-button label="custom" value="custom" >自定义模型</el-radio-button>
+          <el-radio-button label="builtin" value="builtin">内置模型</el-radio-button>
         </el-radio-group>
       </el-form-item>
 
@@ -131,16 +131,18 @@ const modelSource = ref('builtin')
 const userModels = ref([])
 const builtinModels = ref([])
 const skills = ref([])
+const moduleList = ref([])
 const mcps = ref([])
 
 const onModelSourceChange = () => {
   if (modelSource.value === 'custom') {
-    form.model_config_id = null
+    form.model_config_id = userModels.value.length > 0 ? userModels.value[0].id: null
     form.model = userModels.value.length > 0 ? userModels.value[0].model_id : ''
   } else {
     form.model_config_id = null
     form.model = builtinModels.value.length > 0 ? builtinModels.value[0].value : 'deepseek-chat'
   }
+  debugger
 }
 
 const onModelChange = (val) => {
@@ -150,6 +152,7 @@ const onModelChange = (val) => {
   } else {
     form.model_config_id = null
   }
+  debugger
 }
 
 const loadUserModels = async () => {
@@ -205,6 +208,7 @@ const handleSubmit = async () => {
     if (isEdit.value) {
       await request.put(`/api/agents/${route.params.id}`, form)
       ElMessage.success('保存成功')
+      router.push('/agents')
     } else {
       await request.post('/api/agents', form)
       ElMessage.success('创建成功')

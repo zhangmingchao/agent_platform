@@ -329,6 +329,11 @@ async def init_db():
                     "node_type",
                     "ALTER TABLE multi_agent_run_steps ADD COLUMN node_type VARCHAR(50) DEFAULT NULL AFTER node_id",
                 ),
+                (
+                    "chat_messages",
+                    "attachments",
+                    "ALTER TABLE chat_messages ADD COLUMN attachments JSON DEFAULT NULL AFTER content",
+                ),
             ]
             for table_name, column_name, alter_sql in migrations:
                 try:
@@ -382,6 +387,10 @@ async def fetch_all(sql: str, params: tuple = ()) -> List[Dict]:
             rows = await cur.fetchall()
             return list(rows)
     finally:
+        # autocommit=False 时，普通 SELECT 也会开启事务。在连接归还连接池之前
+        # 必须结束该事务，否则下一个请求复用连接时可能仍处于旧的一致性快照中，
+        # 看不到其他连接刚提交的数据（例如刚创建的 Workflow Run）。
+        await conn.rollback()
         await release_conn(conn)
 
 
