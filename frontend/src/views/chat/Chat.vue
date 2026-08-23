@@ -414,7 +414,12 @@ const sendMessage = async () => {
     })
     if (!response.ok) {
       const error = await response.json().catch(() => ({}))
-      throw new Error(error.detail || `请求失败（${response.status}）`)
+      if (response.status === 429) {
+        ElMessage.warning(error.detail || '该会话正在生成回复，请等待完成或点击停止生成')
+      } else {
+        throw new Error(error.detail || `请求失败（${response.status}）`)
+      }
+      return
     }
     const reader = response.body.getReader()
     const decoder = new TextDecoder()

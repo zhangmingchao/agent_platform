@@ -50,3 +50,16 @@ async def delete_token(token: str):
     """从 Redis 删除 token（登出）。"""
     r = await get_redis()
     await r.delete(f"token:{token}")
+
+
+async def acquire_stream_lock(session_id: int, ttl: int = 300) -> bool:
+    """尝试获取会话级别的流式锁（同一 session 只能有一个活跃流）。TTL 秒数兜底防死锁。"""
+    r = await get_redis()
+    result = await r.set(f"chat:stream:lock:{session_id}", "1", nx=True, ex=ttl)
+    return result is not None
+
+
+async def release_stream_lock(session_id: int):
+    """释放会话的流式锁。"""
+    r = await get_redis()
+    await r.delete(f"chat:stream:lock:{session_id}")

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..auth import get_current_user
+from ..redis_client import acquire_stream_lock, release_stream_lock
 from ..services.chat_service import stream_chat
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
@@ -34,10 +35,19 @@ def _validate_images(images):
     for img in images:
         if not isinstance(img, str) or not img.startswith("data:image/"):
             continue
-        if len(img) > MAX_IMAGE_SIZE * 1.4:  # base64 膨胀系数约 1.33
+        if len(img) > MAX_IMAGE_SIZE * 1.4:
             raise HTTPException(status_code=400, detail=f"单张图片不能超过 {MAX_IMAGE_SIZE // 1024}KB")
         cleaned.append(img)
     return cleaned
+
+
+async def _guarded_stream(generator, session_id):
+    """包装流式生成器，确保无论正常结束、客户端断开还是异常，都释放会话锁。"""
+    try:
+        async for chunk in generator:
+            yield chunk
+    finally:
+        await release_stream_lock(session_id)
 
 
 @router.post("/stream")
@@ -47,8 +57,16 @@ async def api_chat_stream_post(request: Request, user: dict = Depends(get_curren
     session_id = body.get("session_id")
     images = _validate_images(body.get("images"))
     _validate_chat_request(message, session_id)
+
+    acquired = await acquire_stream_lock(session_id)
+    if not acquired:
+        raise HTTPException(status_code=429, detail="该会话正在生成回复，请等待完成或停止当前生成")
+
     return StreamingResponse(
-        stream_chat(user=user, message=message, session_id=session_id, images=images),
+        _guarded_stream(
+            stream_chat(user=user, message=message, session_id=session_id, images=images),
+            session_id,
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
@@ -61,8 +79,16 @@ async def api_chat_stream(
     user: dict = Depends(get_current_user),
 ):
     _validate_chat_request(message, session_id)
+
+    acquired = await acquire_stream_lock(session_id)
+    if not acquired:
+        raise HTTPException(status_code=429, detail="该会话正在生成回复，请等待完成或停止当前生成")
+
     return StreamingResponse(
-        stream_chat(user=user, message=message, session_id=session_id),
+        _guarded_stream(
+            stream_chat(user=user, message=message, session_id=session_id),
+            session_id,
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

@@ -24,8 +24,8 @@ def build_llm(
     """创建 ChatOpenAI 实例。优先使用传入的 model_config，否则回退到 DeepSeek。"""
     return ChatOpenAI(
         model=model_name,
-        base_url=base_url or DEEPSEEK_BASE_URL,
-        api_key=api_key or DEEPSEEK_API_KEY,
+        base_url=base_url,
+        api_key=api_key,
         temperature=temperature,
     )
 
@@ -51,17 +51,17 @@ async def create_agent_instance(
     如果提供了 model_config（来自用户的模型设置），则使用其 api_key/base_url/model_id。
     否则回退到环境变量中的 DeepSeek 配置。
     """
-    if model_config:
-        model_name = model_config.get("model_id", DEEPSEEK_MODEL)
-        api_key = model_config.get("api_key", DEEPSEEK_API_KEY)
-        base_url = model_config.get("base_url", DEEPSEEK_BASE_URL)
-        temperature = agent.get("temperature", model_config.get("temperature", 0.7))
-        log.info(f"[Agent] using user model config: {model_config.get('name', 'unknown')}")
-    else:
-        model_name = agent.get("model", DEEPSEEK_MODEL)
-        api_key = DEEPSEEK_API_KEY
-        base_url = DEEPSEEK_BASE_URL
-        temperature = agent.get("temperature", 0.7)
+    # if model_config:
+    model_name = model_config.get("model_id", DEEPSEEK_MODEL)
+    api_key = model_config.get("api_key", DEEPSEEK_API_KEY)
+    base_url = model_config.get("base_url", DEEPSEEK_BASE_URL)
+    temperature = agent.get("temperature", model_config.get("temperature", 0.7))
+    log.info(f"[Agent] using user model config: {model_config.get('name', 'unknown')}")
+    # else:
+    #     model_name = agent.get("model", DEEPSEEK_MODEL)
+    #     api_key = DEEPSEEK_API_KEY
+    #     base_url = DEEPSEEK_BASE_URL
+    #     temperature = agent.get("temperature", 0.7)
 
     system_prompt = agent.get("system_prompt", "")
 
