@@ -258,13 +258,14 @@ const selectSession = async (session) => {
     ...m,
     attachments: parseAttachments(m.attachments)
   }))
+  messages.value.unshift({"role":"assistant","content":"你好啊！请说出你的问题！","attachments":null})
   scrollToBottom()
 }
 
 const createSession = async () => {
   const session = await request.post('/api/sessions', { agent_id: agentId.value })
   currentSessionId.value = session.session_id
-  messages.value = []
+  messages.value = [{"role":"assistant","content":"你好啊！请说出你的问题！","attachments":null}]
   await loadSessions()
 }
 
