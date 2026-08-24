@@ -77,17 +77,31 @@
             <el-avatar :icon="Robot" class="ai-avatar" />
           </div>
           <div class="message-content">
+            <!-- 思考过程面板 -->
+            <div v-if="thinkingText" class="thinking-panel">
+              <div class="panel-header" @click="showThinking = !showThinking">
+                <div class="panel-title">
+                  <el-icon class="thinking-icon"><MagicStick /></el-icon>
+                  <span>思考过程</span>
+                </div>
+                <el-icon class="toggle-icon" :class="{ expanded: showThinking }"><ArrowDown /></el-icon>
+              </div>
+              <div v-show="showThinking" class="thinking-content markdown-body" v-html="renderMarkdown(thinkingText)"></div>
+            </div>
+            <!-- 工具调用面板 -->
             <div v-if="toolCalls.length > 0" class="tool-calls-panel">
               <div v-for="(tc, i) in toolCalls" :key="i" class="tool-call-item">
                 <el-icon v-if="tc.status === 'running'"><Loading /></el-icon>
                 <el-icon v-else><Check /></el-icon>
                 <span class="tool-name">{{ tc.name }}</span>
+                <span v-if="tc.input" class="tool-input">{{ tc.input }}</span>
               </div>
             </div>
+            <!-- 最终回答 -->
             <div v-if="streamingText" class="message-text markdown-body streaming-content">
               <span v-html="renderMarkdown(streamingText)"></span><span class="cursor">|</span>
             </div>
-            <div v-else-if="toolCalls.length === 0" class="thinking-indicator">
+            <div v-else-if="toolCalls.length === 0 && !thinkingText" class="thinking-indicator">
               AI 思考中<span class="dots">...</span>
             </div>
             <el-button
@@ -164,7 +178,7 @@
 import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { VideoPause } from '@element-plus/icons-vue'
+import { VideoPause, ArrowDown, MagicStick } from '@element-plus/icons-vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import request from '../../utils/request'
@@ -221,6 +235,8 @@ const messages = ref([])
 const inputText = ref('')
 const streaming = ref(false)
 const streamingText = ref('')
+const thinkingText = ref('')
+const showThinking = ref(true)
 const toolCalls = ref([])
 const messagesContainer = ref(null)
 const pendingImages = ref([])
@@ -395,6 +411,8 @@ const sendMessage = async () => {
 
   streaming.value = true
   streamingText.value = ''
+  thinkingText.value = ''
+  showThinking.value = true
   toolCalls.value = []
   abortController.value = new AbortController()
 
@@ -443,8 +461,23 @@ const sendMessage = async () => {
               streaming.value = false
             } else if (event.type === 'chunk') {
               streamingText.value += event.content || ''
+            } else if (event.type === 'thinking') {
+              thinkingText.value += event.content || ''
+            } else if (event.type === 'reclassify') {
+              if (event.content === 'answer') {
+                streamingText.value = thinkingText.value + streamingText.value
+                thinkingText.value = ''
+              } else if (event.content === 'thinking') {
+                thinkingText.value += streamingText.value
+                streamingText.value = ''
+              }
             } else if (event.type === 'tool_start') {
-              toolCalls.value.push({ name: event.content, status: 'running' })
+              try {
+                const toolData = JSON.parse(event.content)
+                toolCalls.value.push({ name: toolData.name, input: toolData.input || '', status: 'running' })
+              } catch {
+                toolCalls.value.push({ name: event.content, input: '', status: 'running' })
+              }
               scrollToBottom()
             } else if (event.type === 'tool_end') {
               if (toolCalls.value.length > 0) {
@@ -477,6 +510,7 @@ const sendMessage = async () => {
   } finally {
     streaming.value = false
     streamingText.value = ''
+    thinkingText.value = ''
     toolCalls.value = []
     abortController.value = null
     loadSessions()
@@ -492,6 +526,7 @@ const stopGenerate = () => {
     messages.value.push({ role: 'assistant', content: streamingText.value })
   }
   streamingText.value = ''
+  thinkingText.value = ''
   toolCalls.value = []
 }
 
@@ -673,6 +708,63 @@ onMounted(async () => {
 .tool-name {
   font-family: ui-monospace, monospace;
   font-size: 12px;
+}
+.tool-input {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+.thinking-panel {
+  background: #fafafa;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: #f9fafb;
+  transition: background 0.15s;
+}
+.panel-header:hover {
+  background: #f3f4f6;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #6b7280;
+  font-weight: 500;
+}
+.thinking-icon {
+  color: #8b5cf6;
+}
+.toggle-icon {
+  transition: transform 0.2s;
+  color: #9ca3af;
+  font-size: 12px;
+}
+.toggle-icon.expanded {
+  transform: rotate(180deg);
+}
+.thinking-content {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.6;
+  max-height: 300px;
+  overflow-y: auto;
+  border-top: 1px solid #f0f0f0;
 }
 .thinking-indicator {
   color: #9ca3af;
