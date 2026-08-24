@@ -3,10 +3,12 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 SKILLS_DIR = os.path.join(DATA_DIR, "skills")
+RUNTIME_DATA_DIR = os.path.join(DATA_DIR, "runtime")
 
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(SKILLS_DIR, exist_ok=True)
+os.makedirs(RUNTIME_DATA_DIR, exist_ok=True)
 
 JWT_SECRET = os.getenv("JWT_SECRET", "agent-platform-secret-2026")
 JWT_ALGORITHM = "HS256"
@@ -46,6 +48,16 @@ WORKFLOW_EVENT_STREAM_MAXLEN = int(
 # --- 服务器 ---
 SERVER_PORT = int(os.getenv("SERVER_PORT", "20000"))
 MAX_TOOL_ROUNDS = 6
+
+# --- 本地 Python Runtime ---
+PYTHON_RUNTIME_ENABLED = os.getenv("PYTHON_RUNTIME_ENABLED", "true").lower() in (
+    "1", "true", "yes", "on",
+)
+PYTHON_RUNTIME_TIMEOUT_SECONDS = int(os.getenv("PYTHON_RUNTIME_TIMEOUT_SECONDS", "60"))
+PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS = int(os.getenv("PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS", "120"))
+PYTHON_RUNTIME_MEMORY_MB = int(os.getenv("PYTHON_RUNTIME_MEMORY_MB", "1024"))
+PYTHON_RUNTIME_MAX_UPLOAD_MB = int(os.getenv("PYTHON_RUNTIME_MAX_UPLOAD_MB", "20"))
+PYTHON_RUNTIME_MAX_OUTPUT_MB = int(os.getenv("PYTHON_RUNTIME_MAX_OUTPUT_MB", "20"))
 
 # --- 技能 HTTP 动作 ---
 SKILL_ACTION_ALLOW_PRIVATE_NETWORK = os.getenv(

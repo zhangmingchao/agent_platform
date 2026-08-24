@@ -109,9 +109,52 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     session_id INT NOT NULL,
     role VARCHAR(20) NOT NULL,
     content TEXT NOT NULL,
+    attachments JSON DEFAULT NULL,
     created_at DATETIME NOT NULL,
     INDEX idx_chat_messages_session (session_id),
     CONSTRAINT fk_msg_session FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS runtime_files (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT DEFAULT NULL,
+    execution_id VARCHAR(36) DEFAULT NULL,
+    file_name VARCHAR(200) NOT NULL,
+    storage_path VARCHAR(1000) NOT NULL,
+    mime_type VARCHAR(200) DEFAULT NULL,
+    size_bytes BIGINT NOT NULL,
+    sha256 VARCHAR(64) NOT NULL,
+    file_type VARCHAR(20) NOT NULL,
+    created_at DATETIME NOT NULL,
+    INDEX idx_runtime_files_user (user_id),
+    INDEX idx_runtime_files_session (session_id),
+    INDEX idx_runtime_files_execution (execution_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS code_executions (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT DEFAULT NULL,
+    workflow_run_id INT DEFAULT NULL,
+    workflow_step_id INT DEFAULT NULL,
+    node_id VARCHAR(100) DEFAULT NULL,
+    source_type VARCHAR(30) NOT NULL,
+    skill_id INT DEFAULT NULL,
+    code_sha256 VARCHAR(64) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    timeout_seconds INT NOT NULL,
+    exit_code INT DEFAULT NULL,
+    stdout_text MEDIUMTEXT DEFAULT NULL,
+    stderr_text MEDIUMTEXT DEFAULT NULL,
+    result_json JSON DEFAULT NULL,
+    error_text TEXT DEFAULT NULL,
+    started_at DATETIME DEFAULT NULL,
+    finished_at DATETIME DEFAULT NULL,
+    created_at DATETIME NOT NULL,
+    INDEX idx_code_executions_user (user_id),
+    INDEX idx_code_executions_session (session_id),
+    INDEX idx_code_executions_workflow_run (workflow_run_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS trace_runs (

@@ -57,19 +57,35 @@
           <div class="message-content">
             <div class="message-role">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
             <!-- 用户消息的图片附件 -->
-            <div v-if="msg.role === 'user' && msg.attachments && msg.attachments.length" class="msg-images">
+            <div v-if="msg.role === 'user' && messageImages(msg).length" class="msg-images">
               <img
-                v-for="(img, i) in msg.attachments"
+                v-for="(img, i) in messageImages(msg)"
                 :key="i"
                 :src="img"
                 class="msg-image"
                 @click="previewImage(img)"
               />
             </div>
+            <div v-if="msg.role === 'user' && messageFiles(msg).length" class="msg-files">
+              <a
+                v-for="file in messageFiles(msg)"
+                :key="file.id"
+                :href="`/api/runtime/files/${file.id}`"
+                class="msg-file"
+                @click.prevent="downloadRuntimeFile(file)"
+              >{{ file.name }}</a>
+            </div>
             <div
               :class="['message-text', { 'markdown-body': msg.role === 'assistant' }]"
               v-html="renderMessage(msg)"
             ></div>
+          </div>
+        </div>
+
+        <div v-if="pendingFiles.length > 0" class="file-preview-area">
+          <div v-for="(file, i) in pendingFiles" :key="file.id" class="file-preview-item">
+            <span>{{ file.name }}</span>
+            <el-button link type="danger" @click="removeFile(i)">移除</el-button>
           </div>
         </div>
         <div v-if="streaming" class="message assistant">
@@ -157,13 +173,21 @@
                 <el-icon><Picture /></el-icon>
               </el-button>
             </el-upload>
+            <el-upload
+              :show-file-list="false"
+              :before-upload="handleRuntimeFileSelect"
+              accept=".csv,.xlsx,.xls,.docx,.pdf,.json,.md,.txt"
+              :disabled="streaming || uploadingFile || pendingFiles.length >= 10"
+            >
+              <el-button :loading="uploadingFile" title="上传数据或文档">文件</el-button>
+            </el-upload>
             <el-button type="primary" :loading="streaming" @click="sendMessage">
               <el-icon><Promotion /></el-icon>
               发送
             </el-button>
           </div>
         </div>
-        <div class="input-hint">支持粘贴图片，单次最多 3 张，单张不超过 2MB</div>
+        <div class="input-hint">支持图片，以及 CSV、Excel、Word、PDF、JSON、Markdown 和文本文件</div>
       </div>
     </div>
 
@@ -240,6 +264,8 @@ const showThinking = ref(true)
 const toolCalls = ref([])
 const messagesContainer = ref(null)
 const pendingImages = ref([])
+const pendingFiles = ref([])
+const uploadingFile = ref(false)
 const imageViewerVisible = ref(false)
 const viewerImage = ref('')
 const abortController = ref(null)
@@ -387,26 +413,78 @@ const previewImage = (url) => {
   imageViewerVisible.value = true
 }
 
+// 返回消息中可用于预览的图片附件。
+const messageImages = (message) => parseAttachments(message.attachments)
+  .filter(item => typeof item === 'string' && item.startsWith('data:image/'))
+
+// 返回消息中的 Runtime 文件附件。
+const messageFiles = (message) => parseAttachments(message.attachments)
+  .filter(item => item && typeof item === 'object' && item.kind === 'runtime_file')
+
+// 上传普通文件并保存后端返回的逻辑文件 ID。
+const handleRuntimeFileSelect = async (file) => {
+  if (pendingFiles.value.length >= 10) {
+    ElMessage.warning('单次最多使用 10 个文件')
+    return false
+  }
+  const form = new FormData()
+  form.append('file', file)
+  if (currentSessionId.value) form.append('session_id', String(currentSessionId.value))
+  uploadingFile.value = true
+  try {
+    const uploaded = await request.post('/api/runtime/files', form)
+    pendingFiles.value.push(uploaded)
+    ElMessage.success(`已上传 ${uploaded.name}`)
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '文件上传失败')
+  } finally {
+    uploadingFile.value = false
+  }
+  return false
+}
+
+// 从待发送列表中移除文件，不删除服务端原文件。
+const removeFile = (index) => {
+  pendingFiles.value.splice(index, 1)
+}
+
+// 携带登录凭证下载 Runtime 文件，并在浏览器中保存。
+const downloadRuntimeFile = async (file) => {
+  try {
+    const blob = await request.get(`/api/runtime/files/${file.id}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = file.name || 'runtime-file'
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('文件下载失败')
+  }
+}
+
 // ── 发送消息 ─────────────────────────────────
 
 const sendMessage = async () => {
   const text = inputText.value.trim()
-  if ((!text && pendingImages.value.length === 0) || streaming.value) return
+  if ((!text && pendingImages.value.length === 0 && pendingFiles.value.length === 0) || streaming.value) return
 
   if (!currentSessionId.value) {
     await createSession()
   }
 
   // 本地先展示用户消息（含图片）
+  const sentFiles = [...pendingFiles.value]
   const userMsg = {
     role: 'user',
-    content: text || '(图片)',
-    attachments: pendingImages.value.length ? [...pendingImages.value] : undefined
+    content: text || '(附件)',
+    attachments: [...pendingImages.value, ...sentFiles]
   }
   messages.value.push(userMsg)
   inputText.value = ''
   const sentImages = [...pendingImages.value]
   pendingImages.value = []
+  pendingFiles.value = []
   scrollToBottom()
 
   streaming.value = true
@@ -427,7 +505,8 @@ const sendMessage = async () => {
       body: JSON.stringify({
         message: text || '请描述这些图片',
         session_id: currentSessionId.value,
-        images: sentImages.length ? sentImages : undefined
+        images: sentImages.length ? sentImages : undefined,
+        file_ids: sentFiles.length ? sentFiles.map(file => file.id) : undefined
       }),
       signal: abortController.value.signal
     })
@@ -679,6 +758,21 @@ onMounted(async () => {
   cursor: pointer;
   border: 1px solid #e5e7eb;
 }
+.msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.msg-file {
+  padding: 5px 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #2563eb;
+  text-decoration: none;
+}
 .message-text {
   background: #f3f4f6;
   padding: 12px 16px;
@@ -856,6 +950,22 @@ onMounted(async () => {
   gap: 8px;
   margin-bottom: 8px;
   flex-wrap: wrap;
+}
+.file-preview-area {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.file-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #eff6ff;
+  font-size: 12px;
 }
 .image-preview-item {
   position: relative;

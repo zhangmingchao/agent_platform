@@ -16,6 +16,7 @@ SSE_HEADERS = {
 
 MAX_IMAGES = 3
 MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2MB
+MAX_RUNTIME_FILES = 10
 
 
 def _validate_chat_request(message, session_id):
@@ -41,6 +42,18 @@ def _validate_images(images):
     return cleaned
 
 
+def _validate_file_ids(file_ids):
+    """校验 Runtime 文件 ID 列表，并去除重复项。"""
+    if file_ids is None:
+        return []
+    if not isinstance(file_ids, list) or any(not isinstance(item, str) for item in file_ids):
+        raise HTTPException(status_code=400, detail="file_ids 必须是字符串列表")
+    cleaned = list(dict.fromkeys(item.strip() for item in file_ids if item.strip()))
+    if len(cleaned) > MAX_RUNTIME_FILES:
+        raise HTTPException(status_code=400, detail=f"单次最多使用 {MAX_RUNTIME_FILES} 个文件")
+    return cleaned
+
+
 async def _guarded_stream(generator, session_id):
     """包装流式生成器，确保无论正常结束、客户端断开还是异常，都释放会话锁。"""
     try:
@@ -56,6 +69,7 @@ async def api_chat_stream_post(request: Request, user: dict = Depends(get_curren
     message = body.get("message", "")
     session_id = body.get("session_id")
     images = _validate_images(body.get("images"))
+    file_ids = _validate_file_ids(body.get("file_ids"))
     _validate_chat_request(message, session_id)
 
     acquired = await acquire_stream_lock(session_id)
@@ -64,7 +78,10 @@ async def api_chat_stream_post(request: Request, user: dict = Depends(get_curren
 
     return StreamingResponse(
         _guarded_stream(
-            stream_chat(user=user, message=message, session_id=session_id, images=images),
+            stream_chat(
+                user=user, message=message, session_id=session_id,
+                images=images, file_ids=file_ids,
+            ),
             session_id,
         ),
         media_type="text/event-stream",

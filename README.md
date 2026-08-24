@@ -318,6 +318,35 @@ HTTP Action 工具名需为 1-64 位的字母、数字、下划线或短横线�
 
 Trace 状态包括 `running`、`success`、`error` 和 `cancelled`。Trace 数据按登录用户隔离；仅新产生的对话会被记录，历史对话不会自动补录。数据库表会在后端启动时自动创建。
 
+## 本地 Python Runtime
+
+聊天 Agent 和工作流 Agent 会按运行上下文获得两个结构化工具：
+
+- `ExecutePython`：执行 LLM 生成的 Python 代码。
+- `RunSkillScript`：仅执行当前 Agent 已绑定 Skill 中的 `.py` 脚本。
+
+聊天页可上传 CSV、Excel、Word、PDF、JSON、Markdown 和文本文件。模型仅能看到逻辑 `file_id`，脚本通过下列变量访问输入和输出：
+
+```python
+from pathlib import Path
+
+input_path = Path(INPUT_FILES[RUNTIME_ARGS["file_id"]])
+output_path = Path(OUTPUT_DIR) / "summary.json"
+output_path.write_text('{"ok": true}', encoding="utf-8")
+result = {"message": "处理完成"}
+```
+
+Skill 中的固定脚本建议放在 `scripts/` 下：
+
+```text
+my-skill/
+├── SKILL.md
+└── scripts/
+    └── analyze.py
+```
+
+Runtime 使用独立工作目录、AST 白名单、Python 审计钩子、子进程超时和 Unix 资源限制。它是为本地开发和受控代码提供的轻量隔离，**不是用于执行完全不可信代码的强安全沙箱**。生产环境应换成独立机器、微型虚拟机或 gVisor 等执行后端。
+
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -338,6 +367,12 @@ Trace 状态包括 `running`、`success`、`error` 和 `cancelled`。Trace 数�
 | `REDIS_PASSWORD` | 无 | Redis 密码 |
 | `WORKFLOW_EVENT_STREAM_TTL_SECONDS` | `86400` | 工作流事件 Stream 保留时间（秒） |
 | `WORKFLOW_EVENT_STREAM_MAXLEN` | `20000` | 每个工作流事件 Stream 的近似最大长度 |
+| `PYTHON_RUNTIME_ENABLED` | `true` | 是否向 Agent 注册本地 Python Runtime 工具 |
+| `PYTHON_RUNTIME_TIMEOUT_SECONDS` | `60` | 默认执行超时秒数 |
+| `PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS` | `120` | Agent 可请求的最大超时秒数 |
+| `PYTHON_RUNTIME_MEMORY_MB` | `1024` | Unix 子进程内存限制 |
+| `PYTHON_RUNTIME_MAX_UPLOAD_MB` | `20` | 单个上传文件大小限制 |
+| `PYTHON_RUNTIME_MAX_OUTPUT_MB` | `20` | 单次执行产出文件总大小限制 |
 
 ## License
 

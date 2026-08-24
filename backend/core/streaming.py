@@ -19,7 +19,7 @@ def sse_event(event_type: str, content: str = "") -> str:
 
 
 def _build_multimodal_content(text: str, attachments_raw=None) -> object:
-    """根据文本和附件构造多模态 content。无图片时返回纯字符串。"""
+    """根据文本、图片和 Runtime 文件构造模型消息。"""
     if not attachments_raw:
         return text
 
@@ -33,11 +33,20 @@ def _build_multimodal_content(text: str, attachments_raw=None) -> object:
     if not isinstance(images, list) or not images:
         return text
 
+    runtime_files = [item for item in images if isinstance(item, dict) and item.get("kind") == "runtime_file"]
+    if runtime_files:
+        lines = ["", "[可用 Runtime 文件]"]
+        lines.extend(
+            f"- {item.get('name', '未命名文件')}，file_id={item.get('id')}"
+            for item in runtime_files
+        )
+        text += "\n".join(lines)
+
     content = [{"type": "text", "text": text}]
-    for img in images:
-        if isinstance(img, str) and img.startswith("data:image/"):
-            content.append({"type": "image_url", "image_url": {"url": img}})
-    return content
+    for item in images:
+        if isinstance(item, str) and item.startswith("data:image/"):
+            content.append({"type": "image_url", "image_url": {"url": item}})
+    return content if len(content) > 1 else text
 
 
 async def stream_agent_response(

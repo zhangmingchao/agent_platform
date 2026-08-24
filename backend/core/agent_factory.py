@@ -7,6 +7,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
 
 from ..config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from ..runtime.models import RuntimeContext
+from ..runtime.tools import build_runtime_tools
 from .tools import build_skill_tools
 from .mcp_tools import build_mcp_langchain_tools
 
@@ -30,10 +32,15 @@ def build_llm(
     )
 
 
-async def build_all_tools(skills: List[Dict], mcp_configs: List[Dict]) -> list:
+async def build_all_tools(
+    skills: List[Dict],
+    mcp_configs: List[Dict],
+    runtime_context: Optional[RuntimeContext] = None,
+) -> list:
     """从技能和 MCP 配置构建所有 LangChain 工具。"""
     tools = []
     tools.extend(build_skill_tools(skills))
+    tools.extend(build_runtime_tools(skills, runtime_context))
     tools.extend(await build_mcp_langchain_tools(mcp_configs))
     log.info(f"[Tools] loaded {len(tools)} tools total")
     return tools
@@ -44,6 +51,7 @@ async def create_agent_instance(
     skills: List[Dict],
     mcp_configs: List[Dict],
     model_config: Optional[Dict] = None,
+    runtime_context: Optional[RuntimeContext] = None,
 ):
     """
     创建一个集成工具、记忆和系统提示词的 LangGraph ReAct 智能体。
@@ -51,22 +59,23 @@ async def create_agent_instance(
     如果提供了 model_config（来自用户的模型设置），则使用其 api_key/base_url/model_id。
     否则回退到环境变量中的 DeepSeek 配置。
     """
-    # if model_config:
-    model_name = model_config.get("model_id", DEEPSEEK_MODEL)
-    api_key = model_config.get("api_key", DEEPSEEK_API_KEY)
-    base_url = model_config.get("base_url", DEEPSEEK_BASE_URL)
-    temperature = agent.get("temperature", model_config.get("temperature", 0.7))
-    log.info(f"[Agent] using user model config: {model_config.get('name', 'unknown')}")
-    # else:
-    #     model_name = agent.get("model", DEEPSEEK_MODEL)
-    #     api_key = DEEPSEEK_API_KEY
-    #     base_url = DEEPSEEK_BASE_URL
-    #     temperature = agent.get("temperature", 0.7)
+    # 自定义模型配置优先；未配置时回退到环境变量，避免空指针。
+    if model_config:
+        model_name = model_config.get("model_id", DEEPSEEK_MODEL)
+        api_key = model_config.get("api_key", DEEPSEEK_API_KEY)
+        base_url = model_config.get("base_url", DEEPSEEK_BASE_URL)
+        temperature = agent.get("temperature", model_config.get("temperature", 0.7))
+        log.info(f"[Agent] using user model config: {model_config.get('name', 'unknown')}")
+    else:
+        model_name = agent.get("model", DEEPSEEK_MODEL)
+        api_key = DEEPSEEK_API_KEY
+        base_url = DEEPSEEK_BASE_URL
+        temperature = agent.get("temperature", 0.7)
 
     system_prompt = agent.get("system_prompt", "")
 
     llm = build_llm(model_name, temperature, api_key, base_url)
-    tools = await build_all_tools(skills, mcp_configs)
+    tools = await build_all_tools(skills, mcp_configs, runtime_context)
 
     try:
         agent_executor = create_react_agent(

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
 
 from ..core.agent_factory import create_agent_instance, get_model_name
+from ..runtime.models import RuntimeContext
 from ..core.event_publisher import RedisStreamEventPublisher
 from ..core.trace_handler import TraceContext
 from ..database import execute, fetch_all, fetch_one
@@ -377,7 +378,18 @@ async def _invoke_agent_step(
     skills_data = await get_agent_skills(agent["id"])
     mcps_data = await get_agent_mcps(agent["id"])
     model_config = await _load_model_config(agent, user_id)
-    agent_executor = await create_agent_instance(agent, skills_data, mcps_data, model_config)
+    agent_executor = await create_agent_instance(
+        agent,
+        skills_data,
+        mcps_data,
+        model_config,
+        runtime_context=RuntimeContext(
+            user_id=user_id,
+            workflow_run_id=run_id,
+            workflow_step_id=workflow_step_id,
+            node_id=node_id,
+        ),
+    )
 
     prompt_parts = [
         f"你是多 Agent 工作流中的第 {step_order} 个执行者，角色是：{role}。",

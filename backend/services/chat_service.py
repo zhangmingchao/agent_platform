@@ -9,10 +9,12 @@ from fastapi import HTTPException
 from ..core.agent_factory import create_agent_instance, get_model_name
 from ..core.streaming import stream_agent_response, sse_event
 from ..core.trace_handler import TraceContext
+from ..runtime.models import RuntimeContext
 from ..database import execute, fetch_all, fetch_one
 from .agent_service import get_agent
 from .mcp_config_service import get_agent_mcps
 from .skill_service import get_agent_skills
+from .runtime_service import get_runtime_files
 
 log = logging.getLogger("agent-platform")
 
@@ -29,7 +31,13 @@ async def _load_model_config(agent, user_id):
     return await get_model(model_config_id, user_id)
 
 
-async def prepare_chat_run(user: dict, message: str, session_id: int, images: list = None) -> dict:
+async def prepare_chat_run(
+    user: dict,
+    message: str,
+    session_id: int,
+    images: list = None,
+    file_ids: list = None,
+) -> dict:
     """加载执行一次聊天请求所需的全部运行时数据。"""
     session = await fetch_one(
         "SELECT id, agent_id FROM chat_sessions WHERE id=%s AND user_id=%s",
@@ -42,8 +50,21 @@ async def prepare_chat_run(user: dict, message: str, session_id: int, images: li
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
 
-    # 将图片 base64 列表序列化为 JSON 存入 attachments 字段
-    attachments_json = json.dumps(images) if images else None
+    try:
+        runtime_files = await get_runtime_files(file_ids or [], user["user_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # 图片保留 base64；普通文件只保存逻辑 ID，不向模型暴露宿主机路径。
+    attachments = list(images or [])
+    attachments.extend({
+        "kind": "runtime_file",
+        "id": item["id"],
+        "name": item["file_name"],
+        "mimeType": item.get("mime_type"),
+        "size": item.get("size_bytes"),
+    } for item in runtime_files)
+    attachments_json = json.dumps(attachments, ensure_ascii=False) if attachments else None
     user_message_id = await execute(
         "INSERT INTO chat_messages (session_id, role, content, attachments, created_at) "
         "VALUES (%s, %s, %s, %s, %s)",
@@ -70,7 +91,13 @@ async def prepare_chat_run(user: dict, message: str, session_id: int, images: li
     skills_data = await get_agent_skills(agent["id"])
     mcps_data = await get_agent_mcps(agent["id"])
     model_config = await _load_model_config(agent, user["user_id"])
-    agent_executor = await create_agent_instance(agent, skills_data, mcps_data, model_config)
+    agent_executor = await create_agent_instance(
+        agent,
+        skills_data,
+        mcps_data,
+        model_config,
+        runtime_context=RuntimeContext(user_id=user["user_id"], session_id=session_id),
+    )
 
     max_tool_rounds = max(1, min(int(agent.get("iteration_count") or 6), 100))
     # 每次请求使用新的 LangGraph thread_id，因为完整历史已经由 MySQL 提供。
@@ -95,9 +122,15 @@ async def prepare_chat_run(user: dict, message: str, session_id: int, images: li
     }
 
 
-async def stream_chat(user: dict, message: str, session_id: int, images: list = None):
+async def stream_chat(
+    user: dict,
+    message: str,
+    session_id: int,
+    images: list = None,
+    file_ids: list = None,
+):
     """运行 Agent 并生成 SSE 数据块，同时持久化助手回复。"""
-    run = await prepare_chat_run(user, message, session_id, images)
+    run = await prepare_chat_run(user, message, session_id, images, file_ids)
     full_response = []
 
     try:

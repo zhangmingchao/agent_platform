@@ -276,6 +276,50 @@ async def init_db():
                     CONSTRAINT fk_run_step_trace FOREIGN KEY (trace_run_id) REFERENCES trace_runs(id) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多 Agent 工作流执行步骤表'
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS runtime_files (
+                    id VARCHAR(36) PRIMARY KEY COMMENT '文件逻辑ID',
+                    user_id INT NOT NULL COMMENT '所属用户ID',
+                    session_id INT DEFAULT NULL COMMENT '关联会话ID',
+                    execution_id VARCHAR(36) DEFAULT NULL COMMENT '产出该文件的执行ID',
+                    file_name VARCHAR(200) NOT NULL COMMENT '文件名',
+                    storage_path VARCHAR(1000) NOT NULL COMMENT '服务端存储路径',
+                    mime_type VARCHAR(200) DEFAULT NULL COMMENT 'MIME 类型',
+                    size_bytes BIGINT NOT NULL COMMENT '文件字节数',
+                    sha256 VARCHAR(64) NOT NULL COMMENT '文件摘要',
+                    file_type VARCHAR(20) NOT NULL COMMENT '类型 input/artifact',
+                    created_at DATETIME NOT NULL COMMENT '创建时间',
+                    INDEX idx_runtime_files_user (user_id),
+                    INDEX idx_runtime_files_session (session_id),
+                    INDEX idx_runtime_files_execution (execution_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Python Runtime 文件表'
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS code_executions (
+                    id VARCHAR(36) PRIMARY KEY COMMENT '执行ID',
+                    user_id INT NOT NULL COMMENT '所属用户ID',
+                    session_id INT DEFAULT NULL COMMENT '关联会话ID',
+                    workflow_run_id INT DEFAULT NULL COMMENT '工作流运行ID',
+                    workflow_step_id INT DEFAULT NULL COMMENT '工作流步骤ID',
+                    node_id VARCHAR(100) DEFAULT NULL COMMENT '节点ID',
+                    source_type VARCHAR(30) NOT NULL COMMENT '来源 generated_code/skill_script',
+                    skill_id INT DEFAULT NULL COMMENT 'Skill ID',
+                    code_sha256 VARCHAR(64) NOT NULL COMMENT '代码摘要',
+                    status VARCHAR(20) NOT NULL COMMENT '执行状态',
+                    timeout_seconds INT NOT NULL COMMENT '超时秒数',
+                    exit_code INT DEFAULT NULL COMMENT '子进程退出码',
+                    stdout_text MEDIUMTEXT DEFAULT NULL COMMENT '标准输出',
+                    stderr_text MEDIUMTEXT DEFAULT NULL COMMENT '错误输出',
+                    result_json JSON DEFAULT NULL COMMENT '结构化结果',
+                    error_text TEXT DEFAULT NULL COMMENT '错误信息',
+                    started_at DATETIME DEFAULT NULL COMMENT '开始时间',
+                    finished_at DATETIME DEFAULT NULL COMMENT '结束时间',
+                    created_at DATETIME NOT NULL COMMENT '创建时间',
+                    INDEX idx_code_executions_user (user_id),
+                    INDEX idx_code_executions_session (session_id),
+                    INDEX idx_code_executions_workflow_run (workflow_run_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Python Runtime 执行记录表'
+                """,
             ]
 
             for sql in statements:
