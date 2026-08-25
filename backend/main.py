@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import SERVER_PORT, LANGSMITH_API_KEY
-from .database import init_db
+from .database import close_pool, init_db
 from .redis_client import close_redis
 from .routers.agents import router as agents_router
 from .routers.auth import router as auth_router
@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
         log.info("LangSmith 未配置，使用本地 trace")
     yield
     await close_redis()
+    await close_pool()
     log.info("Redis 连接已关闭")
 
 

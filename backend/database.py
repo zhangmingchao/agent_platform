@@ -55,6 +55,18 @@ async def release_conn(conn: aiomysql.Connection):
     pool.release(conn)
 
 
+async def close_pool() -> None:
+    """关闭 MySQL 连接池并清空全局引用。
+
+    返回值结构：无返回值；连接池关闭完成后返回 ``None``。
+    """
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        await _pool.wait_closed()
+        _pool = None
+
+
 async def init_db():
     conn = await get_conn()
     try:
@@ -305,7 +317,7 @@ async def init_db():
                     source_type VARCHAR(30) NOT NULL COMMENT '来源 generated_code/skill_script',
                     skill_id INT DEFAULT NULL COMMENT 'Skill ID',
                     code_sha256 VARCHAR(64) NOT NULL COMMENT '代码摘要',
-                    status VARCHAR(20) NOT NULL COMMENT '执行状态',
+                    status VARCHAR(20) NOT NULL COMMENT '执行状态 queued/running/completed/failed/timed_out',
                     timeout_seconds INT NOT NULL COMMENT '超时秒数',
                     exit_code INT DEFAULT NULL COMMENT '子进程退出码',
                     stdout_text MEDIUMTEXT DEFAULT NULL COMMENT '标准输出',

@@ -1,7 +1,6 @@
 """Python Runtime 服务辅助逻辑测试。"""
 
 import unittest
-
 from backend.services.runtime_service import _rewrite_virtual_input_paths
 
 
@@ -23,7 +22,6 @@ class RuntimeServiceTests(unittest.TestCase):
         code = "file_path = '/mnt/data/unknown.xlsx'"
         rewritten = _rewrite_virtual_input_paths(code, {"report.xlsx": "/runtime/input/report.xlsx"})
         self.assertIn("/mnt/data/unknown.xlsx", rewritten)
-
 
 if __name__ == "__main__":
     unittest.main()

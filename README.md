@@ -15,6 +15,7 @@
 agent_platform/
 ├── backend/
 │   ├── main.py              # FastAPI 入口
+│   ├── runtime_worker.py    # 独立 Python Runtime Worker 入口
 │   ├── routers/             # HTTP 接口路由
 │   │   ├── auth.py
 │   │   ├── agents.py
@@ -97,6 +98,17 @@ export DB_NAME="agent_platform_langchain"
 # 启动服务（首次启动会自动创建数据库、表结构和必要字段）
 python -m backend.main
 ```
+
+启用 Python Runtime 时，需要在另一个终端启动独立 Worker：
+
+```bash
+cd agent_platform
+python -m backend.runtime_worker
+```
+
+API 进程只负责准备任务并写入 Redis 队列；`runtime_worker` 负责启动受限 Python
+子进程、收集日志和登记生成文件。未启动 Worker 时，`ExecutePython` 会在等待超时后
+返回明确错误。单个 Worker 同时执行一个任务，可以启动多个 Worker 进程增加本机并发度。
 
 后端启动后：
 - API 地址: `http://127.0.0.1:20000`
@@ -347,6 +359,28 @@ my-skill/
 
 Runtime 使用独立工作目录、AST 白名单、Python 审计钩子、子进程超时和 Unix 资源限制。它是为本地开发和受控代码提供的轻量隔离，**不是用于执行完全不可信代码的强安全沙箱**。生产环境应换成独立机器、微型虚拟机或 gVisor 等执行后端。
 
+Runtime Worker 的调用链：
+
+```text
+Agent / LangGraph
+    ↓ ExecutePython
+FastAPI：校验代码、文件权限并创建 queued 记录
+    ↓ RPUSH
+Redis：runtime:execution:queue
+    ↓ BLPOP
+runtime_worker：领取任务并更新为 running
+    ↓
+child_runner.py：在受限子进程中运行代码
+    ↓
+MySQL：保存状态、日志和 Artifact
+    ↓ Redis 结果通道
+FastAPI：取得结果并作为 ToolMessage 返回给 LLM
+```
+
+当前 Worker 使用本地共享文件系统，因此 API 和 Worker 必须在同一台机器、并使用相同的
+`RUNTIME_DATA_DIR`。如果未来部署到多台机器，应将输入文件和 Artifact 改为 MinIO、S3
+或 OSS 等对象存储。
+
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -373,6 +407,9 @@ Runtime 使用独立工作目录、AST 白名单、Python 审计钩子、子进�
 | `PYTHON_RUNTIME_MEMORY_MB` | `1024` | Unix 子进程内存限制 |
 | `PYTHON_RUNTIME_MAX_UPLOAD_MB` | `20` | 单个上传文件大小限制 |
 | `PYTHON_RUNTIME_MAX_OUTPUT_MB` | `20` | 单次执行产出文件总大小限制 |
+| `RUNTIME_WORKER_QUEUE_NAME` | `runtime:execution:queue` | Runtime Worker 使用的 Redis 任务队列名称 |
+| `RUNTIME_WORKER_QUEUE_WAIT_SECONDS` | `30` | API 允许任务排队等待 Worker 的最长时间 |
+| `RUNTIME_WORKER_RESULT_TTL_SECONDS` | `3600` | Worker 执行结果在 Redis 中的保留秒数 |
 
 ## License
 

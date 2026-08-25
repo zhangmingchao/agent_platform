@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS code_executions (
     source_type VARCHAR(30) NOT NULL,
     skill_id INT DEFAULT NULL,
     code_sha256 VARCHAR(64) NOT NULL,
-    status VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL COMMENT 'queued/running/completed/failed/timed_out',
     timeout_seconds INT NOT NULL,
     exit_code INT DEFAULT NULL,
     stdout_text MEDIUMTEXT DEFAULT NULL,

@@ -12,7 +12,18 @@ from .models import RuntimeContext
 
 
 class ExecutePythonInput(BaseModel):
-    """LLM 生成代码执行工具的输入。"""
+    """ExecutePython 工具提供给大模型的入参结构。
+
+    大模型调用该工具时，会生成类似下面的参数：
+    {
+        "code": "import pandas as pd\n...",
+        "input_file_ids": ["fb0901ac-..."],
+        "timeout_seconds": 60
+    }
+
+    code 是需要执行的完整 Python 代码；input_file_ids 是用户已上传文件的
+    逻辑 ID；timeout_seconds 是本次代码执行的超时时间。
+    """
 
     code: str = Field(description="需要执行的完整 Python 代码")
     input_file_ids: List[str] = Field(
@@ -39,7 +50,14 @@ def build_runtime_tools(
     skills: List[Dict],
     context: Optional[RuntimeContext],
 ) -> List[StructuredTool]:
-    """根据运行上下文构建通用 Python 和 Skill 脚本工具。"""
+    """根据运行上下文构建通用 Python 和 Skill 脚本工具。
+
+    这个方法只负责构建工具，返回值是 LangChain 工具列表：
+    [
+        StructuredTool(name="ExecutePython", ...),
+        StructuredTool(name="RunSkillScript", ...),
+    ]
+    """
     if not PYTHON_RUNTIME_ENABLED or context is None:
         return []
 
@@ -50,7 +68,31 @@ def build_runtime_tools(
         input_file_ids: Optional[List[str]] = None,
         timeout_seconds: int = 60,
     ) -> str:
-        """执行模型生成代码并将结构化执行结果返回给模型。"""
+        """ExecutePython 的实际处理函数，返回 JSON 字符串。
+
+        执行完成后的返回结构：
+        {
+            "executionId": "本次代码执行ID",
+            "status": "completed | failed | timed_out",
+            "exitCode": 0,
+            "stdout": "print 等产生的标准输出",
+            "stderr": "Python 错误输出",
+            "error": "失败或超时原因，成功时为空字符串",
+            "result": "被执行代码中 result 变量的值",
+            "artifacts": [
+                {
+                    "fileId": "Runtime 生成文件的逻辑ID",
+                    "name": "生成的文件名",
+                    "mimeType": "文件 MIME 类型",
+                    "size": "文件字节数",
+                    "url": "需要携带登录凭证的下载地址"
+                }
+            ]
+        }
+
+        如果代码未进入子进程就被安全策略拒绝，则返回：
+        {"status": "rejected", "error": "具体拒绝原因"}
+        """
         try:
             result = await execute_python_code(
                 context,
@@ -69,7 +111,11 @@ def build_runtime_tools(
         input_file_ids: Optional[List[str]] = None,
         timeout_seconds: int = 60,
     ) -> str:
-        """执行指定 Skill 中经过路径校验的 Python 脚本。"""
+        """执行指定 Skill 中经过路径校验的 Python 脚本。
+
+        返回值结构：JSON 字符串；成功时包含 executionId、status、result 和 artifacts
+        等字段，执行前被拒绝时包含 ``{"status": "rejected", "error": str}``。
+        """
         skill = skills_map.get(skill_name)
         if not skill:
             return json.dumps({"status": "rejected", "error": "Skill 不存在或未绑定到 Agent"}, ensure_ascii=False)
@@ -88,6 +134,13 @@ def build_runtime_tools(
         except Exception as exc:
             return json.dumps({"status": "rejected", "error": str(exc)}, ensure_ascii=False)
 
+    # ExecutePython 的结构：
+    # - coroutine：大模型发起工具调用后，LangGraph 真正执行的函数。
+    # - name：提供给大模型的工具名称。
+    # - description：告诉大模型该工具的能力、使用方式和边界。
+    # - args_schema：将 ExecutePythonInput 转换为大模型可见的 JSON 入参结构。
+    # 下面返回的是可传给 create_react_agent(tools=...) 的工具列表，
+    # 不是 ExecutePython 执行完成后的 JSON 数据。
     return [
         StructuredTool.from_function(
             coroutine=execute_python,
