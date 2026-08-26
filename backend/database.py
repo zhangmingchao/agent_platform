@@ -310,6 +310,7 @@ async def init_db():
                 CREATE TABLE IF NOT EXISTS code_executions (
                     id VARCHAR(36) PRIMARY KEY COMMENT '执行ID',
                     user_id INT NOT NULL COMMENT '所属用户ID',
+                    workspace_id VARCHAR(100) NOT NULL DEFAULT 'default' COMMENT '用户容器内工作空间ID',
                     session_id INT DEFAULT NULL COMMENT '关联会话ID',
                     workflow_run_id INT DEFAULT NULL COMMENT '工作流运行ID',
                     workflow_step_id INT DEFAULT NULL COMMENT '工作流步骤ID',
@@ -320,6 +321,7 @@ async def init_db():
                     status VARCHAR(20) NOT NULL COMMENT '执行状态 queued/running/completed/failed/timed_out',
                     timeout_seconds INT NOT NULL COMMENT '超时秒数',
                     exit_code INT DEFAULT NULL COMMENT '子进程退出码',
+                    sandbox_container_id VARCHAR(100) DEFAULT NULL COMMENT '执行所在用户沙箱容器ID',
                     stdout_text MEDIUMTEXT DEFAULT NULL COMMENT '标准输出',
                     stderr_text MEDIUMTEXT DEFAULT NULL COMMENT '错误输出',
                     result_json JSON DEFAULT NULL COMMENT '结构化结果',
@@ -328,6 +330,7 @@ async def init_db():
                     finished_at DATETIME DEFAULT NULL COMMENT '结束时间',
                     created_at DATETIME NOT NULL COMMENT '创建时间',
                     INDEX idx_code_executions_user (user_id),
+                    INDEX idx_code_executions_workspace (user_id, workspace_id),
                     INDEX idx_code_executions_session (session_id),
                     INDEX idx_code_executions_workflow_run (workflow_run_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Python Runtime 执行记录表'
@@ -392,6 +395,18 @@ async def init_db():
                     "chat_messages",
                     "attachments",
                     "ALTER TABLE chat_messages ADD COLUMN attachments JSON DEFAULT NULL AFTER content",
+                ),
+                (
+                    "code_executions",
+                    "workspace_id",
+                    "ALTER TABLE code_executions ADD COLUMN workspace_id VARCHAR(100) "
+                    "NOT NULL DEFAULT 'default' AFTER user_id",
+                ),
+                (
+                    "code_executions",
+                    "sandbox_container_id",
+                    "ALTER TABLE code_executions ADD COLUMN sandbox_container_id VARCHAR(100) "
+                    "DEFAULT NULL AFTER exit_code",
                 ),
             ]
             for table_name, column_name, alter_sql in migrations:

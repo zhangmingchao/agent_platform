@@ -103,11 +103,21 @@ python -m backend.main
 
 ```bash
 cd agent_platform
+
+# 先启动 Docker Desktop，再构建沙箱镜像和常驻 Sandbox Manager
+export SANDBOX_SERVICE_TOKEN="请替换为随机内部密钥"
+docker compose -f docker-compose.sandbox.yml up -d --build
+
+# Sandbox Service 健康检查
+curl -H "Authorization: Bearer $SANDBOX_SERVICE_TOKEN" http://127.0.0.1:20002/health
+
+# 启动 Redis 队列消费者
 python -m backend.runtime_worker
 ```
 
 API 进程只负责准备任务并写入 Redis 队列；`runtime_worker` 负责启动受限 Python
-子进程、收集日志和登记生成文件。未启动 Worker 时，`ExecutePython` 会在等待超时后
+代码任务，独立 `sandbox-service` 负责在用户私有 Docker 容器中执行代码、收集日志
+和登记生成文件。未启动 Worker 或 Sandbox Service 时，`ExecutePython` 会在等待超时后
 返回明确错误。单个 Worker 同时执行一个任务，可以启动多个 Worker 进程增加本机并发度。
 
 后端启动后：
@@ -357,7 +367,11 @@ my-skill/
     └── analyze.py
 ```
 
-Runtime 使用独立工作目录、AST 白名单、Python 审计钩子、子进程超时和 Unix 资源限制。它是为本地开发和受控代码提供的轻量隔离，**不是用于执行完全不可信代码的强安全沙箱**。生产环境应换成独立机器、微型虚拟机或 gVisor 等执行后端。
+Runtime 使用“每用户一个容器”的模型；`workspace_id` 只区分同一用户容器内的目录。
+容器默认无网络、非 root、只读根文件系统，并限制为 1 CPU、512MB 内存、128 个进程，
+单次执行最多 30 秒。空闲 30 分钟停止，7 天未使用删除容器但保留用户目录。
+生产环境应把 Sandbox Service 放到独立 Linux 节点，并安装 gVisor 后设置
+`SANDBOX_CONTAINER_RUNTIME=runsc`。
 
 Runtime Worker 的调用链：
 
@@ -370,16 +384,17 @@ Redis：runtime:execution:queue
     ↓ BLPOP
 runtime_worker：领取任务并更新为 running
     ↓
-child_runner.py：在受限子进程中运行代码
+Sandbox Service：按 user_id 获取或创建唯一容器
+    ↓
+用户容器：在 /workspaces/{workspace_id} 中运行 child_runner.py
     ↓
 MySQL：保存状态、日志和 Artifact
     ↓ Redis 结果通道
 FastAPI：取得结果并作为 ToolMessage 返回给 LLM
 ```
 
-当前 Worker 使用本地共享文件系统，因此 API 和 Worker 必须在同一台机器、并使用相同的
-`RUNTIME_DATA_DIR`。如果未来部署到多台机器，应将输入文件和 Artifact 改为 MinIO、S3
-或 OSS 等对象存储。
+当前 API、Worker 和 Sandbox Service 使用共享 `RUNTIME_DATA_DIR`。生产环境拆分节点时，
+应使用受控共享卷，或将输入文件和 Artifact 改为 MinIO、S3、OSS 等对象存储。
 
 ## 环境变量
 
@@ -402,12 +417,16 @@ FastAPI：取得结果并作为 ToolMessage 返回给 LLM
 | `WORKFLOW_EVENT_STREAM_TTL_SECONDS` | `86400` | 工作流事件 Stream 保留时间（秒） |
 | `WORKFLOW_EVENT_STREAM_MAXLEN` | `20000` | 每个工作流事件 Stream 的近似最大长度 |
 | `PYTHON_RUNTIME_ENABLED` | `true` | 是否向 Agent 注册本地 Python Runtime 工具 |
-| `PYTHON_RUNTIME_TIMEOUT_SECONDS` | `60` | 默认执行超时秒数 |
-| `PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS` | `120` | Agent 可请求的最大超时秒数 |
-| `PYTHON_RUNTIME_MEMORY_MB` | `1024` | Unix 子进程内存限制 |
+| `PYTHON_RUNTIME_TIMEOUT_SECONDS` | `30` | 默认执行超时秒数 |
+| `PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS` | `30` | Agent 可请求的最大超时秒数 |
+| `PYTHON_RUNTIME_MEMORY_MB` | `512` | 兼容配置；实际容器限制由 Sandbox Service 设置 |
 | `PYTHON_RUNTIME_MAX_UPLOAD_MB` | `20` | 单个上传文件大小限制 |
 | `PYTHON_RUNTIME_MAX_OUTPUT_MB` | `20` | 单次执行产出文件总大小限制 |
 | `RUNTIME_WORKER_QUEUE_NAME` | `runtime:execution:queue` | Runtime Worker 使用的 Redis 任务队列名称 |
+| `SANDBOX_SERVICE_URL` | `http://127.0.0.1:20002` | 独立 Sandbox Service 地址 |
+| `SANDBOX_SERVICE_TOKEN` | `change-me-in-production` | API/Worker 与 Sandbox Service 的内部认证密钥 |
+| `SANDBOX_CONTAINER_RUNTIME` | 空 | 生产 Linux 上可设置为 `runsc` 启用 gVisor |
+| `SANDBOX_HOST_DATA_ROOT` | 自动识别 | 远程 Docker daemon 可见的 Runtime 数据根目录 |
 | `RUNTIME_WORKER_QUEUE_WAIT_SECONDS` | `30` | API 允许任务排队等待 Worker 的最长时间 |
 | `RUNTIME_WORKER_RESULT_TTL_SECONDS` | `3600` | Worker 执行结果在 Redis 中的保留秒数 |
 

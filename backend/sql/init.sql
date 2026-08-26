@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS runtime_files (
 CREATE TABLE IF NOT EXISTS code_executions (
     id VARCHAR(36) PRIMARY KEY,
     user_id INT NOT NULL,
+    workspace_id VARCHAR(100) NOT NULL DEFAULT 'default',
     session_id INT DEFAULT NULL,
     workflow_run_id INT DEFAULT NULL,
     workflow_step_id INT DEFAULT NULL,
@@ -145,6 +146,7 @@ CREATE TABLE IF NOT EXISTS code_executions (
     status VARCHAR(20) NOT NULL COMMENT 'queued/running/completed/failed/timed_out',
     timeout_seconds INT NOT NULL,
     exit_code INT DEFAULT NULL,
+    sandbox_container_id VARCHAR(100) DEFAULT NULL,
     stdout_text MEDIUMTEXT DEFAULT NULL,
     stderr_text MEDIUMTEXT DEFAULT NULL,
     result_json JSON DEFAULT NULL,
@@ -153,6 +155,7 @@ CREATE TABLE IF NOT EXISTS code_executions (
     finished_at DATETIME DEFAULT NULL,
     created_at DATETIME NOT NULL,
     INDEX idx_code_executions_user (user_id),
+    INDEX idx_code_executions_workspace (user_id, workspace_id),
     INDEX idx_code_executions_session (session_id),
     INDEX idx_code_executions_workflow_run (workflow_run_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -1,14 +1,11 @@
 """本地 Python Runtime 的文件和代码执行服务。"""
 
-import asyncio
 import ast
 import hashlib
 import json
 import mimetypes
-import os
+import re
 import shutil
-import signal
-import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +15,6 @@ from ..config import (
     PYTHON_RUNTIME_MAX_OUTPUT_MB,
     PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS,
     PYTHON_RUNTIME_MAX_UPLOAD_MB,
-    PYTHON_RUNTIME_MEMORY_MB,
     PYTHON_RUNTIME_TIMEOUT_SECONDS,
     RUNTIME_DATA_DIR,
     RUNTIME_WORKER_QUEUE_WAIT_SECONDS,
@@ -27,6 +23,7 @@ from ..config import (
 from ..database import execute, fetch_all, fetch_one
 from ..runtime.models import RuntimeContext
 from ..runtime.policy import validate_python_code
+from ..runtime.sandbox_client import execute_in_sandbox
 from ..runtime.queue import (
     cancel_runtime_task,
     enqueue_runtime_task,
@@ -56,6 +53,22 @@ def _safe_filename(filename: str) -> str:
     """
     clean = Path(filename or "file").name.replace("\x00", "").strip()
     return clean[:200] or "file"
+
+
+def _workspace_id(context: RuntimeContext) -> str:
+    """生成安全的工作空间 ID；它只对应用户容器内的目录。"""
+    raw = str(context.workspace_id or "").strip()
+    if not raw:
+        if context.session_id is not None:
+            raw = f"session-{context.session_id}"
+        elif context.workflow_run_id is not None:
+            raw = f"workflow-run-{context.workflow_run_id}"
+        else:
+            raw = "default"
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "-", raw).strip("-_")[:100]
+    if not safe:
+        raise ValueError("workspace_id 不合法")
+    return safe
 
 
 def _sha256(path: Path) -> str:
@@ -195,27 +208,6 @@ def resolve_skill_script(skill_id: int, relative_path: str) -> Path:
     return script_path
 
 
-def _limit_child_resources(timeout_seconds: int) -> None:
-    """在 Unix 子进程启动后设置 CPU、内存、文件和进程数量限制。
-
-    返回值结构：无返回值；设置完成或当前系统不支持限制时返回 ``None``。
-    """
-    try:
-        import resource
-
-        memory_bytes = PYTHON_RUNTIME_MEMORY_MB * 1024 * 1024
-        output_bytes = PYTHON_RUNTIME_MAX_OUTPUT_MB * 1024 * 1024
-        resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds, timeout_seconds + 1))
-        resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (output_bytes, output_bytes))
-        resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
-        if hasattr(resource, "RLIMIT_NPROC"):
-            resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
-    except (ImportError, OSError, ValueError):
-        # 不同操作系统对 resource 的支持不同，父进程的超时控制仍然生效。
-        pass
-
-
 def _read_limited(path: Path, limit: int = MAX_LOG_BYTES) -> str:
     """读取有限长度的日志，避免大输出占用过多内存。
 
@@ -272,11 +264,12 @@ def _runtime_context_to_dict(context: RuntimeContext) -> Dict:
     """将不可变 RuntimeContext 转换成可写入 Redis 的普通字典。
 
     返回值结构：
-    ``{"user_id": int, "session_id": int|None, "workflow_run_id": int|None,
+    ``{"user_id": int, "workspace_id": str|None, "session_id": int|None, "workflow_run_id": int|None,
     "workflow_step_id": int|None, "node_id": str|None}``。
     """
     return {
         "user_id": context.user_id,
+        "workspace_id": context.workspace_id,
         "session_id": context.session_id,
         "workflow_run_id": context.workflow_run_id,
         "workflow_step_id": context.workflow_step_id,
@@ -320,7 +313,9 @@ async def prepare_runtime_execution(
 
     # 第 4 步：为每次执行创建唯一 ID 和独立工作目录，供 Worker 后续使用。
     execution_id = str(uuid.uuid4())
-    workspace = Path(RUNTIME_DATA_DIR) / "executions" / str(context.user_id) / execution_id
+    workspace_id = _workspace_id(context)
+    user_root = Path(RUNTIME_DATA_DIR) / "users" / str(context.user_id)
+    workspace = user_root / "workspaces" / workspace_id / "executions" / execution_id
     source_dir = workspace / "source"
     input_dir = workspace / "input"
     output_dir = workspace / "output"
@@ -333,14 +328,16 @@ async def prepare_runtime_execution(
     # 第 5 步：把用户文件复制到本次执行的 input 目录。
     # input_map 最终会在子进程内暴露为 INPUT_FILES，结构为：
     # {"文件ID": "本次工作目录内的文件路径"}。
+    container_workspace = Path("/workspaces") / workspace_id / "executions" / execution_id
     input_map = {}
     input_paths_by_name = {}
     for file_info in files:
         target_name = f"{file_info['id'][:8]}_{_safe_filename(file_info['file_name'])}"
         target = input_dir / target_name
         shutil.copy2(file_info["storage_path"], target)
-        input_map[file_info["id"]] = str(target)
-        input_paths_by_name[file_info["file_name"]] = str(target)
+        container_target = container_workspace / "input" / target_name
+        input_map[file_info["id"]] = str(container_target)
+        input_paths_by_name[file_info["file_name"]] = str(container_target)
 
     # 第 6 步：兼容模型按通用沙箱习惯生成的 /mnt/data/文件名 写法。
     # 只替换与本次已上传文件名完全匹配的字符串，不会放宽读取权限。
@@ -352,10 +349,10 @@ async def prepare_runtime_execution(
     config_path = workspace / "runtime.json"
     config_path.write_text(
         json.dumps({
-            "workspace": str(workspace),
-            "sourcePath": str(source_path),
-            "inputDir": str(input_dir),
-            "outputDir": str(output_dir),
+            "workspace": str(container_workspace),
+            "sourcePath": str(container_workspace / "source" / "main.py"),
+            "inputDir": str(container_workspace / "input"),
+            "outputDir": str(container_workspace / "output"),
             "inputFiles": input_map,
             "arguments": arguments or {},
         }, ensure_ascii=False),
@@ -367,11 +364,11 @@ async def prepare_runtime_execution(
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
     await execute(
         "INSERT INTO code_executions "
-        "(id, user_id, session_id, workflow_run_id, workflow_step_id, node_id, "
+        "(id, user_id, workspace_id, session_id, workflow_run_id, workflow_step_id, node_id, "
         "source_type, skill_id, code_sha256, status, timeout_seconds, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
-            execution_id, context.user_id, context.session_id,
+            execution_id, context.user_id, workspace_id, context.session_id,
             context.workflow_run_id, context.workflow_step_id, context.node_id,
             source_type, skill_id, code_hash, "queued", timeout, _now(),
         ),
@@ -380,6 +377,7 @@ async def prepare_runtime_execution(
     return {
         "executionId": execution_id,
         "userId": context.user_id,
+        "workspaceId": workspace_id,
         "timeoutSeconds": timeout,
         "context": _runtime_context_to_dict(context),
     }
@@ -388,8 +386,8 @@ async def prepare_runtime_execution(
 async def execute_runtime_task(task: Dict) -> Dict:
     """由独立 Runtime Worker 执行一条已经准备完成的任务。
 
-    参数 task 的结构由 ``prepare_runtime_execution`` 产生。Worker 根据 executionId
-    和 userId 定位工作目录，再启动 child_runner.py 子进程。
+    参数 task 的结构由 ``prepare_runtime_execution`` 产生。Worker 根据 executionId、
+    userId 和 workspaceId 定位工作目录，再交给独立 Sandbox Service 执行。
 
     返回值结构：
     ``{"executionId": str, "status": str, "exitCode": int|None, "stdout": str,
@@ -398,14 +396,20 @@ async def execute_runtime_task(task: Dict) -> Dict:
     """
     execution_id = str(task["executionId"])
     user_id = int(task["userId"])
+    workspace_id = str(task["workspaceId"])
     timeout = max(1, min(int(task["timeoutSeconds"]), PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS))
     context = RuntimeContext(**task["context"])
     if context.user_id != user_id:
         raise ValueError("Runtime 任务用户上下文不一致")
+    if _workspace_id(context) != workspace_id:
+        raise ValueError("Runtime 任务工作空间上下文不一致")
 
-    # Worker 只允许进入 RUNTIME_DATA_DIR/executions 下由 API 预先创建的目录。
-    execution_root = (Path(RUNTIME_DATA_DIR) / "executions").resolve()
-    workspace = (execution_root / str(user_id) / execution_id).resolve()
+    # 一个用户只有一个容器；workspace_id 只对应该容器内的独立工作目录。
+    execution_root = (
+        Path(RUNTIME_DATA_DIR) / "users" / str(user_id)
+        / "workspaces" / workspace_id / "executions"
+    ).resolve()
+    workspace = (execution_root / execution_id).resolve()
     if execution_root not in workspace.parents or not workspace.is_dir():
         raise ValueError("Runtime 任务工作目录不存在或不合法")
 
@@ -431,39 +435,22 @@ async def execute_runtime_task(task: Dict) -> Dict:
     )
 
     try:
-        # 仅传入必要环境变量，避免 API Key、数据库密码等敏感数据进入代码环境。
-        env = {
-            "PYTHONIOENCODING": "utf-8",
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "MPLBACKEND": "Agg",
-        }
-        child_runner = Path(__file__).resolve().parents[1] / "runtime" / "child_runner.py"
-        with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
-            # Worker 启动独立 Python 子进程，而不是由 FastAPI 进程直接启动。
-            # -I：使用 Python 隔离模式；cwd：限定当前工作目录。
-            # start_new_session：创建独立进程组，超时时可整组终止。
-            # preexec_fn：在 Unix 子进程启动前设置 CPU、内存、文件大小等资源限制。
-            process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-I",
-                str(child_runner),
-                str(config_path),
-                cwd=str(workspace),
-                env=env,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                start_new_session=True,
-                preexec_fn=lambda: _limit_child_resources(timeout),
+        # Worker 和 Docker 解耦：只有 Sandbox Service 可以访问 Docker Engine。
+        sandbox_result = await execute_in_sandbox({
+            "executionId": execution_id,
+            "userId": user_id,
+            "workspaceId": workspace_id,
+            "timeoutSeconds": timeout,
+            "configPath": f"/workspaces/{workspace_id}/executions/{execution_id}/runtime.json",
+        })
+        exit_code = sandbox_result.get("exitCode")
+        stdout_path.write_text(str(sandbox_result.get("stdout") or ""), encoding="utf-8")
+        stderr_path.write_text(str(sandbox_result.get("stderr") or ""), encoding="utf-8")
+        if sandbox_result.get("status") == "timed_out":
+            status = "timed_out"
+            error_text = str(
+                sandbox_result.get("error") or f"Python 执行超过 {timeout} 秒"
             )
-            try:
-                # 父进程异步等待子进程结束；多留 2 秒用于启动和收尾。
-                exit_code = await asyncio.wait_for(process.wait(), timeout=timeout + 2)
-            except asyncio.TimeoutError:
-                # 超时后终止整个进程组，防止代码创建的后代进程残留。
-                status = "timed_out"
-                error_text = f"Python 执行超过 {timeout} 秒"
-                os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
 
         # 根据退出码解析执行结果。0 表示 Python 正常结束；
         # 非 0 表示代码异常、审计钩子拒绝或其他运行错误。
@@ -478,9 +465,13 @@ async def execute_runtime_task(task: Dict) -> Dict:
                 artifacts = await _register_artifacts(context, execution_id, output_dir)
             else:
                 status = "failed"
-                error_text = _read_limited(stderr_path) or f"Python 退出码：{exit_code}"
+                error_text = (
+                    str(sandbox_result.get("error") or "")
+                    or _read_limited(stderr_path)
+                    or f"Python 退出码：{exit_code}"
+                )
     except Exception as exc:
-        # 这里捕获的是调度层异常，例如子进程启动失败、结果 JSON 损坏或 Artifact 登记失败。
+        # 捕获沙箱服务不可用、结果 JSON 损坏或 Artifact 登记失败等调度异常。
         status = "failed"
         error_text = str(exc)
 
@@ -490,10 +481,12 @@ async def execute_runtime_task(task: Dict) -> Dict:
 
     # 无论成功、失败还是超时，都将最终状态和日志更新到 code_executions。
     await execute(
-        "UPDATE code_executions SET status=%s, exit_code=%s, stdout_text=%s, "
+        "UPDATE code_executions SET status=%s, exit_code=%s, sandbox_container_id=%s, stdout_text=%s, "
         "stderr_text=%s, result_json=%s, error_text=%s, finished_at=%s WHERE id=%s",
         (
-            status, exit_code, stdout, stderr,
+            status, exit_code,
+            sandbox_result.get("containerId") if "sandbox_result" in locals() else None,
+            stdout, stderr,
             json.dumps(result_data, ensure_ascii=False, default=str) if result_data is not None else None,
             error_text[:5000] if error_text else None, _now(), execution_id,
         ),

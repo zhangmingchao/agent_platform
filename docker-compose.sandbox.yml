@@ -1,0 +1,36 @@
+services:
+  python-sandbox-image:
+    image: agent-platform-python-sandbox:latest
+    build:
+      context: .
+      dockerfile: sandbox_service/sandbox.Dockerfile
+    command: ["true"]
+    restart: "no"
+
+  sandbox-service:
+    image: agent-platform-sandbox-service:latest
+    build:
+      context: .
+      dockerfile: sandbox_service/Dockerfile
+    ports:
+      - "127.0.0.1:20002:20002"
+    environment:
+      SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-change-me-in-production}
+      SANDBOX_IMAGE: agent-platform-python-sandbox:latest
+      SANDBOX_DATA_ROOT: /runtime-data
+      # 如果使用远程 Docker daemon，请显式设置为 daemon 主机可见的数据目录。
+      SANDBOX_HOST_DATA_ROOT: ${SANDBOX_HOST_DATA_ROOT:-}
+      SANDBOX_MEMORY: 512m
+      SANDBOX_CPUS: "1"
+      SANDBOX_PIDS_LIMIT: "128"
+      SANDBOX_IDLE_STOP_SECONDS: "1800"
+      SANDBOX_DELETE_AFTER_SECONDS: "604800"
+      # Linux 生产环境安装 gVisor 后设置为 runsc；Docker Desktop 本地保持为空。
+      SANDBOX_CONTAINER_RUNTIME: ${SANDBOX_CONTAINER_RUNTIME:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend/data/runtime:/runtime-data
+    restart: unless-stopped
+    depends_on:
+      python-sandbox-image:
+        condition: service_completed_successfully

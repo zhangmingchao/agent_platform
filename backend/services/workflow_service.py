@@ -385,6 +385,7 @@ async def _invoke_agent_step(
         model_config,
         runtime_context=RuntimeContext(
             user_id=user_id,
+            workspace_id=f"workflow-{workflow_id}",
             workflow_run_id=run_id,
             workflow_step_id=workflow_step_id,
             node_id=node_id,

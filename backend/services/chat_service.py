@@ -96,7 +96,11 @@ async def prepare_chat_run(
         skills_data,
         mcps_data,
         model_config,
-        runtime_context=RuntimeContext(user_id=user["user_id"], session_id=session_id),
+        runtime_context=RuntimeContext(
+            user_id=user["user_id"],
+            workspace_id=f"session-{session_id}",
+            session_id=session_id,
+        ),
     )
 
     max_tool_rounds = max(1, min(int(agent.get("iteration_count") or 6), 100))

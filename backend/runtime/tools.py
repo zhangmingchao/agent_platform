@@ -30,7 +30,7 @@ class ExecutePythonInput(BaseModel):
         default_factory=list,
         description="代码需要读取的 Runtime 文件 ID 列表",
     )
-    timeout_seconds: int = Field(default=60, ge=1, le=120, description="执行超时秒数")
+    timeout_seconds: int = Field(default=30, ge=1, le=30, description="执行超时秒数")
 
 
 class RunSkillScriptInput(BaseModel):
@@ -43,7 +43,7 @@ class RunSkillScriptInput(BaseModel):
         default_factory=list,
         description="脚本需要读取的 Runtime 文件 ID 列表",
     )
-    timeout_seconds: int = Field(default=60, ge=1, le=120, description="执行超时秒数")
+    timeout_seconds: int = Field(default=30, ge=1, le=30, description="执行超时秒数")
 
 
 def build_runtime_tools(
