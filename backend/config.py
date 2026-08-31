@@ -45,6 +45,16 @@ WORKFLOW_EVENT_STREAM_MAXLEN = int(
     os.getenv("WORKFLOW_EVENT_STREAM_MAXLEN", "20000")
 )
 
+# --- MongoDB Trace Span 存储（强依赖，不可用时服务拒绝启动）---
+MONGODB_URL = os.getenv(
+    "MONGODB_URL",
+    "mongodb://agent_platform_root:agent-platform-mongo-local-2026@127.0.0.1:27017/?authSource=admin",
+)
+MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "agent_platform_trace")
+MONGODB_TRACE_SPANS_COLLECTION = os.getenv("MONGODB_TRACE_SPANS_COLLECTION", "trace_spans")
+MONGODB_CONNECT_TIMEOUT_MS = int(os.getenv("MONGODB_CONNECT_TIMEOUT_MS", "5000"))
+MONGODB_TRACE_RETENTION_DAYS = int(os.getenv("MONGODB_TRACE_RETENTION_DAYS", "90"))
+
 # --- 服务器 ---
 SERVER_PORT = int(os.getenv("SERVER_PORT", "20000"))
 MAX_TOOL_ROUNDS = 6

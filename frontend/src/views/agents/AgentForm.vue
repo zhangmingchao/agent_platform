@@ -13,7 +13,19 @@
         <el-input v-model="form.description" type="textarea" :rows="2" placeholder="简要描述 Agent 的能力" />
       </el-form-item>
       <el-form-item label="系统提示词" prop="system_prompt">
-        <el-input v-model="form.system_prompt" type="textarea" :rows="6" placeholder="定义 Agent 的角色、行为、专长等" />
+        <el-input v-model="form.system_prompt" type="textarea" :rows="6" placeholder="定义 Agent 的角色、行为、专长。支持 {{user_input}} 等模板变量" />
+      </el-form-item>
+      <el-form-item label="模板变量">
+        <el-input v-model="promptVariablesText" type="textarea" :rows="4" placeholder='JSON 对象，例如：{"language":"中文","style":"简洁"}' />
+        <div class="field-hint">在提示词中使用 &#123;&#123;language&#125;&#125;。系统变量：user_input、username、user_id、session_id、current_date；工作流还支持 workflow_id、run_id、step_order、role、instruction。</div>
+      </el-form-item>
+      <el-form-item label="结构化输出">
+        <el-switch v-model="structuredOutputEnabled" />
+        <span class="switch-label">要求最终结果符合 JSON Schema</span>
+      </el-form-item>
+      <el-form-item v-if="structuredOutputEnabled" label="JSON Schema">
+        <el-input v-model="outputSchemaText" type="textarea" :rows="10" placeholder='{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}}' />
+        <div class="field-hint">SSE 仍会流式输出；生成结束后校验完整 JSON，并发送 structured_result 事件。</div>
       </el-form-item>
       <el-form-item label="迭代次数" prop="iteration_count">
         <el-input v-model="form.iteration_count"
@@ -109,11 +121,20 @@ const router = useRouter()
 const isEdit = computed(() => !!route.params.id)
 const formRef = ref()
 const saving = ref(false)
+const structuredOutputEnabled = ref(false)
+const promptVariablesText = ref('{}')
+const outputSchemaText = ref(JSON.stringify({
+  type: 'object',
+  required: ['answer'],
+  properties: { answer: { type: 'string' } }
+}, null, 2))
 
 const form = reactive({
   name: '',
   description: '',
   system_prompt: '',
+  prompt_variables: {},
+  output_schema: null,
   iteration_count: 6,
   model: 'deepseek-chat',
   model_config_id: null,
@@ -185,6 +206,9 @@ const loadData = async () => {
       form.name = agent.name
       form.description = agent.description
       form.system_prompt = agent.system_prompt
+      promptVariablesText.value = JSON.stringify(agent.prompt_variables || {}, null, 2)
+      structuredOutputEnabled.value = !!agent.output_schema
+      if (agent.output_schema) outputSchemaText.value = JSON.stringify(agent.output_schema, null, 2)
       form.iteration_count = agent.iteration_count || 6
       form.model = agent.model
       form.model_config_id = agent.model_config_id
@@ -203,6 +227,19 @@ const loadData = async () => {
 
 const handleSubmit = async () => {
   await formRef.value.validate()
+  try {
+    form.prompt_variables = JSON.parse(promptVariablesText.value || '{}')
+    if (!form.prompt_variables || Array.isArray(form.prompt_variables) || typeof form.prompt_variables !== 'object') {
+      throw new Error('模板变量必须是 JSON 对象')
+    }
+    form.output_schema = structuredOutputEnabled.value ? JSON.parse(outputSchemaText.value || '{}') : null
+    if (structuredOutputEnabled.value && (!form.output_schema || Array.isArray(form.output_schema) || typeof form.output_schema !== 'object')) {
+      throw new Error('JSON Schema 必须是 JSON 对象')
+    }
+  } catch (error) {
+    ElMessage.error(error.message || 'JSON 配置格式错误')
+    return
+  }
   saving.value = true
   try {
     if (isEdit.value) {
@@ -223,3 +260,8 @@ onMounted(async () => {
   await Promise.all([loadData(), loadUserModels(), loadBuiltinModels()])
 })
 </script>
+
+<style scoped>
+.field-hint { margin-top: 6px; color: #909399; font-size: 12px; line-height: 1.5; }
+.switch-label { margin-left: 10px; color: #606266; font-size: 13px; }
+</style>

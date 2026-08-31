@@ -1,8 +1,10 @@
-"""链路追踪路由 — 基于本地 MySQL 的追踪查询。"""
+"""链路追踪路由：MySQL 查询 Run 汇总，MongoDB 查询 Span 明细。"""
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import get_current_user
 from ..database import fetch_all, fetch_one
+from ..mongo_client import trace_span_counts
+from ..services.mongo_trace_service import get_trace_spans
 
 router = APIRouter(prefix="/api/traces", tags=["Traces"])
 
@@ -13,8 +15,7 @@ async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 2
         "SELECT t.id, t.status, t.input_text, t.output_text, t.model, "
         "t.workflow_run_id, t.workflow_step_id, wr.workflow_id, ws.step_order, ws.role_name, "
         "t.total_tokens, t.total_duration_ms as duration_ms, t.started_at, "
-        "a.name as agent_name, s.title as session_title, w.name as workflow_name, "
-        "(SELECT COUNT(*) FROM trace_spans WHERE run_id=t.id) as span_count "
+        "a.name as agent_name, s.title as session_title, w.name as workflow_name "
         "FROM trace_runs t "
         "LEFT JOIN agents a ON t.agent_id=a.id "
         "LEFT JOIN chat_sessions s ON t.session_id=s.id "
@@ -26,6 +27,9 @@ async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 2
         "LIMIT %s",
         (user["user_id"], limit)
     )
+    counts = await trace_span_counts(trace["id"] for trace in traces)
+    for trace in traces:
+        trace["span_count"] = counts.get(trace["id"], 0)
     return traces
 
 
@@ -48,12 +52,7 @@ async def api_get_trace(trace_id: int, user: dict = Depends(get_current_user)):
     if not trace:
         raise HTTPException(status_code=404, detail="Trace 不存在")
 
-    spans = await fetch_all(
-        "SELECT id, run_id, span_type, name, round_no, input_data, output_data, "
-        "error_text, tokens_used, duration_ms, status, started_at, created_at "
-        "FROM trace_spans WHERE run_id=%s ORDER BY created_at",
-        (trace_id,)
-    )
+    spans = await get_trace_spans(trace_id)
 
     trace["spans"] = spans
     return trace

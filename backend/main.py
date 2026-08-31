@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import SERVER_PORT, LANGSMITH_API_KEY
 from .database import close_pool, init_db
+from .mongo_client import close_mongo, init_mongo
 from .redis_client import close_redis
 from .routers.agents import router as agents_router
 from .routers.auth import router as auth_router
@@ -40,6 +41,8 @@ log = logging.getLogger("agent-platform")
 async def lifespan(app: FastAPI):
     await init_db()
     log.info("数据库初始化完成 (agent_platform_langchain)")
+    await init_mongo()
+    log.info("MongoDB Trace Span 存储初始化完成")
     log.info("Redis token 存储已启用")
     if LANGSMITH_API_KEY:
         log.info("LangSmith 追踪已启用")
@@ -47,6 +50,7 @@ async def lifespan(app: FastAPI):
         log.info("LangSmith 未配置，使用本地 trace")
     yield
     await close_redis()
+    await close_mongo()
     await close_pool()
     log.info("Redis 连接已关闭")
 

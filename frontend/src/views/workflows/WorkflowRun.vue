@@ -27,6 +27,15 @@
         <el-divider />
         <div class="panel-title">工作流信息</div>
         <div class="workflow-desc">{{ workflow?.description || '暂无描述' }}</div>
+        <div v-if="pendingApproval" class="approval-card">
+          <div class="approval-title">等待人工确认</div>
+          <div class="approval-prompt">{{ pendingApproval.prompt }}</div>
+          <el-input v-model="approvalComment" type="textarea" :rows="3" placeholder="审批意见（可选）" />
+          <div class="approval-actions">
+            <el-button type="danger" :loading="approvalSubmitting" @click="submitApproval(false)">拒绝</el-button>
+            <el-button type="success" :loading="approvalSubmitting" @click="submitApproval(true)">批准并继续</el-button>
+          </div>
+        </div>
 
         <template v-if="!isGraphWorkflow">
           <el-divider />
@@ -153,6 +162,7 @@
                     <el-button type="primary" link @click="$router.push(`/traces?trace_id=${step.trace_run_id}`)">查看 Trace</el-button>
                   </div>
                   <pre class="result-text">{{ step.streamOutput || step.output_text || step.error_text || '无输出' }}</pre>
+                  <pre v-if="step.output_json" class="result-text structured">{{ formatStructured(step.output_json) }}</pre>
                 </el-collapse-item>
               </el-collapse>
             </div>
@@ -229,6 +239,7 @@
                     <el-button type="primary" link @click="$router.push(`/traces?trace_id=${step.trace_run_id}`)">查看 Trace</el-button>
                   </div>
                   <pre class="result-text">{{ step.streamOutput || step.output_text || step.error_text || '无输出' }}</pre>
+                  <pre v-if="step.output_json" class="result-text structured">{{ formatStructured(step.output_json) }}</pre>
                 </el-collapse-item>
               </el-collapse>
             </div>
@@ -293,6 +304,8 @@
                 <pre class="result-text">{{ step.input_text || '无' }}</pre>
                 <div class="detail-label">输出</div>
                 <pre class="result-text">{{ step.output_text || step.error_text || '无输出' }}</pre>
+                <div v-if="step.output_json" class="detail-label">结构化结果</div>
+                <pre v-if="step.output_json" class="result-text structured">{{ formatStructured(step.output_json) }}</pre>
               </div>
             </el-collapse-item>
           </el-collapse>
@@ -320,6 +333,7 @@ import InputNode from './nodes/InputNode.vue'
 import AgentNode from './nodes/AgentNode.vue'
 import ConditionNode from './nodes/ConditionNode.vue'
 import ParallelNode from './nodes/ParallelNode.vue'
+import ApprovalNode from './nodes/ApprovalNode.vue'
 import OutputNode from './nodes/OutputNode.vue'
 import request from '../../utils/request'
 
@@ -336,12 +350,16 @@ const detailVisible = ref(false)
 const runDetail = ref(null)
 const streamController = ref(null)
 const selectedNodeId = ref(null)
+const pendingApproval = ref(null)
+const approvalComment = ref('')
+const approvalSubmitting = ref(false)
 
 const nodeTypes = {
   input: markRaw(InputNode),
   agent: markRaw(AgentNode),
   condition: markRaw(ConditionNode),
   parallel: markRaw(ParallelNode),
+  approval: markRaw(ApprovalNode),
   output: markRaw(OutputNode),
 }
 
@@ -409,10 +427,16 @@ const activeStepOutput = computed(() => activeStep.value?.streamOutput || '')
 const activeStepName = computed(() => activeStep.value?.role_name || activeStep.value?.node_id || '')
 
 const formatDate = (d) => d ? new Date(d).toLocaleString('zh-CN') : ''
-const statusType = (status) => status === 'success' ? 'success' : status === 'error' ? 'danger' : 'warning'
-const runStatusTitle = (status) => status === 'success' ? '运行成功' : status === 'error' ? '运行失败' : '运行中'
-const runStatusAlert = (status) => status === 'success' ? 'success' : status === 'error' ? 'error' : 'info'
+const statusType = (status) => ['success', 'approved'].includes(status) ? 'success' : ['error', 'rejected'].includes(status) ? 'danger' : 'warning'
+const runStatusTitle = (status) => status === 'success' ? '运行成功' : status === 'error' ? '运行失败' : status === 'rejected' ? '审批已拒绝' : status === 'waiting_approval' ? '等待人工确认' : '运行中'
+const runStatusAlert = (status) => status === 'success' ? 'success' : ['error', 'rejected'].includes(status) ? 'error' : status === 'waiting_approval' ? 'warning' : 'info'
 const agentName = (agentId) => agents.value.find(a => a.id === agentId)?.name || (agentId ? `Agent #${agentId}` : '-')
+const formatStructured = (value) => {
+  if (typeof value === 'string') {
+    try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
+  }
+  return JSON.stringify(value, null, 2)
+}
 
 const onNodeClick = ({ node }) => {
   selectedNodeId.value = node.id
@@ -442,6 +466,7 @@ const handleRun = async () => {
     return
   }
   running.value = true
+  pendingApproval.value = null
   selectedNodeId.value = null
 
   currentRun.value = {
@@ -454,21 +479,28 @@ const handleRun = async () => {
   }
   activeTab.value = 'current'
 
-  if (streamController.value) {
-    streamController.value.abort()
-  }
-  const controller = new AbortController()
-  streamController.value = controller
-  const token = localStorage.getItem('token')
-
   try {
     const run = await request.post(`/api/workflows/${route.params.id}/run`, {
       input: input.value,
     })
     currentRun.value.run_id = run.run_id
     currentRun.value.workflow_id = run.workflow_id
+    await subscribeRunEvents(run.run_id)
+  } catch (e) {
+    ElMessage.error(e.message || '工作流事件订阅失败')
+    running.value = false
+  }
+}
 
-    const response = await fetch(`/api/workflows/runs/${run.run_id}/events`, {
+const subscribeRunEvents = async (runId, afterEventId = '') => {
+  if (streamController.value) streamController.value.abort()
+  const controller = new AbortController()
+  streamController.value = controller
+  const token = localStorage.getItem('token')
+
+  try {
+    const afterQuery = afterEventId ? `?after=${encodeURIComponent(afterEventId)}` : ''
+    const response = await fetch(`/api/workflows/runs/${runId}/events${afterQuery}`, {
       method: 'GET',
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -507,6 +539,32 @@ const handleRun = async () => {
       ElMessage.error(e.message || '工作流事件订阅失败')
       running.value = false
     }
+  }
+}
+
+const submitApproval = async (approved) => {
+  if (!currentRun.value?.run_id || approvalSubmitting.value) return
+  approvalSubmitting.value = true
+  try {
+    const afterEventId = pendingApproval.value?.id || ''
+    const result = await request.post(`/api/workflows/runs/${currentRun.value.run_id}/approval`, {
+      approved,
+      comment: approvalComment.value,
+    })
+    pendingApproval.value = null
+    approvalComment.value = ''
+    if (result.resume) {
+      currentRun.value.status = 'running'
+      running.value = true
+      await subscribeRunEvents(currentRun.value.run_id, afterEventId)
+    } else {
+      currentRun.value.status = 'rejected'
+      currentRun.value.output = result.output
+      running.value = false
+      await loadRuns()
+    }
+  } finally {
+    approvalSubmitting.value = false
   }
 }
 
@@ -560,6 +618,13 @@ const handleStreamEvent = (eventType, data) => {
       break
     }
 
+    case 'structured_result': {
+      const step = currentRun.value.steps.find(s => s.node_id === data.node_id)
+      if (step) step.output_json = data.data
+      log('structured_result', data.node_id, '结构化结果校验通过')
+      break
+    }
+
     case 'branch':
       log('branch', data.node_id, `→ 条件分支: ${data.branch_label || '分支 ' + (data.branch_idx + 1)}`)
       break
@@ -578,6 +643,46 @@ const handleStreamEvent = (eventType, data) => {
 
     case 'tool_end':
       log('tool_end', data.node_id, `🔧 工具 ${data.tool} 返回`)
+      break
+
+    case 'approval_required': {
+      currentRun.value.status = 'waiting_approval'
+      currentRun.value.activeNodeId = data.node_id
+      pendingApproval.value = data
+      running.value = false
+      const existing = currentRun.value.steps.find(s => s.node_id === data.node_id)
+      if (existing) {
+        existing.status = 'waiting_approval'
+      } else {
+        currentRun.value.steps.push({
+          id: data.step_id,
+          node_id: data.node_id,
+          node_type: 'approval',
+          role_name: data.label,
+          instruction: data.prompt,
+          input_text: data.input,
+          status: 'waiting_approval',
+        })
+      }
+      log('approval_required', data.node_id, `⏸ ${data.label}：等待人工确认`)
+      break
+    }
+
+    case 'approval_decided': {
+      const step = currentRun.value.steps.find(s => s.node_id === data.node_id)
+      if (step) step.status = data.approved ? 'approved' : 'rejected'
+      log('approval_decided', data.node_id, data.approved ? '✓ 审批通过，继续执行' : '✕ 审批拒绝')
+      break
+    }
+
+    case 'rejected':
+      currentRun.value.status = 'rejected'
+      currentRun.value.output = data.output
+      currentRun.value.activeNodeId = null
+      running.value = false
+      pendingApproval.value = null
+      log('rejected', null, '✕ 工作流已被拒绝')
+      loadRuns()
       break
 
     case 'done':
@@ -664,6 +769,16 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   margin-top: 12px;
 }
+.approval-card {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  background: #fff7ed;
+}
+.approval-title { color: #c2410c; font-weight: 700; margin-bottom: 6px; }
+.approval-prompt { color: #7c2d12; font-size: 13px; line-height: 1.5; margin-bottom: 10px; }
+.approval-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .canvas-header {
   display: flex;
   justify-content: space-between;
@@ -731,6 +846,7 @@ onBeforeUnmount(() => {
   border-color: #fecaca;
   color: #dc2626;
 }
+.result-text.structured { background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a; }
 .step-list {
   display: flex;
   flex-direction: column;

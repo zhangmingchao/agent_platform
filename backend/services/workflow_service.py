@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
 
 from ..core.agent_factory import create_agent_instance, get_model_name
+from ..core.agent_output import append_schema_instruction, parse_and_validate_structured_output, render_prompt_template
 from ..runtime.models import RuntimeContext
 from ..core.event_publisher import RedisStreamEventPublisher
 from ..core.trace_handler import TraceContext
@@ -21,6 +22,14 @@ from .skill_service import get_agent_skills
 MAX_WORKFLOW_STEPS = 12
 MAX_STEP_INPUT_CHARS = 12000
 MAX_GRAPH_STEPS = 40
+
+
+class WorkflowApprovalRequired(Exception):
+    """人工确认节点暂停执行时使用的内部控制流异常。"""
+
+    def __init__(self, result: Dict):
+        super().__init__("工作流等待人工确认")
+        self.result = result
 
 
 def _now():
@@ -368,18 +377,37 @@ async def _invoke_agent_step(
     input_text: str,
     node_id: str,
     publisher: RedisStreamEventPublisher,
-) -> tuple[str, int]:
+) -> tuple[str, int, Optional[Dict]]:
     """执行一个 Agent 节点，并将模型及工具事件统一交给 EventPublisher。
 
-    返回节点最终文本和 Trace Run ID。这里不直接处理 SSE，确保同一套执行逻辑可以
+    返回节点最终文本、Trace Run ID 和可选结构化结果。这里不直接处理 SSE，确保同一套执行逻辑可以
     服务于后台任务、事件订阅以及未来的独立 Worker。
     """
     # 每次执行时根据 Agent 配置装配 Skill、MCP 工具和模型。
     skills_data = await get_agent_skills(agent["id"])
     mcps_data = await get_agent_mcps(agent["id"])
     model_config = await _load_model_config(agent, user_id)
+    runtime_agent = dict(agent)
+    rendered_prompt = render_prompt_template(
+        agent.get("system_prompt", ""),
+        agent.get("prompt_variables"),
+        {
+            "user_input": input_text,
+            "workflow_input": input_text,
+            "workflow_id": workflow_id,
+            "run_id": run_id,
+            "step_order": step_order,
+            "role": role,
+            "instruction": instruction,
+            "user_id": user_id,
+            "current_date": datetime.now().strftime("%Y-%m-%d"),
+        },
+    )
+    runtime_agent["system_prompt"] = append_schema_instruction(
+        rendered_prompt, agent.get("output_schema"),
+    )
     agent_executor = await create_agent_instance(
-        agent,
+        runtime_agent,
         skills_data,
         mcps_data,
         model_config,
@@ -422,6 +450,8 @@ async def _invoke_agent_step(
 
     # token 既实时发布到 Stream，也在服务端拼接成节点最终输出用于持久化。
     full_response = []
+    current_llm_chunks = []
+    last_final_response = ""
     try:
         async for event in agent_executor.astream_events(
             {"messages": [HumanMessage(content=prompt)]},
@@ -432,6 +462,7 @@ async def _invoke_agent_step(
             event_run_id = event.get("run_id", "")
 
             if kind == "on_chat_model_start":
+                current_llm_chunks = []
                 model_name = event.get("name", "LLM")
                 input_data = str(event.get("data", {}).get("input", ""))
                 await trace_ctx.on_llm_start(event_run_id, model_name, input_data)
@@ -440,6 +471,7 @@ async def _invoke_agent_step(
                 chunk = event["data"].get("chunk")
                 if chunk and chunk.content:
                     full_response.append(chunk.content)
+                    current_llm_chunks.append(chunk.content)
                     await publisher.publish(
                         "token",
                         {"node_id": node_id, "content": chunk.content},
@@ -447,8 +479,11 @@ async def _invoke_agent_step(
                     )
 
             elif kind == "on_chat_model_end":
-                output = str(event.get("data", {}).get("output", ""))
+                raw_output = event.get("data", {}).get("output")
+                output = str(raw_output or "")
                 await trace_ctx.on_llm_end(event_run_id, output)
+                if not (getattr(raw_output, "tool_calls", None) or []):
+                    last_final_response = "".join(current_llm_chunks).strip()
 
             elif kind == "on_tool_start":
                 tool_name = event.get("name", "")
@@ -477,11 +512,20 @@ async def _invoke_agent_step(
                     node_id=node_id,
                 )
 
-        output_text = "".join(full_response).strip()
+        output_text = last_final_response or "".join(full_response).strip()
         if not output_text:
             output_text = "工作流步骤未产生文本输出"
         await trace_ctx.finish(output_text)
-        return output_text, trace_run_id
+        structured_output = parse_and_validate_structured_output(
+            output_text, agent.get("output_schema"),
+        )
+        if structured_output is not None:
+            await publisher.publish(
+                "structured_result",
+                {"node_id": node_id, "data": structured_output},
+                node_id=node_id,
+            )
+        return output_text, trace_run_id, structured_output
     except Exception as exc:
         await trace_ctx.error(str(exc))
         raise
@@ -560,6 +604,7 @@ async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
             # 图式配置走 DAG；传统 steps 配置走顺序执行，两者共用节点执行函数。
             result = await _execute_dag(
                 run_id, user_id, workflow_id, config, run["input_text"], publisher,
+                run.get("context_json"),
             )
         else:
             result = await _execute_sequential(
@@ -568,7 +613,7 @@ async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
 
         await execute(
             "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, "
-            "current_node_id=%s WHERE id=%s",
+            "current_node_id=%s, context_json=NULL WHERE id=%s",
             ("success", result["output"], _now(), None, run_id),
         )
         await publisher.publish(
@@ -576,6 +621,9 @@ async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
             {"run_id": run_id, "status": "success", "output": result["output"]},
         )
         return result
+    except WorkflowApprovalRequired as pending:
+        # 等待审批是正常暂停，不应被标记成 error，也不占用后台协程。
+        return pending.result
     except Exception as exc:
         # 无论失败发生在 Agent、工具还是事件发布阶段，都要先落库终止 running 状态。
         error_text = str(exc)
@@ -634,7 +682,7 @@ async def _execute_sequential(
         )
 
         try:
-            output_text, trace_run_id = await _invoke_agent_step(
+            output_text, trace_run_id, structured_output = await _invoke_agent_step(
                 agent=agent,
                 user_id=user_id,
                 workflow_id=workflow_id,
@@ -655,8 +703,8 @@ async def _execute_sequential(
             raise
 
         await execute(
-            "UPDATE multi_agent_run_steps SET output_text=%s, status=%s, finished_at=%s WHERE id=%s",
-            (output_text, "success", _now(), step_id),
+            "UPDATE multi_agent_run_steps SET output_text=%s, output_json=%s, status=%s, finished_at=%s WHERE id=%s",
+            (output_text, json.dumps(structured_output, ensure_ascii=False) if structured_output is not None else None, "success", _now(), step_id),
         )
         step_results.append({
             "step_order": idx,
@@ -688,6 +736,7 @@ async def _execute_sequential(
 async def _execute_dag(
     run_id: int, user_id: int, workflow_id: int, config: Dict, initial_input: str,
     publisher: RedisStreamEventPublisher,
+    resume_context=None,
 ) -> Dict:
     """DAG 模式工作流的执行入口：找到入口节点，调用 _walk_graph 遍历整张图。
 
@@ -695,12 +744,19 @@ async def _execute_dag(
     （Python 中 int 是不可变的，用 list 可以在子函数中修改并影响外层）。
     """
     nodes_map = _graph_nodes(config)       # 节点字典，O(1) 查找
-    start_id = _start_node_id(config)      # 找到入口节点（input/start 类型）
-    step_counter = [0]                     # 步骤计数器（用 list 以便递归时共享）
+    if isinstance(resume_context, str):
+        try:
+            resume_context = json.loads(resume_context)
+        except json.JSONDecodeError:
+            resume_context = None
+    resume_context = resume_context if isinstance(resume_context, dict) else {}
+    start_id = resume_context.get("resume_node_id") or _start_node_id(config)
+    resume_input = resume_context.get("current_input", initial_input)
+    step_counter = [int(resume_context.get("step_counter") or 0)]
 
     # 从入口节点开始遍历整个 DAG，得到最终输出
     final_output = await _walk_graph(
-        config, nodes_map, start_id, initial_input,
+        config, nodes_map, start_id, resume_input,
         run_id, user_id, workflow_id, step_counter, publisher,
     )
     return {
@@ -813,7 +869,7 @@ async def _walk_graph(
 
             try:
                 # 调用 Agent 执行（内部会有 LLM 流式输出、工具调用等）
-                output_text, trace_run_id = await _invoke_agent_step(
+                output_text, trace_run_id, structured_output = await _invoke_agent_step(
                     agent=agent,
                     user_id=user_id,
                     workflow_id=workflow_id,
@@ -837,9 +893,9 @@ async def _walk_graph(
 
             # 执行成功：更新步骤状态为 success
             await execute(
-                "UPDATE multi_agent_run_steps SET output_text=%s, status=%s, "
+                "UPDATE multi_agent_run_steps SET output_text=%s, output_json=%s, status=%s, "
                 "finished_at=%s WHERE id=%s",
-                (output_text, "success", _now(), step_id),
+                (output_text, json.dumps(structured_output, ensure_ascii=False) if structured_output is not None else None, "success", _now(), step_id),
             )
 
             # 发布 node_done 事件（前端展示节点完成 + 输出）
@@ -854,6 +910,55 @@ async def _walk_graph(
             # 继续沿第一条出边走到下一个节点
             node_id = _next_node(config, node_id)
             continue
+
+        # ── 人工确认节点：持久化暂停点，等待用户批准或拒绝 ──
+        if node_type == "approval":
+            step_counter[0] += 1
+            order = step_counter[0]
+            data = node.get("data") or {}
+            label = str(data.get("label") or "人工确认")[:100]
+            prompt = str(data.get("prompt") or "请确认是否继续执行此工作流").strip()
+            next_node_id = _next_node(config, node_id)
+            step_id = await execute(
+                "INSERT INTO multi_agent_run_steps "
+                "(run_id, step_order, agent_id, node_id, node_type, role_name, instruction, "
+                "input_text, status, started_at, created_at) "
+                "VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    run_id, order, node_id, "approval", label, prompt,
+                    current_input, "waiting_approval", _now(), _now(),
+                ),
+            )
+            context = {
+                "approval_step_id": step_id,
+                "approval_node_id": node_id,
+                "resume_node_id": next_node_id,
+                "current_input": current_input,
+                "step_counter": order,
+            }
+            await execute(
+                "UPDATE multi_agent_runs SET status=%s, current_node_id=%s, context_json=%s WHERE id=%s",
+                ("waiting_approval", node_id, json.dumps(context, ensure_ascii=False), run_id),
+            )
+            await publisher.publish(
+                "approval_required",
+                {
+                    "run_id": run_id,
+                    "step_id": step_id,
+                    "node_id": node_id,
+                    "label": label,
+                    "prompt": prompt,
+                    "input": current_input,
+                },
+                node_id=node_id,
+            )
+            raise WorkflowApprovalRequired({
+                "run_id": run_id,
+                "workflow_id": workflow_id,
+                "status": "waiting_approval",
+                "input": current_input,
+                "output": current_input,
+            })
 
         # ── 条件节点：根据当前输入文本匹配条件，选择一个分支继续执行 ──
         if node_type == "condition":
@@ -961,6 +1066,64 @@ async def start_workflow_run(workflow_id: int, user_id: int, input_text: str) ->
     }
 
 
+async def decide_workflow_approval(
+    run_id: int, user_id: int, approved: bool, comment: str = "",
+) -> Dict:
+    """处理当前待审批节点；批准后恢复运行，拒绝后结束本次运行。"""
+    run = await get_workflow_run(run_id, user_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    if run["status"] != "waiting_approval":
+        raise HTTPException(status_code=409, detail="当前运行不处于待人工确认状态")
+
+    context = run.get("context_json") or {}
+    if isinstance(context, str):
+        try:
+            context = json.loads(context)
+        except json.JSONDecodeError:
+            context = {}
+    step_id = context.get("approval_step_id")
+    if not step_id:
+        raise HTTPException(status_code=409, detail="待审批运行缺少恢复信息")
+
+    decision_text = ("已批准" if approved else "已拒绝") + (f"：{comment.strip()}" if comment.strip() else "")
+    await execute(
+        "UPDATE multi_agent_run_steps SET status=%s, output_text=%s, finished_at=%s "
+        "WHERE id=%s AND run_id=%s AND status=%s",
+        ("approved" if approved else "rejected", decision_text, _now(), step_id, run_id, "waiting_approval"),
+    )
+    publisher = RedisStreamEventPublisher(run_id)
+    await publisher.publish(
+        "approval_decided",
+        {
+            "run_id": run_id,
+            "step_id": step_id,
+            "node_id": context.get("approval_node_id"),
+            "approved": approved,
+            "comment": comment.strip(),
+        },
+        node_id=context.get("approval_node_id"),
+    )
+    if not approved:
+        await execute(
+            "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, context_json=NULL WHERE id=%s",
+            ("rejected", decision_text, _now(), run_id),
+        )
+        await publisher.publish(
+            "rejected", {"run_id": run_id, "status": "rejected", "output": decision_text},
+        )
+        return {"run_id": run_id, "status": "rejected", "output": decision_text, "resume": False}
+
+    # 保留 resume_node_id/current_input，仅移除当前审批标识，随后由后台任务续跑。
+    context.pop("approval_step_id", None)
+    context.pop("approval_node_id", None)
+    await execute(
+        "UPDATE multi_agent_runs SET status=%s, current_node_id=%s, context_json=%s, error_text=NULL WHERE id=%s",
+        ("running", context.get("resume_node_id"), json.dumps(context, ensure_ascii=False), run_id),
+    )
+    return {"run_id": run_id, "status": "running", "resume": True}
+
+
 async def list_workflow_runs(workflow_id: int, user_id: int) -> List[Dict]:
     workflow = await get_workflow(workflow_id, user_id)
     if not workflow:
@@ -984,7 +1147,7 @@ async def get_workflow_run(run_id: int, user_id: int) -> Optional[Dict]:
         return None
     run["steps"] = await fetch_all(
         "SELECT id, step_order, agent_id, node_id, node_type, trace_run_id, "
-        "role_name, instruction, input_text, output_text, status, error_text, "
+        "role_name, instruction, input_text, output_text, output_json, status, error_text, "
         "started_at, finished_at, created_at "
         "FROM multi_agent_run_steps WHERE run_id=%s ORDER BY step_order ASC",
         (run_id,),

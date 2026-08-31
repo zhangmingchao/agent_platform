@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -14,6 +14,8 @@ class AgentCreate(BaseModel):
     name: str = "新Agent"
     description: str = ""
     system_prompt: str = ""
+    prompt_variables: Dict[str, Any] = Field(default_factory=dict)
+    output_schema: Optional[Dict[str, Any]] = None
     iteration_count: int = Field(default=6, ge=1, le=100)
     model: str = "deepseek-chat"
     model_config_id: Optional[int] = None

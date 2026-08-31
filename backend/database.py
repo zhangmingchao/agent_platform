@@ -105,6 +105,8 @@ async def init_db():
                     name VARCHAR(200) NOT NULL COMMENT 'Agent 名称',
                     description TEXT COMMENT 'Agent 描述',
                     system_prompt TEXT COMMENT '系统提示词',
+                    prompt_variables JSON DEFAULT NULL COMMENT '提示词模板变量默认值',
+                    output_schema JSON DEFAULT NULL COMMENT '结构化输出 JSON Schema',
                     model VARCHAR(100) DEFAULT 'deepseek-chat' COMMENT '内置模型标识',
                     model_config_id INT DEFAULT NULL COMMENT '自定义模型配置ID 关联 models.id',
                     temperature FLOAT DEFAULT 0.7 COMMENT '采样温度 0-2',
@@ -180,6 +182,7 @@ async def init_db():
                     session_id INT NOT NULL COMMENT '会话ID',
                     role VARCHAR(20) NOT NULL COMMENT '角色 user/assistant',
                     content TEXT NOT NULL COMMENT '消息内容',
+                    structured_content JSON DEFAULT NULL COMMENT '结构化消息内容',
                     attachments JSON DEFAULT NULL COMMENT '附件列表（图片 base64 等）',
                     created_at DATETIME NOT NULL COMMENT '发送时间',
                     INDEX idx_session (session_id),
@@ -276,6 +279,7 @@ async def init_db():
                     instruction TEXT COMMENT '步骤指令',
                     input_text TEXT COMMENT '步骤输入',
                     output_text TEXT COMMENT '步骤输出',
+                    output_json JSON DEFAULT NULL COMMENT '通过 Schema 校验的结构化输出',
                     status VARCHAR(20) DEFAULT 'running' COMMENT '状态 running/success/error',
                     error_text TEXT COMMENT '错误信息',
                     started_at DATETIME NOT NULL COMMENT '开始时间',
@@ -357,6 +361,16 @@ async def init_db():
 
             migrations = [
                 (
+                    "agents",
+                    "prompt_variables",
+                    "ALTER TABLE agents ADD COLUMN prompt_variables JSON DEFAULT NULL AFTER system_prompt",
+                ),
+                (
+                    "agents",
+                    "output_schema",
+                    "ALTER TABLE agents ADD COLUMN output_schema JSON DEFAULT NULL AFTER prompt_variables",
+                ),
+                (
                     "trace_runs",
                     "workflow_run_id",
                     "ALTER TABLE trace_runs ADD COLUMN workflow_run_id INT DEFAULT NULL AFTER agent_id",
@@ -395,6 +409,16 @@ async def init_db():
                     "chat_messages",
                     "attachments",
                     "ALTER TABLE chat_messages ADD COLUMN attachments JSON DEFAULT NULL AFTER content",
+                ),
+                (
+                    "chat_messages",
+                    "structured_content",
+                    "ALTER TABLE chat_messages ADD COLUMN structured_content JSON DEFAULT NULL AFTER content",
+                ),
+                (
+                    "multi_agent_run_steps",
+                    "output_json",
+                    "ALTER TABLE multi_agent_run_steps ADD COLUMN output_json JSON DEFAULT NULL AFTER output_text",
                 ),
                 (
                     "code_executions",

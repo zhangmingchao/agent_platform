@@ -12,6 +12,7 @@ from ..core.event_publisher import workflow_event_stream_key
 from ..redis_client import get_redis
 from ..services.workflow_service import (
     create_workflow,
+    decide_workflow_approval,
     delete_workflow,
     execute_workflow_run,
     get_workflow,
@@ -110,18 +111,38 @@ async def api_get_workflow_run(run_id: int, user: dict = Depends(get_current_use
     return run
 
 
+@router.post("/runs/{run_id}/approval")
+async def api_decide_workflow_approval(
+    run_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    body = await request.json()
+    if not isinstance(body.get("approved"), bool):
+        raise HTTPException(status_code=400, detail="approved 必须是布尔值")
+    result = await decide_workflow_approval(
+        run_id, user["user_id"], body["approved"], str(body.get("comment") or ""),
+    )
+    if result.get("resume"):
+        background_tasks.add_task(_execute_run_safely, run_id, user["user_id"])
+    return result
+
+
 @router.get("/runs/{run_id}/events")
-async def api_stream_workflow_run_events(run_id: int, user: dict = Depends(get_current_user)):
+async def api_stream_workflow_run_events(
+    run_id: int, request: Request, user: dict = Depends(get_current_user),
+):
     """从 Redis Stream 读取指定 run 的事件并转换成 SSE 数据流。
 
-    当前版本暂不处理 Last-Event-ID，因此每次订阅都从 0-0 开始读取完整事件。
+    首次订阅从 0-0 读取；审批恢复时可通过 after 参数从指定事件之后继续读取。
     """
     if not await get_workflow_run(run_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="运行记录不存在")
 
     async def generate():
-        # 0-0 表示从 Stream 第一条事件开始；后续可替换为 Last-Event-ID。
-        cursor = "0-0"
+        # after 用于审批恢复，避免重放旧的 approval_required 后立即关闭连接。
+        cursor = request.query_params.get("after") or "0-0"
         redis = await get_redis()
         stream_key = workflow_event_stream_key(run_id)
         while True:
@@ -158,7 +179,7 @@ async def api_stream_workflow_run_events(run_id: int, user: dict = Depends(get_c
                     yield _sse_event(event_id, event_type, event_data)
 
                     # 收到终态事件后主动关闭 SSE，避免无意义地继续占用连接。
-                    if event_type in ("done", "error", "cancelled"):
+                    if event_type in ("done", "error", "cancelled", "rejected", "approval_required"):
                         return
 
     return StreamingResponse(

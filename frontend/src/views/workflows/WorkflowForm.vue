@@ -27,6 +27,9 @@
         <div class="palette-item" draggable @dragstart="onDragStart($event, 'parallel')" @click="addNodeAtCenter('parallel')">
           <el-icon><Share /></el-icon><span>并行执行</span>
         </div>
+        <div class="palette-item" draggable @dragstart="onDragStart($event, 'approval')" @click="addNodeAtCenter('approval')">
+          <el-icon><CircleCheck /></el-icon><span>人工确认</span>
+        </div>
         <div class="palette-item" draggable @dragstart="onDragStart($event, 'output')" @click="addNodeAtCenter('output')">
           <el-icon><Download /></el-icon><span>输出节点</span>
         </div>
@@ -107,6 +110,15 @@
               </el-form-item>
             </template>
 
+            <template v-if="selectedNode.type === 'approval'">
+              <el-form-item label="确认提示">
+                <el-input v-model="selectedNode.data.prompt" type="textarea" :rows="4" placeholder="例如：请审核以上内容，确认后继续发布" />
+              </el-form-item>
+              <el-form-item label="说明">
+                <div class="cond-hint">执行到此处会保存当前输入并暂停，批准后从下一个节点恢复。</div>
+              </el-form-item>
+            </template>
+
             <el-divider />
             <el-button text type="danger" @click="deleteSelectedNode">删除此节点</el-button>
           </el-form>
@@ -128,7 +140,7 @@
 import { computed, markRaw, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Switch, Share, Download, Promotion } from '@element-plus/icons-vue'
+import { User, Switch, Share, Download, Promotion, CircleCheck } from '@element-plus/icons-vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -142,6 +154,7 @@ import InputNode from './nodes/InputNode.vue'
 import AgentNode from './nodes/AgentNode.vue'
 import ConditionNode from './nodes/ConditionNode.vue'
 import ParallelNode from './nodes/ParallelNode.vue'
+import ApprovalNode from './nodes/ApprovalNode.vue'
 import OutputNode from './nodes/OutputNode.vue'
 import request from '../../utils/request'
 
@@ -163,6 +176,7 @@ const nodeTypes = {
   agent: markRaw(AgentNode),
   condition: markRaw(ConditionNode),
   parallel: markRaw(ParallelNode),
+  approval: markRaw(ApprovalNode),
   output: markRaw(OutputNode),
 }
 
@@ -191,9 +205,10 @@ const onAgentChange = (agentId) => {
 }
 
 const createNodeData = (type) => {
-  const base = { label: { agent: 'Agent 节点', condition: '条件分支', parallel: '并行执行', output: '输出' }[type] || type }
+  const base = { label: { agent: 'Agent 节点', condition: '条件分支', parallel: '并行执行', approval: '人工确认', output: '输出' }[type] || type }
   if (type === 'agent') return { ...base, agent_id: null, agent_name: '', role: '', instruction: '' }
   if (type === 'condition') return { ...base, conditions: [{ label: '默认', type: 'else' }] }
+  if (type === 'approval') return { ...base, prompt: '请确认是否继续执行此工作流' }
   return base
 }
 
@@ -415,6 +430,10 @@ onMounted(async () => {
 .vf-node.parallel-node {
   background: #f5f3ff;
   border-color: #c4b5fd;
+}
+.vf-node.approval-node {
+  background: #fff7ed;
+  border-color: #fb923c;
 }
 .node-header {
   display: flex;

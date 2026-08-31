@@ -79,6 +79,7 @@
               :class="['message-text', { 'markdown-body': msg.role === 'assistant' }]"
               v-html="renderMessage(msg)"
             ></div>
+            <pre v-if="msg.role === 'assistant' && msg.structured_content" class="structured-result">{{ formatStructured(msg.structured_content) }}</pre>
           </div>
         </div>
 
@@ -117,6 +118,7 @@
             <div v-if="streamingText" class="message-text markdown-body streaming-content">
               <span v-html="renderMarkdown(streamingText)"></span><span class="cursor">|</span>
             </div>
+            <pre v-if="structuredResult" class="structured-result">{{ formatStructured(structuredResult) }}</pre>
             <div v-else-if="toolCalls.length === 0 && !thinkingText" class="thinking-indicator">
               AI 思考中<span class="dots">...</span>
             </div>
@@ -259,6 +261,7 @@ const messages = ref([])
 const inputText = ref('')
 const streaming = ref(false)
 const streamingText = ref('')
+const structuredResult = ref(null)
 const thinkingText = ref('')
 const showThinking = ref(true)
 const toolCalls = ref([])
@@ -273,6 +276,14 @@ const abortController = ref(null)
 const formatTime = (d) => {
   if (!d) return ''
   return new Date(d).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+const formatStructured = (value) => {
+  if (!value) return ''
+  if (typeof value === 'string') {
+    try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
+  }
+  return JSON.stringify(value, null, 2)
 }
 
 const scrollToBottom = async () => {
@@ -489,6 +500,7 @@ const sendMessage = async () => {
 
   streaming.value = true
   streamingText.value = ''
+  structuredResult.value = null
   thinkingText.value = ''
   showThinking.value = true
   toolCalls.value = []
@@ -542,6 +554,8 @@ const sendMessage = async () => {
               streamingText.value += event.content || ''
             } else if (event.type === 'thinking') {
               thinkingText.value += event.content || ''
+            } else if (event.type === 'structured_result') {
+              try { structuredResult.value = JSON.parse(event.content) } catch { structuredResult.value = event.content }
             } else if (event.type === 'reclassify') {
               if (event.content === 'answer') {
                 streamingText.value = thinkingText.value + streamingText.value
@@ -575,7 +589,7 @@ const sendMessage = async () => {
     }
 
     if (streamingText.value) {
-      messages.value.push({ role: 'assistant', content: streamingText.value })
+      messages.value.push({ role: 'assistant', content: streamingText.value, structured_content: structuredResult.value })
     }
   } catch (e) {
     if (e.name === 'AbortError') {
@@ -589,6 +603,7 @@ const sendMessage = async () => {
   } finally {
     streaming.value = false
     streamingText.value = ''
+    structuredResult.value = null
     thinkingText.value = ''
     toolCalls.value = []
     abortController.value = null
@@ -619,6 +634,17 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.structured-result {
+  margin-top: 10px;
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  white-space: pre-wrap;
+}
 .chat-page {
   display: flex;
   height: calc(100vh - 120px);

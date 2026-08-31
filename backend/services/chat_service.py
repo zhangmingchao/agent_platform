@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import HTTPException
 
 from ..core.agent_factory import create_agent_instance, get_model_name
+from ..core.agent_output import append_schema_instruction, parse_and_validate_structured_output, render_prompt_template
 from ..core.streaming import stream_agent_response, sse_event
 from ..core.trace_handler import TraceContext
 from ..runtime.models import RuntimeContext
@@ -91,8 +92,20 @@ async def prepare_chat_run(
     skills_data = await get_agent_skills(agent["id"])
     mcps_data = await get_agent_mcps(agent["id"])
     model_config = await _load_model_config(agent, user["user_id"])
+    runtime_variables = {
+        "user_input": message,
+        "username": user.get("username", ""),
+        "user_id": user["user_id"],
+        "session_id": session_id,
+        "current_date": datetime.now().strftime("%Y-%m-%d"),
+    }
+    runtime_agent = dict(agent)
+    rendered_prompt = render_prompt_template(
+        agent.get("system_prompt", ""), agent.get("prompt_variables"), runtime_variables,
+    )
+    runtime_agent["system_prompt"] = append_schema_instruction(rendered_prompt, agent.get("output_schema"))
     agent_executor = await create_agent_instance(
-        agent,
+        runtime_agent,
         skills_data,
         mcps_data,
         model_config,
@@ -123,6 +136,7 @@ async def prepare_chat_run(
         "max_tool_rounds": max_tool_rounds,
         "thread_id": thread_id,
         "trace_ctx": trace_ctx,
+        "output_schema": agent.get("output_schema"),
     }
 
 
@@ -136,6 +150,8 @@ async def stream_chat(
     """运行 Agent 并生成 SSE 数据块，同时持久化助手回复。"""
     run = await prepare_chat_run(user, message, session_id, images, file_ids)
     full_response = []
+    provisional_response = []
+    stream_failed = False
 
     try:
         async for chunk in stream_agent_response(
@@ -147,17 +163,30 @@ async def stream_chat(
             trace_ctx=run["trace_ctx"],
             images=images,
         ):
+            suppress_chunk = False
             if chunk.startswith("data:"):
                 payload = chunk[5:]
                 if payload.endswith("\n\n"):
                     payload = payload[:-2]
                 try:
                     event = json.loads(payload)
-                    if event.get("type") == "chunk":
+                    event_type = event.get("type")
+                    if event_type == "chunk":
                         full_response.append(event.get("content", ""))
+                    elif event_type == "thinking":
+                        provisional_response.append(event.get("content", ""))
+                    elif event_type == "reclassify" and event.get("content") == "answer":
+                        full_response[:0] = provisional_response
+                        provisional_response.clear()
+                    elif event_type == "error":
+                        stream_failed = True
+                    elif event_type == "done":
+                        # 结构化校验完成后再发 done，保证客户端不会提前结束。
+                        suppress_chunk = True
                 except json.JSONDecodeError:
                     pass
-            yield chunk
+            if not suppress_chunk:
+                yield chunk
     except asyncio.CancelledError:
         log.info("[Session#%s] client disconnected", session_id)
         await run["trace_ctx"].error("client disconnected")
@@ -170,12 +199,30 @@ async def stream_chat(
         return
 
     assistant_text = "".join(full_response)
+    structured_content = None
+    if run.get("output_schema") and not stream_failed:
+        try:
+            structured_content = parse_and_validate_structured_output(
+                assistant_text, run["output_schema"],
+            )
+        except ValueError as exc:
+            await run["trace_ctx"].error(str(exc))
+            yield sse_event("error", str(exc))
+            yield sse_event("done")
+            return
     if assistant_text.strip():
         await execute(
-            "INSERT INTO chat_messages (session_id, role, content, created_at) "
-            "VALUES (%s, %s, %s, %s)",
-            (session_id, "assistant", assistant_text, _now()),
+            "INSERT INTO chat_messages (session_id, role, content, structured_content, created_at) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (
+                session_id, "assistant", assistant_text,
+                json.dumps(structured_content, ensure_ascii=False) if structured_content is not None else None,
+                _now(),
+            ),
         )
         await run["trace_ctx"].finish(assistant_text)
+        if structured_content is not None:
+            yield sse_event("structured_result", json.dumps(structured_content, ensure_ascii=False))
     else:
         await run["trace_ctx"].error("empty response")
+    yield sse_event("done")
