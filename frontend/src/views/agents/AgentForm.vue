@@ -23,9 +23,32 @@
         <el-switch v-model="structuredOutputEnabled" />
         <span class="switch-label">要求最终结果符合 JSON Schema</span>
       </el-form-item>
-      <el-form-item v-if="structuredOutputEnabled" label="JSON Schema">
-        <el-input v-model="outputSchemaText" type="textarea" :rows="10" placeholder='{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}}' />
-        <div class="field-hint">SSE 仍会流式输出；生成结束后校验完整 JSON，并发送 structured_result 事件。</div>
+      <el-form-item v-if="structuredOutputEnabled" label="输出模型">
+        <div class="schema-editor">
+          <el-radio-group v-model="schemaEditorMode" size="small" @change="switchSchemaEditorMode">
+            <el-radio-button value="python">Python 模型</el-radio-button>
+            <el-radio-button value="json">JSON Schema</el-radio-button>
+          </el-radio-group>
+          <el-input
+            v-if="schemaEditorMode === 'python'"
+            v-model="pythonSchemaText"
+            type="textarea"
+            :rows="12"
+            resize="vertical"
+            placeholder="class StructuredOutput(BaseModel):&#10;    answer: str = Field(description='最终答案')"
+          />
+          <el-input
+            v-else
+            v-model="outputSchemaText"
+            type="textarea"
+            :rows="12"
+            resize="vertical"
+            placeholder='{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}}'
+          />
+        </div>
+        <div class="field-hint">
+          Python 模型仅作为 Schema 描述语言，服务器只解析 AST，不会执行代码。保存时转换为 JSON Schema；模型最终仍输出 JSON。
+        </div>
       </el-form-item>
       <el-form-item label="迭代次数" prop="iteration_count">
         <el-input v-model="form.iteration_count"
@@ -122,7 +145,10 @@ const isEdit = computed(() => !!route.params.id)
 const formRef = ref()
 const saving = ref(false)
 const structuredOutputEnabled = ref(false)
+const schemaEditorMode = ref('python')
 const promptVariablesText = ref('{}')
+const pythonSchemaText = ref(`class StructuredOutput(BaseModel):
+    answer: str = Field(description="最终答案")`)
 const outputSchemaText = ref(JSON.stringify({
   type: 'object',
   required: ['answer'],
@@ -154,6 +180,33 @@ const builtinModels = ref([])
 const skills = ref([])
 const moduleList = ref([])
 const mcps = ref([])
+
+const parsePythonSchema = async () => {
+  const result = await request.post('/api/output-schema/python-to-json', { source: pythonSchemaText.value })
+  outputSchemaText.value = JSON.stringify(result.schema, null, 2)
+  return result.schema
+}
+
+const renderPythonSchema = async (schema) => {
+  const result = await request.post('/api/output-schema/json-to-python', { schema_data: schema })
+  pythonSchemaText.value = result.source
+}
+
+// 两种编辑模式操作同一份 Schema；切换时立即转换，让用户能够核对最终 JSON。
+const switchSchemaEditorMode = async (mode) => {
+  try {
+    if (mode === 'json') {
+      await parsePythonSchema()
+    } else {
+      const schema = JSON.parse(outputSchemaText.value || '{}')
+      await renderPythonSchema(schema)
+    }
+  } catch (error) {
+    schemaEditorMode.value = mode === 'json' ? 'python' : 'json'
+    // HTTP 错误已由 request 拦截器展示，这里只补充本地 JSON 解析错误。
+    if (!error.response) ElMessage.error(error.message || 'Schema 转换失败')
+  }
+}
 
 const onModelSourceChange = () => {
   if (modelSource.value === 'custom') {
@@ -208,7 +261,15 @@ const loadData = async () => {
       form.system_prompt = agent.system_prompt
       promptVariablesText.value = JSON.stringify(agent.prompt_variables || {}, null, 2)
       structuredOutputEnabled.value = !!agent.output_schema
-      if (agent.output_schema) outputSchemaText.value = JSON.stringify(agent.output_schema, null, 2)
+      if (agent.output_schema) {
+        outputSchemaText.value = JSON.stringify(agent.output_schema, null, 2)
+        try {
+          await renderPythonSchema(agent.output_schema)
+        } catch {
+          // 极复杂的历史 JSON Schema 仍可在 JSON 模式继续编辑。
+          schemaEditorMode.value = 'json'
+        }
+      }
       form.iteration_count = agent.iteration_count || 6
       form.model = agent.model
       form.model_config_id = agent.model_config_id
@@ -232,12 +293,18 @@ const handleSubmit = async () => {
     if (!form.prompt_variables || Array.isArray(form.prompt_variables) || typeof form.prompt_variables !== 'object') {
       throw new Error('模板变量必须是 JSON 对象')
     }
-    form.output_schema = structuredOutputEnabled.value ? JSON.parse(outputSchemaText.value || '{}') : null
+    if (!structuredOutputEnabled.value) {
+      form.output_schema = null
+    } else if (schemaEditorMode.value === 'python') {
+      form.output_schema = await parsePythonSchema()
+    } else {
+      form.output_schema = JSON.parse(outputSchemaText.value || '{}')
+    }
     if (structuredOutputEnabled.value && (!form.output_schema || Array.isArray(form.output_schema) || typeof form.output_schema !== 'object')) {
       throw new Error('JSON Schema 必须是 JSON 对象')
     }
   } catch (error) {
-    ElMessage.error(error.message || 'JSON 配置格式错误')
+    if (!error.response) ElMessage.error(error.message || 'Schema 配置格式错误')
     return
   }
   saving.value = true
@@ -264,4 +331,6 @@ onMounted(async () => {
 <style scoped>
 .field-hint { margin-top: 6px; color: #909399; font-size: 12px; line-height: 1.5; }
 .switch-label { margin-left: 10px; color: #606266; font-size: 13px; }
+.schema-editor { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.schema-editor :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; line-height: 1.55; }
 </style>

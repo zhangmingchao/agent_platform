@@ -56,6 +56,17 @@
           </div>
           <div class="message-content">
             <div class="message-role">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
+            <!-- 执行说明与正式回答分开存储，历史消息中默认折叠。 -->
+            <div v-if="msg.role === 'assistant' && msg.reasoning_content" class="thinking-panel completed">
+              <div class="panel-header" @click="msg.reasoningExpanded = !msg.reasoningExpanded">
+                <div class="panel-title">
+                  <el-icon class="thinking-icon"><MagicStick /></el-icon>
+                  <span>查看思考过程</span>
+                </div>
+                <el-icon class="toggle-icon" :class="{ expanded: msg.reasoningExpanded }"><ArrowDown /></el-icon>
+              </div>
+              <div v-show="msg.reasoningExpanded" class="thinking-content markdown-body" v-html="renderMarkdown(msg.reasoning_content)"></div>
+            </div>
             <!-- 用户消息的图片附件 -->
             <div v-if="msg.role === 'user' && messageImages(msg).length" class="msg-images">
               <img
@@ -95,19 +106,19 @@
           </div>
           <div class="message-content">
             <!-- 思考过程面板 -->
-            <div v-if="thinkingText" class="thinking-panel">
+            <div v-if="thinkingText || pendingText" class="thinking-panel">
               <div class="panel-header" @click="showThinking = !showThinking">
                 <div class="panel-title">
                   <el-icon class="thinking-icon"><MagicStick /></el-icon>
-                  <span>思考过程</span>
+                  <span>{{ pendingText ? '处理中' : '思考过程' }}</span>
                 </div>
                 <el-icon class="toggle-icon" :class="{ expanded: showThinking }"><ArrowDown /></el-icon>
               </div>
-              <div v-show="showThinking" class="thinking-content markdown-body" v-html="renderMarkdown(thinkingText)"></div>
+              <div v-show="showThinking" class="thinking-content markdown-body" v-html="renderMarkdown(thinkingText + pendingText)"></div>
             </div>
             <!-- 工具调用面板 -->
             <div v-if="toolCalls.length > 0" class="tool-calls-panel">
-              <div v-for="(tc, i) in toolCalls" :key="i" class="tool-call-item">
+              <div v-for="tc in toolCalls" :key="tc.id" class="tool-call-item">
                 <el-icon v-if="tc.status === 'running'"><Loading /></el-icon>
                 <el-icon v-else><Check /></el-icon>
                 <span class="tool-name">{{ tc.name }}</span>
@@ -263,6 +274,9 @@ const streaming = ref(false)
 const streamingText = ref('')
 const structuredResult = ref(null)
 const thinkingText = ref('')
+// 每个 LLM 轮次独立缓存；轮次完成前仅用于实时展示，不提前判定为正文。
+const pendingRounds = ref({})
+const pendingText = computed(() => Object.values(pendingRounds.value).join(''))
 const showThinking = ref(true)
 const toolCalls = ref([])
 const messagesContainer = ref(null)
@@ -309,7 +323,8 @@ const selectSession = async (session) => {
   // 解析每条消息的 attachments
   messages.value = msgs.map(m => ({
     ...m,
-    attachments: parseAttachments(m.attachments)
+    attachments: parseAttachments(m.attachments),
+    reasoningExpanded: false
   }))
   messages.value.unshift({"role":"assistant","content":"你好啊！请说出你的问题！","attachments":null})
   scrollToBottom()
@@ -502,6 +517,7 @@ const sendMessage = async () => {
   streamingText.value = ''
   structuredResult.value = null
   thinkingText.value = ''
+  pendingRounds.value = {}
   showThinking.value = true
   toolCalls.value = []
   abortController.value = new AbortController()
@@ -550,32 +566,24 @@ const sendMessage = async () => {
             const event = JSON.parse(payload)
             if (event.type === 'done') {
               streaming.value = false
-            } else if (event.type === 'chunk') {
-              streamingText.value += event.content || ''
-            } else if (event.type === 'thinking') {
-              thinkingText.value += event.content || ''
+            } else if (event.type === 'llm_round_start') {
+              pendingRounds.value[event.round_id] = ''
+            } else if (event.type === 'pending_text_delta') {
+              const roundId = event.round_id || 'unknown'
+              pendingRounds.value[roundId] = (pendingRounds.value[roundId] || '') + (event.content || '')
+            } else if (event.type === 'llm_round_classified') {
+              const roundText = pendingRounds.value[event.round_id] || ''
+              if (event.classification === 'answer') streamingText.value += roundText
+              else thinkingText.value += roundText
+              delete pendingRounds.value[event.round_id]
             } else if (event.type === 'structured_result') {
               try { structuredResult.value = JSON.parse(event.content) } catch { structuredResult.value = event.content }
-            } else if (event.type === 'reclassify') {
-              if (event.content === 'answer') {
-                streamingText.value = thinkingText.value + streamingText.value
-                thinkingText.value = ''
-              } else if (event.content === 'thinking') {
-                thinkingText.value += streamingText.value
-                streamingText.value = ''
-              }
-            } else if (event.type === 'tool_start') {
-              try {
-                const toolData = JSON.parse(event.content)
-                toolCalls.value.push({ name: toolData.name, input: toolData.input || '', status: 'running' })
-              } catch {
-                toolCalls.value.push({ name: event.content, input: '', status: 'running' })
-              }
+            } else if (event.type === 'tool_started') {
+              toolCalls.value.push({ id: event.tool_run_id, name: event.name, input: event.input || '', status: 'running' })
               scrollToBottom()
-            } else if (event.type === 'tool_end') {
-              if (toolCalls.value.length > 0) {
-                toolCalls.value[toolCalls.value.length - 1].status = 'done'
-              }
+            } else if (event.type === 'tool_completed') {
+              const toolCall = toolCalls.value.find(item => item.id === event.tool_run_id)
+              if (toolCall) toolCall.status = 'done'
             } else if (event.type === 'error') {
               ElMessage.error(event.content || '对话错误')
             }
@@ -589,13 +597,13 @@ const sendMessage = async () => {
     }
 
     if (streamingText.value) {
-      messages.value.push({ role: 'assistant', content: streamingText.value, structured_content: structuredResult.value })
+      messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, structured_content: structuredResult.value })
     }
   } catch (e) {
     if (e.name === 'AbortError') {
       // 用户主动停止，保留已生成的内容
       if (streamingText.value) {
-        messages.value.push({ role: 'assistant', content: streamingText.value })
+        messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false })
       }
     } else {
       ElMessage.error(e.message || '对话请求失败')
@@ -605,6 +613,7 @@ const sendMessage = async () => {
     streamingText.value = ''
     structuredResult.value = null
     thinkingText.value = ''
+    pendingRounds.value = {}
     toolCalls.value = []
     abortController.value = null
     loadSessions()
@@ -617,10 +626,11 @@ const stopGenerate = () => {
   }
   streaming.value = false
   if (streamingText.value) {
-    messages.value.push({ role: 'assistant', content: streamingText.value })
+    messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false })
   }
   streamingText.value = ''
   thinkingText.value = ''
+  pendingRounds.value = {}
   toolCalls.value = []
 }
 
@@ -801,6 +811,7 @@ onMounted(async () => {
 }
 .message-text {
   background: #f3f4f6;
+  color: #111827;
   padding: 12px 16px;
   border-radius: 12px;
   line-height: 1.6;

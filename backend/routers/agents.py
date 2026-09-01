@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..config import LLM_MODEL_OPTIONS
+from ..core.schema_dsl import json_schema_to_python_schema, python_schema_to_json_schema
 from ..services.agent_service import create_agent, delete_agent, get_agent, list_agents, update_agent
 
 router = APIRouter(prefix="/api", tags=["Agents"])
@@ -28,6 +29,14 @@ class AgentUpdate(AgentCreate):
     pass
 
 
+class PythonSchemaRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=20_000)
+
+
+class JsonSchemaRequest(BaseModel):
+    schema_data: Dict[str, Any]
+
+
 @router.get("/ll_models")
 async def api_list_llm_models(user: dict = Depends(get_current_user)):
     return LLM_MODEL_OPTIONS
@@ -36,6 +45,30 @@ async def api_list_llm_models(user: dict = Depends(get_current_user)):
 @router.get("/agentsList")
 async def api_list_agents(user: dict = Depends(get_current_user)):
     return await list_agents(user["user_id"])
+
+
+@router.post("/output-schema/python-to-json")
+async def api_python_schema_to_json(
+    data: PythonSchemaRequest,
+    user: dict = Depends(get_current_user),
+):
+    """安全解析 Python 风格描述；只读 AST，绝不执行用户提交的代码。"""
+    try:
+        return {"schema": python_schema_to_json_schema(data.source)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/output-schema/json-to-python")
+async def api_json_schema_to_python(
+    data: JsonSchemaRequest,
+    user: dict = Depends(get_current_user),
+):
+    """将数据库中的标准 JSON Schema 格式化为可编辑的 Python 风格描述。"""
+    try:
+        return {"source": json_schema_to_python_schema(data.schema_data)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/agents/{agent_id}")

@@ -89,7 +89,7 @@ async def api_get_messages(session_id: int, user: dict = Depends(get_current_use
     if not session:
         return []
     return await fetch_all(
-        "SELECT role, content, structured_content, attachments, created_at FROM chat_messages "
+        "SELECT role, content, reasoning_content, structured_content, attachments, created_at FROM chat_messages "
         "WHERE session_id=%s ORDER BY id ASC",
         (session_id,),
     )

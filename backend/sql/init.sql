@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     session_id INT NOT NULL,
     role VARCHAR(20) NOT NULL,
     content TEXT NOT NULL,
+    reasoning_content MEDIUMTEXT DEFAULT NULL,
     structured_content JSON DEFAULT NULL,
     attachments JSON DEFAULT NULL,
     created_at DATETIME NOT NULL,

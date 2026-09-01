@@ -1,5 +1,32 @@
 # Agent 流式事件与“思维过程”展示实现文档
 
+> 2026-09-01 协议升级：单 Agent 聊天已改为按 LLM 轮次确认分类。下文如仍出现
+> `thinking/chunk/reclassify`，仅用于说明旧协议，不应再用于新客户端实现。
+
+## 现行单 Agent 事件协议（v2）
+
+模型文本先通过 `pending_text_delta` 实时显示在“处理中”区域。一轮调用结束后，后端检查
+完整输出：存在 `tool_calls` 时发送 `llm_round_classified(thinking)`，否则发送
+`llm_round_classified(answer)`。分类以 `round_id` 为作用域，连续或并行工具调用不会互相覆盖。
+
+```text
+llm_round_start
+  -> pending_text_delta (0..N)
+  -> llm_round_classified: thinking | answer
+  -> tool_started/tool_completed (如有)
+  -> 下一轮 llm_round_start
+  -> done
+```
+
+工具事件使用 LangChain 运行 ID 作为 `tool_run_id`，前端按 ID 更新对应工具，不能假设最后
+一个工具就是当前完成的工具。正式回答保存到 `chat_messages.content`，执行说明保存到
+`chat_messages.reasoning_content`；历史消息中的执行说明默认折叠、可主动展开，且不会重新
+注入 LLM 上下文。
+
+这里展示的是模型主动输出的解释文本和工具规划，不代表、也不尝试获取模型供应商未返回的
+内部思维链。正式回答使用主文字色；执行说明采用中性灰 `#4b5563`、标题采用
+`#6b7280`，配合浅灰背景降低视觉层级。
+
 ## 1. 文档目标
 
 本文说明 Agent Platform 如何利用 LangChain/LangGraph 事件和 SSE 展示 Agent 的实时执行过程，并对每一种后端事件、前端处理和页面效果逐一对应。

@@ -182,6 +182,7 @@ async def init_db():
                     session_id INT NOT NULL COMMENT '会话ID',
                     role VARCHAR(20) NOT NULL COMMENT '角色 user/assistant',
                     content TEXT NOT NULL COMMENT '消息内容',
+                    reasoning_content MEDIUMTEXT DEFAULT NULL COMMENT '可折叠的模型执行说明',
                     structured_content JSON DEFAULT NULL COMMENT '结构化消息内容',
                     attachments JSON DEFAULT NULL COMMENT '附件列表（图片 base64 等）',
                     created_at DATETIME NOT NULL COMMENT '发送时间',
@@ -360,6 +361,11 @@ async def init_db():
                 pass
 
             migrations = [
+                (
+                    "chat_messages",
+                    "reasoning_content",
+                    "ALTER TABLE chat_messages ADD COLUMN reasoning_content MEDIUMTEXT DEFAULT NULL AFTER content",
+                ),
                 (
                     "agents",
                     "prompt_variables",

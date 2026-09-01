@@ -2,19 +2,18 @@
 import json
 import logging
 from datetime import datetime
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .trace_handler import TraceContext
 
 log = logging.getLogger("agent-platform")
 
 
-def sse_event(event_type: str, content: str = "") -> str:
-    """将一个 SSE 事件编码为单行 JSON。"""
-    payload = json.dumps(
-        {"type": event_type, "content": content},
-        ensure_ascii=False,
-    )
+def sse_event(event_type: str, content: str = "", **metadata: Any) -> str:
+    """将一个 SSE 事件编码为单行 JSON，并允许携带轮次、工具等关联字段。"""
+    payload_data = {"type": event_type, "content": content}
+    payload_data.update(metadata)
+    payload = json.dumps(payload_data, ensure_ascii=False)
     return f"data:{payload}\n\n"
 
 
@@ -62,22 +61,17 @@ async def stream_agent_response(
     以 SSE 事件流式输出智能体响应。
 
     产生的事件类型：
-    - thinking: 思考阶段的文本（LLM 在调用工具前的推理过程）
-    - chunk: 最终回答的流式 Token
-    - tool_start: 工具调用开始（JSON: {name, input}）
-    - tool_end: 工具返回结果（截断后字符串）
-    - reclassify: 阶段重分类通知（"answer"=思考实际是回答 / "thinking"=回答实际是思考）
+    - llm_round_start: 一轮模型调用开始
+    - pending_text_delta: 尚未分类的流式文本
+    - llm_round_classified: 本轮文本分类为 thinking 或 answer
+    - tool_started/tool_completed: 带稳定 tool_run_id 的工具事件
     - done: 智能体执行完毕
     - error: 错误信息
 
-    思维链（CoT）展示原理：
-    - 跟踪 has_seen_tool 标记是否已看到工具调用
-    - 工具调用前的 LLM 文本 → thinking 事件（思考过程）
-    - 工具调用后的 LLM 文本 → chunk 事件（最终回答）
-    - 无工具调用时直接回答 → 先发 thinking，on_chat_model_end 时发 reclassify:answer 修正
-    - 多轮工具调用中误判 → on_chat_model_end 检查 tool_calls，发 reclassify:thinking 修正
+    展示的是模型主动输出的执行说明，不是供应商隐藏的内部思维链。文本先实时发送，
+    再在每轮结束时依据 tool_calls 分类，避免全局状态导致连续工具调用时误判。
 
-    如果提供了 trace_ctx，则为每次 LLM/工具调用写入 MySQL 追踪 Span。
+    如果提供了 trace_ctx，则为每次 LLM/工具调用写入追踪 Span。
     """
     from langchain_core.messages import AIMessage, HumanMessage
 
@@ -118,9 +112,9 @@ async def stream_agent_response(
         "recursion_limit": max_tool_rounds * 2 + 5,
     }
 
-    # 思维链状态跟踪
-    has_seen_tool = False              # 是否已看到任何工具调用
-    current_call_text_phase = None    # 当前 LLM 调用的文本被发为了什么（"thinking" / "chunk"）
+    # 每次模型调用都是独立轮次；按 run_id 记录，避免多轮工具调用互相污染状态。
+    rounds: Dict[str, Dict[str, Any]] = {}
+    latest_round_id = ""
 
     try:
         async for event in agent_executor.astream_events(
@@ -132,7 +126,9 @@ async def stream_agent_response(
             run_id = event.get("run_id", "")
 
             if kind == "on_chat_model_start":
-                current_call_text_phase = None  # 重置：新一轮 LLM 调用
+                latest_round_id = str(run_id)
+                rounds[latest_round_id] = {"text": []}
+                yield sse_event("llm_round_start", round_id=latest_round_id)
                 if trace_ctx:
                     model_name = event.get("name", "LLM")
                     input_data = str(event.get("data", {}).get("input", ""))
@@ -143,43 +139,25 @@ async def stream_agent_response(
                 if not chunk:
                     continue
 
-                # 检查是否有工具调用片段（LLM 正在决定调工具）
-                tool_call_chunks = getattr(chunk, "tool_call_chunks", None) or []
-                if tool_call_chunks:
-                    has_seen_tool = True
-
-                # 处理文本内容
+                # 当前尚不知道整轮是否会调用工具，先以 pending 事件实时发送。
                 if chunk.content:
-                    if has_seen_tool:
-                        # 已有工具调用完成 → 这是最终回答
-                        if current_call_text_phase is None:
-                            current_call_text_phase = "chunk"
-                        yield sse_event("chunk", chunk.content)
-                    else:
-                        # 还没看到工具调用 → 可能是思考过程
-                        if current_call_text_phase is None:
-                            current_call_text_phase = "thinking"
-                        yield sse_event("thinking", chunk.content)
+                    round_key = str(run_id)
+                    rounds.setdefault(round_key, {"text": []})["text"].append(str(chunk.content))
+                    yield sse_event("pending_text_delta", str(chunk.content), round_id=round_key)
 
             elif kind == "on_chat_model_end":
                 output = event.get("data", {}).get("output")
                 if trace_ctx:
                     await trace_ctx.on_llm_end(run_id, str(output or ""))
 
-                # 检查输出是否包含 tool_calls
+                # 完整输出包含工具调用时，本轮文本属于执行说明；否则属于正式回答。
                 output_tool_calls = getattr(output, "tool_calls", None) if output else None
-                if output_tool_calls:
-                    # 这次 LLM 调用产生了工具调用
-                    if current_call_text_phase == "chunk":
-                        # 之前的文本被误判为最终回答，实际是思考 → 通知前端修正
-                        yield sse_event("reclassify", "thinking")
-                    has_seen_tool = True
-                elif not has_seen_tool:
-                    # 没有工具调用，且从未看到过工具 → 直接回答
-                    if current_call_text_phase == "thinking":
-                        # 之前发出的 thinking 实际是最终回答 → 通知前端修正
-                        yield sse_event("reclassify", "answer")
-                    has_seen_tool = True  # 防止后续 LLM 调用重复触发
+                round_key = str(run_id)
+                yield sse_event(
+                    "llm_round_classified",
+                    round_id=round_key,
+                    classification="thinking" if output_tool_calls else "answer",
+                )
 
             elif kind == "on_tool_start":
                 tool_name = event.get("name", "")
@@ -191,9 +169,10 @@ async def stream_agent_response(
                     tool_input = str(tool_input_raw)[:200]
                 if trace_ctx:
                     await trace_ctx.on_tool_start(run_id, tool_name, tool_input)
-                yield sse_event("tool_start", json.dumps(
-                    {"name": tool_name, "input": tool_input}, ensure_ascii=False
-                ))
+                yield sse_event(
+                    "tool_started", name=tool_name, input=tool_input,
+                    tool_run_id=str(run_id), parent_round_id=latest_round_id,
+                )
 
             elif kind == "on_tool_end":
                 tool_name = event.get("name", "")
@@ -204,7 +183,10 @@ async def stream_agent_response(
                     output_str = str(output)[:500]
                 if trace_ctx:
                     await trace_ctx.on_tool_end(run_id, output_str)
-                yield sse_event("tool_end", output_str)
+                yield sse_event(
+                    "tool_completed", output_str, name=tool_name,
+                    tool_run_id=str(run_id), parent_round_id=latest_round_id,
+                )
 
         yield sse_event("done")
 

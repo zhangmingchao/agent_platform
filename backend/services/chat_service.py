@@ -150,7 +150,9 @@ async def stream_chat(
     """运行 Agent 并生成 SSE 数据块，同时持久化助手回复。"""
     run = await prepare_chat_run(user, message, session_id, images, file_ids)
     full_response = []
-    provisional_response = []
+    reasoning_response = []
+    # Token 先按 LLM 轮次暂存，收到分类事件后再进入正式回答或执行说明。
+    pending_rounds = {}
     stream_failed = False
 
     try:
@@ -171,13 +173,16 @@ async def stream_chat(
                 try:
                     event = json.loads(payload)
                     event_type = event.get("type")
-                    if event_type == "chunk":
-                        full_response.append(event.get("content", ""))
-                    elif event_type == "thinking":
-                        provisional_response.append(event.get("content", ""))
-                    elif event_type == "reclassify" and event.get("content") == "answer":
-                        full_response[:0] = provisional_response
-                        provisional_response.clear()
+                    if event_type == "pending_text_delta":
+                        round_id = event.get("round_id", "")
+                        pending_rounds.setdefault(round_id, []).append(event.get("content", ""))
+                    elif event_type == "llm_round_classified":
+                        round_id = event.get("round_id", "")
+                        round_text = "".join(pending_rounds.pop(round_id, []))
+                        if event.get("classification") == "answer":
+                            full_response.append(round_text)
+                        else:
+                            reasoning_response.append(round_text)
                     elif event_type == "error":
                         stream_failed = True
                     elif event_type == "done":
@@ -212,10 +217,11 @@ async def stream_chat(
             return
     if assistant_text.strip():
         await execute(
-            "INSERT INTO chat_messages (session_id, role, content, structured_content, created_at) "
-            "VALUES (%s, %s, %s, %s, %s)",
+            "INSERT INTO chat_messages "
+            "(session_id, role, content, reasoning_content, structured_content, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (
-                session_id, "assistant", assistant_text,
+                session_id, "assistant", assistant_text, "".join(reasoning_response) or None,
                 json.dumps(structured_content, ensure_ascii=False) if structured_content is not None else None,
                 _now(),
             ),

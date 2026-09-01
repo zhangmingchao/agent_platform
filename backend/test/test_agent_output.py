@@ -6,6 +6,7 @@ from backend.core.agent_output import (
     render_prompt_template,
     validate_output_schema,
 )
+from backend.core.schema_dsl import json_schema_to_python_schema, python_schema_to_json_schema
 
 
 class AgentOutputTests(unittest.TestCase):
@@ -51,6 +52,49 @@ class AgentOutputTests(unittest.TestCase):
     def test_rejects_invalid_schema(self):
         with self.assertRaisesRegex(ValueError, "output_schema 无效"):
             validate_output_schema({"type": "unknown"})
+
+    def test_converts_python_schema_description_without_execution(self):
+        source = '''
+class PersonInfo(BaseModel):
+    name: str = Field(description="人物的姓名")
+    age: int = Field(ge=0, le=150, description="人物的年龄")
+    hobby: Optional[str] = Field(default=None, description="人物的爱好")
+    tags: list[str] = Field(default_factory=list)
+'''
+        schema = python_schema_to_json_schema(source)
+        self.assertEqual(schema["title"], "PersonInfo")
+        self.assertEqual(schema["required"], ["name", "age"])
+        self.assertEqual(schema["properties"]["age"]["minimum"], 0)
+        self.assertEqual(schema["properties"]["hobby"]["default"], None)
+        self.assertEqual(schema["properties"]["tags"]["type"], "array")
+
+    def test_python_schema_rejects_executable_statements(self):
+        with self.assertRaisesRegex(ValueError, "顶层只允许"):
+            python_schema_to_json_schema('open("/tmp/unsafe", "w")\nclass Result(BaseModel):\n    answer: str')
+        with self.assertRaisesRegex(ValueError, "只允许带类型标注"):
+            python_schema_to_json_schema('class Result(BaseModel):\n    def run(self):\n        return 1')
+
+    def test_supports_safe_imports_and_required_ellipsis(self):
+        schema = python_schema_to_json_schema('''
+from pydantic import BaseModel, Field
+from typing import Optional
+
+class Result(BaseModel):
+    answer: str = Field(..., description="回答")
+    note: Optional[str] = None
+''')
+        self.assertEqual(schema["required"], ["answer"])
+        self.assertEqual(schema["properties"]["answer"]["description"], "回答")
+
+    def test_rejects_root_model_recursive_reference(self):
+        with self.assertRaisesRegex(ValueError, "递归引用"):
+            python_schema_to_json_schema('class Node(BaseModel):\n    children: list[Node]')
+
+    def test_json_schema_can_be_rendered_and_parsed_again(self):
+        source = json_schema_to_python_schema(self.schema)
+        reparsed = python_schema_to_json_schema(source)
+        self.assertEqual(reparsed["properties"]["risk_level"]["enum"], ["low", "high"])
+        self.assertEqual(reparsed["required"], ["risk_level", "approved"])
 
 
 if __name__ == "__main__":
