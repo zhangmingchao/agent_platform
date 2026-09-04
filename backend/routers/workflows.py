@@ -24,7 +24,7 @@ from ..services.workflow_service import (
 )
 
 router = APIRouter(prefix="/api/workflows", tags=["Multi-Agent Workflows"])
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 def _sse_event(event_id: str, event_type: str, payload: dict) -> str:

@@ -4,9 +4,10 @@ import logging
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+from .agent_state import build_agent_state
 from .trace_handler import TraceContext
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 def sse_event(event_type: str, content: str = "", **metadata: Any) -> str:
@@ -56,6 +57,7 @@ async def stream_agent_response(
     max_tool_rounds: int = 6,
     trace_ctx: Optional[TraceContext] = None,
     images: Optional[List[str]] = None,
+    state_context: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     以 SSE 事件流式输出智能体响应。
@@ -112,13 +114,25 @@ async def stream_agent_response(
         "recursion_limit": max_tool_rounds * 2 + 5,
     }
 
+    # 将现有消息和轻量业务上下文统一放入自定义 State；未传业务字段时行为与旧实现一致。
+    state_context = state_context or {}
+    initial_state = build_agent_state(
+        messages,
+        runtime_file_ids=state_context.get("runtime_file_ids"),
+        available_skills=state_context.get("available_skills"),
+        loaded_skills=state_context.get("loaded_skills"),
+        current_input=state_context.get("current_input", user_message),
+        current_node_id=state_context.get("current_node_id"),
+        approval_status=state_context.get("approval_status", ""),
+    )
+
     # 每次模型调用都是独立轮次；按 run_id 记录，避免多轮工具调用互相污染状态。
     rounds: Dict[str, Dict[str, Any]] = {}
     latest_round_id = ""
 
     try:
         async for event in agent_executor.astream_events(
-            {"messages": messages},
+            initial_state,
             config=config,
             version="v2",
         ):

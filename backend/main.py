@@ -31,10 +31,11 @@ from .routers.workflows import router as workflows_router
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    # 输出模块名称，便于从聚合日志中快速定位具体代码来源。
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager

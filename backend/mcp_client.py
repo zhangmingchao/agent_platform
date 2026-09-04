@@ -9,7 +9,7 @@ import logging
 import httpx
 from typing import Dict, List, Optional
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 class McpClient:

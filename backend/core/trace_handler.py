@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from ..database import execute
 from ..services.mongo_trace_service import create_trace_span, finish_trace_span
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 class TraceContext:

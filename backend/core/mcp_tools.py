@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, create_model
 
 from ..mcp_client import McpClient
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 def _create_pydantic_schema(input_schema: dict) -> type:

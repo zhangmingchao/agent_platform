@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, create_model
 from ..config import SKILL_ACTION_ALLOW_PRIVATE_NETWORK
 from ..services.skill_service import read_skill_action_manifest
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 _TOOL_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 _HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}

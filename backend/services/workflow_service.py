@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
 
 from ..core.agent_factory import create_agent_instance, get_model_name
+from ..core.agent_state import build_agent_state, update_agent_checkpoint_state
 from ..core.agent_output import append_schema_instruction, parse_and_validate_structured_output, render_prompt_template
 from ..runtime.models import RuntimeContext
 from ..core.event_publisher import RedisStreamEventPublisher
@@ -453,8 +454,15 @@ async def _invoke_agent_step(
     current_llm_chunks = []
     last_final_response = ""
     try:
+        # 工作流 Agent 节点沿用原消息输入，同时将节点上下文写入自定义 State。
+        initial_state = build_agent_state(
+            [HumanMessage(content=prompt)],
+            available_skills=[item["name"] for item in skills_data],
+            current_input=input_text,
+            current_node_id=node_id,
+        )
         async for event in agent_executor.astream_events(
-            {"messages": [HumanMessage(content=prompt)]},
+            initial_state,
             config=config,
             version="v2",
         ):
@@ -520,6 +528,12 @@ async def _invoke_agent_step(
             output_text, agent.get("output_schema"),
         )
         if structured_output is not None:
+            # 同步到当前线程 Checkpoint，不改变工作流原有 MySQL 结果持久化方式。
+            await update_agent_checkpoint_state(
+                agent_executor,
+                config["configurable"]["thread_id"],
+                {"structured_result": structured_output},
+            )
             await publisher.publish(
                 "structured_result",
                 {"node_id": node_id, "data": structured_output},

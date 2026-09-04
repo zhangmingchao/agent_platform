@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import HTTPException
 
 from ..core.agent_factory import create_agent_instance, get_model_name
+from ..core.agent_state import update_agent_checkpoint_state
 from ..core.agent_output import append_schema_instruction, parse_and_validate_structured_output, render_prompt_template
 from ..core.streaming import stream_agent_response, sse_event
 from ..core.trace_handler import TraceContext
@@ -17,7 +18,7 @@ from .mcp_config_service import get_agent_mcps
 from .skill_service import get_agent_skills
 from .runtime_service import get_runtime_files
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 def _now():
@@ -137,6 +138,14 @@ async def prepare_chat_run(
         "thread_id": thread_id,
         "trace_ctx": trace_ctx,
         "output_schema": agent.get("output_schema"),
+        # 文件 ID 和可用 Skill 进入 LangGraph State，文件内容仍由 Runtime 按权限读取。
+        "state_context": {
+            "runtime_file_ids": [item["id"] for item in runtime_files],
+            "available_skills": [item["name"] for item in skills_data],
+            "loaded_skills": [],
+            "current_input": message,
+            "current_node_id": "chat",
+        },
     }
 
 
@@ -164,6 +173,7 @@ async def stream_chat(
             max_tool_rounds=run["max_tool_rounds"],
             trace_ctx=run["trace_ctx"],
             images=images,
+            state_context=run["state_context"],
         ):
             suppress_chunk = False
             if chunk.startswith("data:"):
@@ -215,6 +225,13 @@ async def stream_chat(
             yield sse_event("error", str(exc))
             yield sse_event("done")
             return
+    if structured_content is not None:
+        # 追加业务 State 仅用于 Checkpoint 恢复与调试；MySQL 持久化逻辑保持不变。
+        await update_agent_checkpoint_state(
+            run["agent_executor"],
+            run["thread_id"],
+            {"structured_result": structured_content},
+        )
     if assistant_text.strip():
         await execute(
             "INSERT INTO chat_messages "

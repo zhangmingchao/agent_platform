@@ -6,7 +6,7 @@ import redis.asyncio as aioredis
 
 from .config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD, JWT_EXPIRE_HOURS
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 _pool: Optional[aioredis.ConnectionPool] = None
 

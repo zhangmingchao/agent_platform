@@ -16,7 +16,7 @@ from .mcp_client import McpClient, mcp_tools_to_openai_format
 from .services.skill_service import read_skill_entrypoint, read_skill_file
 from .services.trace_service import create_span
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 SEP = "━" * 60
 

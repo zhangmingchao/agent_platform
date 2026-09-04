@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from ..services.skill_service import read_skill_entrypoint, read_skill_file
 from .skill_actions import build_skill_action_tools
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 class SkillInput(BaseModel):

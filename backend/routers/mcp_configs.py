@@ -13,7 +13,7 @@ from ..services.mcp_config_service import (
 )
 
 router = APIRouter(prefix="/api/mcp-configs", tags=["MCP Configurations"])
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 @router.get("")

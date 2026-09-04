@@ -12,7 +12,7 @@ from .config import JWT_ALGORITHM, JWT_EXPIRE_HOURS, JWT_SECRET
 from .database import fetch_one
 from .redis_client import set_token, get_token_user_id, delete_token
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 async def authenticate_user(username: str, password: str) -> Optional[Dict]:

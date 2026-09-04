@@ -10,7 +10,7 @@ from typing import Optional, List, Dict
 
 from .config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 _pool: Optional[aiomysql.Pool] = None
 

@@ -38,6 +38,17 @@ class _FakeAgent:
         }
 
 
+class _CapturingAgent:
+    def __init__(self):
+        self.initial_state = None
+
+    async def astream_events(self, state, **_kwargs):
+        """记录流式入口收到的 State，不产生模型事件。"""
+        self.initial_state = state
+        if False:
+            yield None
+
+
 class StreamingRoundTests(unittest.IsolatedAsyncioTestCase):
     async def test_each_llm_round_is_classified_independently(self):
         events = []
@@ -59,6 +70,28 @@ class StreamingRoundTests(unittest.IsolatedAsyncioTestCase):
     def test_sse_event_accepts_protocol_metadata(self):
         event = _decode_sse(sse_event("pending_text_delta", "文本", round_id="round-1"))
         self.assertEqual(event, {"type": "pending_text_delta", "content": "文本", "round_id": "round-1"})
+
+    async def test_stream_injects_custom_business_state(self):
+        """聊天流入口应将文件、Skill 和当前输入放入自定义 State。"""
+        agent = _CapturingAgent()
+        events = []
+        async for raw_event in stream_agent_response(
+            agent,
+            "分析 Excel",
+            "session-1",
+            state_context={
+                "runtime_file_ids": ["file-1"],
+                "available_skills": ["Excel分析"],
+                "current_node_id": "chat",
+            },
+        ):
+            events.append(_decode_sse(raw_event))
+
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(agent.initial_state["runtime_file_ids"], ["file-1"])
+        self.assertEqual(agent.initial_state["available_skills"], ["Excel分析"])
+        self.assertEqual(agent.initial_state["current_input"], "分析 Excel")
+        self.assertEqual(agent.initial_state["current_node_id"], "chat")
 
 
 if __name__ == "__main__":

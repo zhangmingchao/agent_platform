@@ -9,10 +9,11 @@ from langgraph.prebuilt import create_react_agent
 from ..config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from ..runtime.models import RuntimeContext
 from ..runtime.tools import build_runtime_tools
+from .agent_state import AgentPlatformState
 from .tools import build_skill_tools
 from .mcp_tools import build_mcp_langchain_tools
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 _checkpointer = InMemorySaver()
 
@@ -82,6 +83,8 @@ async def create_agent_instance(
             model=llm,
             tools=tools,
             prompt=system_prompt,
+            # 使用扩展 State，同时保留内置 messages/remaining_steps 行为。
+            state_schema=AgentPlatformState,
             checkpointer=_checkpointer,
         )
     except TypeError:
@@ -89,6 +92,8 @@ async def create_agent_instance(
             model=llm,
             tools=tools,
             state_modifier=system_prompt,
+            # 兼容旧版 prompt 参数名称时仍使用同一套自定义 State。
+            state_schema=AgentPlatformState,
             checkpointer=_checkpointer,
         )
 

@@ -266,3 +266,21 @@ Redis = 事件流和运行时任务通信
 
 当前设计能够支持普通聊天和多轮 Tool Calling，但不支持跨进程、跨重启的 LangGraph 节点级恢复。若后续增加审批、暂停/恢复或真正的工作流断点续跑，应升级为持久化 Checkpointer，并重新设计消息历史的唯一事实来源。
 
+## 10. 自定义 State 增量实现（2026-09-02）
+
+项目已新增 `AgentPlatformState`，继承 LangGraph 预置 `AgentState`，因此原有
+`messages` Reducer 和 `remaining_steps` 管理逻辑保持不变。
+
+当前扩展字段包括：
+
+- `runtime_file_ids`：本轮允许 Runtime 使用的逻辑文件 ID；
+- `available_skills`：当前 Agent 绑定的 Skill 名称；
+- `loaded_skills`：为 State-aware Skill Tool 预留的已加载标记；
+- `current_input`：当前聊天或工作流节点输入；
+- `current_node_id`：当前业务节点；
+- `structured_result`：模型输出校验后的结构化对象；
+- `approval_status`、`error`：为后续原生工作流状态迁移预留。
+
+聊天和工作流仍使用原有 MySQL 持久化逻辑；Checkpoint 写入失败只记录警告，
+不会阻断现有响应。当前仍为 `InMemorySaver`，因此本次改造提供的是显式业务 State
+基础，而不是跨进程持久化恢复。

@@ -12,7 +12,7 @@ from typing import List, Dict, Optional, Tuple
 from ..config import SKILLS_DIR
 from ..database import execute, fetch_all, fetch_one
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 MAX_SKILL_ARCHIVE_FILES = 200
 MAX_SKILL_ARCHIVE_SIZE = 20 * 1024 * 1024  # 解压后 20 MiB

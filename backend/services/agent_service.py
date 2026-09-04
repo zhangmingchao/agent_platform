@@ -8,7 +8,7 @@ from ..database import execute, execute_many, fetch_all, fetch_one
 from ..core.agent_output import parse_json_object, validate_output_schema
 from fastapi import HTTPException
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 def _decode_agent_json(agent: Dict) -> Dict:

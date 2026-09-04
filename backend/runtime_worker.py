@@ -20,10 +20,11 @@ from .services.runtime_service import execute_runtime_task
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    # Worker 独立运行时同样输出模块名称，保持与 API 日志格式一致。
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger("runtime-worker")
+log = logging.getLogger(__name__)
 
 
 def _now() -> str:

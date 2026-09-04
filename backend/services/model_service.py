@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 
 from ..database import execute, fetch_all, fetch_one
 
-log = logging.getLogger("agent-platform")
+log = logging.getLogger(__name__)
 
 
 def _now():
