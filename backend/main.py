@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import SERVER_PORT, LANGSMITH_API_KEY
 from .database import close_pool, init_db
+from .core.workflow_checkpointer import close_workflow_checkpointer, init_workflow_checkpointer
 from .mongo_client import close_mongo, init_mongo
 from .redis_client import close_redis
 from .routers.agents import router as agents_router
@@ -42,6 +43,7 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     await init_db()
     log.info("数据库初始化完成 (agent_platform_langchain)")
+    await init_workflow_checkpointer()
     await init_mongo()
     log.info("MongoDB Trace Span 存储初始化完成")
     log.info("Redis token 存储已启用")
@@ -50,6 +52,7 @@ async def lifespan(app: FastAPI):
     else:
         log.info("LangSmith 未配置，使用本地 trace")
     yield
+    await close_workflow_checkpointer()
     await close_redis()
     await close_mongo()
     await close_pool()

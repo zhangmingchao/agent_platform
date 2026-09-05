@@ -19,6 +19,7 @@ from ..services.workflow_service import (
     get_workflow_run,
     list_workflow_runs,
     list_workflows,
+    resume_workflow_graph,
     start_workflow_run,
     update_workflow,
 )
@@ -36,10 +37,14 @@ def _sse_event(event_id: str, event_type: str, payload: dict) -> str:
     )
 
 
-async def _execute_run_safely(run_id: int, user_id: int):
+async def _execute_run_safely(run_id: int, user_id: int, resume_decision=None):
     """在后台执行工作流并记录未被业务层处理的异常。"""
     try:
-        await execute_workflow_run(run_id, user_id)
+        if resume_decision is None:
+            await execute_workflow_run(run_id, user_id)
+        else:
+            # 审批后通过相同 thread_id 的 Command 恢复 LangGraph，而不是重新开始工作流。
+            await resume_workflow_graph(run_id, user_id, resume_decision)
     except Exception:
         log.exception("[WorkflowRun#%s] background execution failed", run_id)
 
@@ -125,8 +130,14 @@ async def api_decide_workflow_approval(
         run_id, user["user_id"], body["approved"], str(body.get("comment") or ""),
     )
     if result.get("resume"):
-        background_tasks.add_task(_execute_run_safely, run_id, user["user_id"])
-    return result
+        background_tasks.add_task(
+            _execute_run_safely,
+            run_id,
+            user["user_id"],
+            result.get("resume_decision"),
+        )
+    # 内部恢复命令不需要暴露给前端。
+    return {key: value for key, value in result.items() if key != "resume_decision"}
 
 
 @router.get("/runs/{run_id}/events")

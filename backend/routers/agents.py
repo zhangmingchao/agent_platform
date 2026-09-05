@@ -44,7 +44,8 @@ async def api_list_llm_models(user: dict = Depends(get_current_user)):
 
 @router.get("/agentsList")
 async def api_list_agents(user: dict = Depends(get_current_user)):
-    return await list_agents(user["user_id"])
+    agents = await list_agents(user["user_id"])
+    return [agent.to_summary_dict() for agent in agents]
 
 
 @router.post("/output-schema/python-to-json")
@@ -76,12 +77,13 @@ async def api_get_agent(agent_id: int, user: dict = Depends(get_current_user)):
     agent = await get_agent(agent_id, user["user_id"])
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
-    return agent
+    return agent.to_dict()
 
 
 @router.post("/agents")
 async def api_create_agent(data: AgentCreate, user: dict = Depends(get_current_user)):
-    return await create_agent(user["user_id"], data.dict())
+    agent = await create_agent(user["user_id"], data.dict())
+    return agent.to_dict()
 
 
 @router.put("/agents/{agent_id}")
@@ -89,7 +91,7 @@ async def api_update_agent(agent_id: int, data: AgentUpdate, user: dict = Depend
     agent = await update_agent(agent_id, user["user_id"], data.dict())
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
-    return agent
+    return agent.to_dict()
 
 
 @router.delete("/agents/{agent_id}")

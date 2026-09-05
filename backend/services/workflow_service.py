@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Set
 
 from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 
 from ..core.agent_factory import create_agent_instance, get_model_name
 from ..core.agent_state import build_agent_state, update_agent_checkpoint_state
@@ -14,6 +15,13 @@ from ..core.agent_output import append_schema_instruction, parse_and_validate_st
 from ..runtime.models import RuntimeContext
 from ..core.event_publisher import RedisStreamEventPublisher
 from ..core.trace_handler import TraceContext
+from ..core.workflow_checkpointer import get_workflow_checkpointer
+from ..core.workflow_state import (
+    WorkflowRuntimeState,
+    build_workflow_lifecycle_graph,
+    workflow_graph_config,
+)
+from ..models.agent import Agent
 from ..database import execute, fetch_all, fetch_one
 from .agent_service import get_agent
 from .mcp_config_service import get_agent_mcps
@@ -256,11 +264,11 @@ def _find_merge_point(config: Dict, branch_starts: List[str]) -> Optional[str]:
 
 # ── 模型 / Agent 加载辅助函数 ──────────────────────────────────────
 
-async def _load_model_config(agent: Dict, user_id: int) -> Optional[Dict]:
-    model_config_id = agent.get("model_config_id")
-    if not model_config_id:
+async def _load_model_config(agent: Agent, user_id: int) -> Optional[Dict]:
+    """加载 Agent 实体关联的模型配置。"""
+    if not agent.model_config_id:
         return None
-    return await get_model(model_config_id, user_id)
+    return await get_model(agent.model_config_id, user_id)
 
 
 async def _validate_workflow_agents(user_id: int, config: Dict) -> None:
@@ -367,7 +375,7 @@ async def delete_workflow(workflow_id: int, user_id: int) -> bool:
 
 async def _invoke_agent_step(
     *,
-    agent: Dict,
+    agent: Agent,
     user_id: int,
     workflow_id: int,
     run_id: int,
@@ -385,13 +393,12 @@ async def _invoke_agent_step(
     服务于后台任务、事件订阅以及未来的独立 Worker。
     """
     # 每次执行时根据 Agent 配置装配 Skill、MCP 工具和模型。
-    skills_data = await get_agent_skills(agent["id"])
-    mcps_data = await get_agent_mcps(agent["id"])
+    skills_data = await get_agent_skills(agent.id)
+    mcps_data = await get_agent_mcps(agent.id)
     model_config = await _load_model_config(agent, user_id)
-    runtime_agent = dict(agent)
     rendered_prompt = render_prompt_template(
-        agent.get("system_prompt", ""),
-        agent.get("prompt_variables"),
+        agent.system_prompt,
+        agent.prompt_variables,
         {
             "user_input": input_text,
             "workflow_input": input_text,
@@ -404,8 +411,8 @@ async def _invoke_agent_step(
             "current_date": datetime.now().strftime("%Y-%m-%d"),
         },
     )
-    runtime_agent["system_prompt"] = append_schema_instruction(
-        rendered_prompt, agent.get("output_schema"),
+    runtime_agent = agent.with_system_prompt(
+        append_schema_instruction(rendered_prompt, agent.output_schema),
     )
     agent_executor = await create_agent_instance(
         runtime_agent,
@@ -433,8 +440,8 @@ async def _invoke_agent_step(
     trace_ctx = TraceContext(
         session_id=None,
         user_id=user_id,
-        agent_id=agent["id"],
-        model_name=get_model_name(agent, model_config),
+        agent_id=agent.id,
+        model_name=get_model_name(runtime_agent, model_config),
         workflow_run_id=run_id,
         workflow_step_id=workflow_step_id,
     )
@@ -446,7 +453,7 @@ async def _invoke_agent_step(
 
     config = {
         "configurable": {"thread_id": f"workflow_{workflow_id}_run_{run_id}_step_{step_order}"},
-        "recursion_limit": max(8, min(int(agent.get("iteration_count") or 6) * 2 + 5, 80)),
+        "recursion_limit": max(8, min(agent.iteration_count * 2 + 5, 80)),
     }
 
     # token 既实时发布到 Stream，也在服务端拼接成节点最终输出用于持久化。
@@ -525,7 +532,7 @@ async def _invoke_agent_step(
             output_text = "工作流步骤未产生文本输出"
         await trace_ctx.finish(output_text)
         structured_output = parse_and_validate_structured_output(
-            output_text, agent.get("output_schema"),
+            output_text, agent.output_schema,
         )
         if structured_output is not None:
             # 同步到当前线程 Checkpoint，不改变工作流原有 MySQL 结果持久化方式。
@@ -570,18 +577,96 @@ async def create_workflow_run(workflow_id: int, user_id: int, input_text: str) -
     now = _now()
     return await execute(
         "INSERT INTO multi_agent_runs "
-        "(workflow_id, user_id, status, input_text, started_at, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s)",
-        (workflow_id, user_id, "running", input_text, now, now),
+        "(workflow_id, user_id, status, workflow_config_json, input_text, started_at, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (
+            workflow_id,
+            user_id,
+            "running",
+            json.dumps(workflow["config"], ensure_ascii=False),
+            input_text,
+            now,
+            now,
+        ),
     )
 
 
 async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
-    """工作流的统一执行入口。
+    """使用稳定 thread_id 启动工作流级 StateGraph。"""
+    return await resume_workflow_graph(run_id, user_id)
 
-    顺序工作流和 DAG 工作流都从这里进入，并共享同一个 Redis EventPublisher。
-    运行状态以 MySQL 为最终结果，执行过程事件写入 Redis Stream 供 SSE 订阅。
+
+async def _run_workflow_segment(state: WorkflowRuntimeState) -> Dict:
+    """执行工作流直到完成或遇到下一个审批节点。
+
+    当前 DAG 节点执行逻辑继续复用，LangGraph 负责保存运行级 State、暂停点和恢复命令。
+    MySQL 仍然保存业务步骤及最终结果，避免把 Checkpoint 当成业务数据库。
     """
+    run_id = state["run_id"]
+    user_id = state["user_id"]
+    workflow_id = state["workflow_id"]
+    config = _parse_config(state["workflow_config"])
+    publisher = RedisStreamEventPublisher(run_id)
+
+    try:
+        if _is_graph_config(config):
+            result = await _execute_dag(
+                run_id,
+                user_id,
+                workflow_id,
+                config,
+                state["initial_input"],
+                publisher,
+                state.get("resume_context"),
+            )
+        else:
+            result = await _execute_sequential(
+                run_id,
+                user_id,
+                workflow_id,
+                config,
+                state["initial_input"],
+                publisher,
+            )
+        return {
+            "status": "success",
+            "output": result["output"],
+            "current_input": result["output"],
+            "current_node_id": None,
+        }
+    except WorkflowApprovalRequired as pending:
+        # 审批节点已经把恢复游标写入 MySQL；这里将同一份数据写入持久化 State，
+        # 随后的 approval 图节点会调用 interrupt() 原生暂停。
+        paused_run = await get_workflow_run(run_id, user_id)
+        raw_context = (paused_run or {}).get("context_json") or {}
+        if isinstance(raw_context, str):
+            raw_context = json.loads(raw_context)
+        context = dict(raw_context)
+        return {
+            "status": "waiting_approval",
+            "output": pending.result.get("output", state.get("current_input", "")),
+            "current_input": context.get("current_input", state.get("current_input", "")),
+            "current_node_id": context.get("approval_node_id"),
+            "step_counter": int(context.get("step_counter") or state.get("step_counter") or 0),
+            "resume_context": context,
+            "approval_status": "pending",
+            "approval_payload": {
+                "run_id": run_id,
+                "step_id": context.get("approval_step_id"),
+                "node_id": context.get("approval_node_id"),
+                "label": context.get("approval_label", "人工确认"),
+                "prompt": context.get("approval_prompt", "请确认是否继续执行此工作流"),
+                "input": context.get("current_input", state.get("current_input", "")),
+            },
+        }
+
+
+async def resume_workflow_graph(
+    run_id: int,
+    user_id: int,
+    resume_decision: Optional[Dict] = None,
+) -> Dict:
+    """首次运行或通过 ``Command(resume=...)`` 恢复同一工作流线程。"""
     run = await get_workflow_run(run_id, user_id)
     if not run:
         raise HTTPException(status_code=404, detail="运行记录不存在")
@@ -596,34 +681,66 @@ async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
             "steps": run.get("steps", []),
         }
 
-    workflow = await get_workflow(run["workflow_id"], user_id)
-    if not workflow:
-        raise HTTPException(status_code=404, detail="工作流不存在")
-
     workflow_id = run["workflow_id"]
-    config = workflow["config"]
     publisher = RedisStreamEventPublisher(run_id)
 
     try:
-        # start 必须是本次 run 的第一条事件，订阅端据此初始化运行信息。
-        await publisher.publish(
-            "start",
-            {
+        graph = build_workflow_lifecycle_graph(
+            get_workflow_checkpointer(),
+            _run_workflow_segment,
+        )
+        graph_config = workflow_graph_config(run_id)
+        if resume_decision is None:
+            # start 只在首次执行时发布，审批恢复不会生成第二条开始事件。
+            await publisher.publish(
+                "start",
+                {"run_id": run_id, "workflow_id": workflow_id, "input": run["input_text"]},
+            )
+            workflow_config = run.get("workflow_config_json")
+            if not workflow_config:
+                # 兼容迁移前创建但尚未运行的记录；新记录始终具有配置快照。
+                workflow = await get_workflow(workflow_id, user_id)
+                if not workflow:
+                    raise HTTPException(status_code=404, detail="工作流不存在")
+                workflow_config = workflow["config"]
+            if isinstance(workflow_config, str):
+                workflow_config = json.loads(workflow_config)
+            graph_input = {
                 "run_id": run_id,
                 "workflow_id": workflow_id,
-                "input": run["input_text"],
-            },
-        )
-        if _is_graph_config(config):
-            # 图式配置走 DAG；传统 steps 配置走顺序执行，两者共用节点执行函数。
-            result = await _execute_dag(
-                run_id, user_id, workflow_id, config, run["input_text"], publisher,
-                run.get("context_json"),
-            )
+                "user_id": user_id,
+                "workflow_config": workflow_config,
+                "initial_input": run["input_text"],
+                "current_input": run["input_text"],
+                "current_node_id": run.get("current_node_id"),
+                "step_counter": 0,
+                "resume_context": {},
+                "status": "running",
+            }
         else:
-            result = await _execute_sequential(
-                run_id, user_id, workflow_id, config, run["input_text"], publisher,
+            graph_input = Command(resume=resume_decision)
+
+        result = await graph.ainvoke(graph_input, config=graph_config)
+        if result.get("__interrupt__") or result.get("status") == "waiting_approval":
+            return {
+                "run_id": run_id,
+                "workflow_id": workflow_id,
+                "status": "waiting_approval",
+                "input": result.get("current_input", run["input_text"]),
+                "output": result.get("output", result.get("current_input", "")),
+            }
+
+        if result.get("status") == "rejected":
+            output = result.get("output") or "已拒绝"
+            await execute(
+                "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, "
+                "current_node_id=%s, context_json=NULL WHERE id=%s",
+                ("rejected", output, _now(), None, run_id),
             )
+            await publisher.publish(
+                "rejected", {"run_id": run_id, "status": "rejected", "output": output},
+            )
+            return {"run_id": run_id, "status": "rejected", "output": output}
 
         await execute(
             "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, "
@@ -634,10 +751,13 @@ async def execute_workflow_run(run_id: int, user_id: int) -> Dict:
             "done",
             {"run_id": run_id, "status": "success", "output": result["output"]},
         )
-        return result
-    except WorkflowApprovalRequired as pending:
-        # 等待审批是正常暂停，不应被标记成 error，也不占用后台协程。
-        return pending.result
+        return {
+            "run_id": run_id,
+            "workflow_id": workflow_id,
+            "status": "success",
+            "input": run["input_text"],
+            "output": result["output"],
+        }
     except Exception as exc:
         # 无论失败发生在 Agent、工具还是事件发布阶段，都要先落库终止 running 状态。
         error_text = str(exc)
@@ -723,7 +843,7 @@ async def _execute_sequential(
         step_results.append({
             "step_order": idx,
             "agent_id": step["agent_id"],
-            "agent_name": agent.get("name"),
+            "agent_name": agent.name,
             "role": step["role"],
             "trace_run_id": trace_run_id,
             "output": output_text,
@@ -946,6 +1066,8 @@ async def _walk_graph(
             context = {
                 "approval_step_id": step_id,
                 "approval_node_id": node_id,
+                "approval_label": label,
+                "approval_prompt": prompt,
                 "resume_node_id": next_node_id,
                 "current_input": current_input,
                 "step_counter": order,
@@ -1118,24 +1240,18 @@ async def decide_workflow_approval(
         },
         node_id=context.get("approval_node_id"),
     )
-    if not approved:
-        await execute(
-            "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, context_json=NULL WHERE id=%s",
-            ("rejected", decision_text, _now(), run_id),
-        )
-        await publisher.publish(
-            "rejected", {"run_id": run_id, "status": "rejected", "output": decision_text},
-        )
-        return {"run_id": run_id, "status": "rejected", "output": decision_text, "resume": False}
-
-    # 保留 resume_node_id/current_input，仅移除当前审批标识，随后由后台任务续跑。
-    context.pop("approval_step_id", None)
-    context.pop("approval_node_id", None)
+    # 审批结果由 Command(resume=...) 交回同一个 LangGraph thread。这里先把运行状态
+    # 原子地切回 running，使后台恢复任务成为唯一负责写入最终状态的执行者。
     await execute(
         "UPDATE multi_agent_runs SET status=%s, current_node_id=%s, context_json=%s, error_text=NULL WHERE id=%s",
         ("running", context.get("resume_node_id"), json.dumps(context, ensure_ascii=False), run_id),
     )
-    return {"run_id": run_id, "status": "running", "resume": True}
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "resume": True,
+        "resume_decision": {"approved": approved, "comment": comment.strip()},
+    }
 
 
 async def list_workflow_runs(workflow_id: int, user_id: int) -> List[Dict]:
@@ -1153,12 +1269,20 @@ async def list_workflow_runs(workflow_id: int, user_id: int) -> List[Dict]:
 async def get_workflow_run(run_id: int, user_id: int) -> Optional[Dict]:
     run = await fetch_one(
         "SELECT id, workflow_id, status, input_text, output_text, error_text, "
-        "started_at, finished_at, created_at, current_node_id, context_json "
+        "started_at, finished_at, created_at, current_node_id, context_json, workflow_config_json "
         "FROM multi_agent_runs WHERE id=%s AND user_id=%s",
         (run_id, user_id),
     )
     if not run:
         return None
+    # aiomysql 对 JSON 字段通常返回字符串，这里统一转换后再交给恢复逻辑使用。
+    for field in ("context_json", "workflow_config_json"):
+        value = run.get(field)
+        if isinstance(value, str):
+            try:
+                run[field] = json.loads(value)
+            except json.JSONDecodeError:
+                run[field] = None
     run["steps"] = await fetch_all(
         "SELECT id, step_order, agent_id, node_id, node_type, trace_run_id, "
         "role_name, instruction, input_text, output_text, output_json, status, error_text, "

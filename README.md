@@ -61,6 +61,7 @@ agent_platform/
 | Redis Stream | 工作流事件存储与 SSE 实时订阅 |
 | PyJWT | JWT 认证 |
 | LangChain / LangGraph | Agent、工具调用与工作流执行 |
+| Redis Checkpointer | 工作流 State、人工审批暂停与跨进程恢复 |
 | HTTPX | MCP 通信 |
 
 ### 前端
@@ -75,6 +76,17 @@ agent_platform/
 | markdown-it + DOMPurify | Markdown 渲染与安全过滤 |
 
 ## 快速开始
+
+### 0. 启动 Redis Stack
+
+工作流持久化 Checkpoint 需要 RedisJSON 和 RediSearch。项目提供了启用 AOF 的 Redis
+Stack 配置：
+
+```bash
+docker compose -f docker-compose.redis.yml up -d
+```
+
+如果仍使用普通 Redis，应用会回退到内存 Checkpoint，并在日志中提示跨进程恢复不可用。
 
 ### 1. 后端启动
 

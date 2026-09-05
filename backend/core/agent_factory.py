@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import create_react_agent
 
 from ..config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
@@ -53,7 +54,7 @@ async def create_agent_instance(
     mcp_configs: List[Dict],
     model_config: Optional[Dict] = None,
     runtime_context: Optional[RuntimeContext] = None,
-):
+) -> CompiledStateGraph:
     """
     创建一个集成工具、记忆和系统提示词的 LangGraph ReAct 智能体。
 

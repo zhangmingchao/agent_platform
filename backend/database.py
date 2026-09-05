@@ -255,6 +255,7 @@ async def init_db():
                     status VARCHAR(20) DEFAULT 'running' COMMENT '运行状态 running/success/error',
                     current_node_id VARCHAR(100) DEFAULT NULL COMMENT '当前执行节点ID（DAG 模式）',
                     context_json JSON DEFAULT NULL COMMENT '运行上下文数据',
+                    workflow_config_json JSON NOT NULL COMMENT '创建运行时的工作流配置快照',
                     input_text TEXT COMMENT '工作流输入',
                     output_text TEXT COMMENT '工作流输出',
                     error_text TEXT COMMENT '错误信息',
@@ -400,6 +401,11 @@ async def init_db():
                     "multi_agent_runs",
                     "context_json",
                     "ALTER TABLE multi_agent_runs ADD COLUMN context_json JSON DEFAULT NULL AFTER current_node_id",
+                ),
+                (
+                    "multi_agent_runs",
+                    "workflow_config_json",
+                    "ALTER TABLE multi_agent_runs ADD COLUMN workflow_config_json JSON DEFAULT NULL AFTER context_json",
                 ),
                 (
                     "multi_agent_run_steps",

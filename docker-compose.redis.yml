@@ -1,0 +1,19 @@
+services:
+  redis:
+    # LangGraph 官方 Redis Checkpointer 需要 RedisJSON 与 RediSearch。
+    image: redis/redis-stack-server:latest
+    container_name: agent-platform-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    volumes:
+      - agent-platform-redis-data:/data
+
+volumes:
+  agent-platform-redis-data:

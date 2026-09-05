@@ -1,28 +1,16 @@
 """Agent 业务操作。"""
-import logging
 import json
+import logging
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
-from ..database import execute, execute_many, fetch_all, fetch_one
+from ..database import execute, execute_many, fetch_one
 from ..core.agent_output import parse_json_object, validate_output_schema
+from ..models.agent import Agent
+from ..repositories.agent_repository import find_agent_by_id, find_agents_by_user
 from fastapi import HTTPException
 
 log = logging.getLogger(__name__)
-
-
-def _decode_agent_json(agent: Dict) -> Dict:
-    """兼容 MySQL 驱动将 JSON 列返回为字符串的情况。"""
-    for field, fallback in (("prompt_variables", {}), ("output_schema", None)):
-        value = agent.get(field)
-        if isinstance(value, str):
-            try:
-                agent[field] = json.loads(value)
-            except json.JSONDecodeError:
-                agent[field] = fallback
-        elif value is None and field == "prompt_variables":
-            agent[field] = {}
-    return agent
 
 
 def _validated_agent_options(data: Dict):
@@ -35,43 +23,21 @@ def _validated_agent_options(data: Dict):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def list_agents(user_id: int) -> List[Dict]:
-    agents = await fetch_all(
-        "SELECT id, name, description, system_prompt, prompt_variables, output_schema, model, model_config_id, "
-        "temperature, iteration_count, created_at, updated_at "
-        "FROM agents WHERE user_id=%s ORDER BY updated_at DESC",
-        (user_id,)
-    )
-    return [_decode_agent_json(agent) for agent in agents]
+async def list_agents(user_id: int) -> List[Agent]:
+    """返回当前用户的 Agent 实体列表。"""
+    return await find_agents_by_user(user_id)
 
 
-async def get_agent(agent_id: int, user_id: int) -> Optional[Dict]:
-    agent = await fetch_one(
-        "SELECT * FROM agents WHERE id=%s AND user_id=%s",
-        (agent_id, user_id)
-    )
-    if not agent:
-        return None
-    _decode_agent_json(agent)
-
-    agent["skills"] = await fetch_all(
-        "SELECT s.id, s.name, s.description FROM skills s "
-        "JOIN agent_skills ao ON s.id=ao.skill_id WHERE ao.agent_id=%s",
-        (agent_id,)
-    )
-    agent["mcps"] = await fetch_all(
-        "SELECT m.id, m.name, m.base_url, m.endpoint, m.description FROM mcp_configs m "
-        "JOIN agent_mcps ao ON m.id=ao.mcp_id WHERE ao.agent_id=%s",
-        (agent_id,)
-    )
-    return agent
+async def get_agent(agent_id: int, user_id: int) -> Optional[Agent]:
+    """通过 Repository 返回 Agent 实体，不向业务层暴露数据库字典。"""
+    return await find_agent_by_id(agent_id, user_id)
 
 
 def _now():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
-async def create_agent(user_id: int, data: Dict) -> Dict:
+async def create_agent(user_id: int, data: Dict) -> Agent:
     prompt_variables, output_schema = _validated_agent_options(data)
     now = _now()
     agent_id = await execute(
@@ -108,10 +74,13 @@ async def create_agent(user_id: int, data: Dict) -> Dict:
             [(agent_id, mid) for mid in mcp_ids]
         )
 
-    return await get_agent(agent_id, user_id)
+    agent = await get_agent(agent_id, user_id)
+    if agent is None:
+        raise RuntimeError("Agent 创建成功后无法重新加载")
+    return agent
 
 
-async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Dict]:
+async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Agent]:
     existing = await fetch_one(
         "SELECT id FROM agents WHERE id=%s AND user_id=%s",
         (agent_id, user_id)

@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS multi_agent_runs (
     status VARCHAR(20) DEFAULT 'running',
     current_node_id VARCHAR(100) DEFAULT NULL,
     context_json JSON DEFAULT NULL,
+    workflow_config_json JSON NOT NULL COMMENT '创建运行时的工作流配置快照',
     input_text TEXT,
     output_text TEXT,
     error_text TEXT,

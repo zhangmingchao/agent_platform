@@ -1,4 +1,5 @@
 import os
+from urllib.parse import quote
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -38,6 +39,16 @@ REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+# 工作流 Checkpoint 使用独立 URL，便于生产环境将运行状态放到专用 Redis。
+_redis_auth = f":{quote(REDIS_PASSWORD, safe='')}@" if REDIS_PASSWORD else ""
+WORKFLOW_CHECKPOINT_REDIS_URL = os.getenv(
+    "WORKFLOW_CHECKPOINT_REDIS_URL",
+    f"redis://{_redis_auth}{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+)
+# 官方 Redis Checkpointer 的 TTL 单位为分钟，默认保留七天运行现场。
+WORKFLOW_CHECKPOINT_TTL_MINUTES = float(
+    os.getenv("WORKFLOW_CHECKPOINT_TTL_MINUTES", "10080")
+)
 WORKFLOW_EVENT_STREAM_TTL_SECONDS = int(
     os.getenv("WORKFLOW_EVENT_STREAM_TTL_SECONDS", "86400")
 )

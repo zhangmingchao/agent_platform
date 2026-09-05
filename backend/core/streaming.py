@@ -2,8 +2,9 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Sequence, Union
 
+from ..models.chat import AgentStateContext, ChatHistoryMessage
 from .agent_state import build_agent_state
 from .trace_handler import TraceContext
 
@@ -53,11 +54,11 @@ async def stream_agent_response(
     agent_executor,
     user_message: str,
     thread_id: str,
-    history_messages: Optional[List[Dict]] = None,
+    history_messages: Optional[Sequence[Union[ChatHistoryMessage, Mapping[str, Any]]]] = None,
     max_tool_rounds: int = 6,
     trace_ctx: Optional[TraceContext] = None,
     images: Optional[List[str]] = None,
-    state_context: Optional[Dict[str, Any]] = None,
+    state_context: Optional[Union[AgentStateContext, Mapping[str, Any]]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     以 SSE 事件流式输出智能体响应。
@@ -83,12 +84,18 @@ async def stream_agent_response(
     # 最新一条用户消息已在 chat.py 中先写入数据库，因此这里会一起读出来。
     messages = []
     for item in history_messages or []:
-        role = item.get("role")
-        content = item.get("content") or ""
+        if isinstance(item, ChatHistoryMessage):
+            role = item.role
+            content = item.content
+            attachments = item.attachments
+        else:
+            role = item.get("role")
+            content = item.get("content") or ""
+            attachments = item.get("attachments")
         if not content:
             continue
         if role == "user":
-            msg_content = _build_multimodal_content(content, item.get("attachments"))
+            msg_content = _build_multimodal_content(content, attachments)
             messages.append(HumanMessage(content=msg_content))
         elif role == "assistant":
             messages.append(AIMessage(content=content))
@@ -115,15 +122,29 @@ async def stream_agent_response(
     }
 
     # 将现有消息和轻量业务上下文统一放入自定义 State；未传业务字段时行为与旧实现一致。
-    state_context = state_context or {}
-    initial_state = build_agent_state(
+    if isinstance(state_context, AgentStateContext):
+        runtime_file_ids = state_context.runtime_file_ids
+        available_skills = state_context.available_skills
+        loaded_skills = state_context.loaded_skills
+        current_input = state_context.current_input
+        current_node_id = state_context.current_node_id
+        approval_status = ""
+    else:
+        state_context = state_context or {}
+        runtime_file_ids = state_context.get("runtime_file_ids")
+        available_skills = state_context.get("available_skills")
+        loaded_skills = state_context.get("loaded_skills")
+        current_input = state_context.get("current_input", user_message)
+        current_node_id = state_context.get("current_node_id")
+        approval_status = state_context.get("approval_status", "")
+    initial_state:AgentPlatformState = build_agent_state(
         messages,
-        runtime_file_ids=state_context.get("runtime_file_ids"),
-        available_skills=state_context.get("available_skills"),
-        loaded_skills=state_context.get("loaded_skills"),
-        current_input=state_context.get("current_input", user_message),
-        current_node_id=state_context.get("current_node_id"),
-        approval_status=state_context.get("approval_status", ""),
+        runtime_file_ids=runtime_file_ids,
+        available_skills=available_skills,
+        loaded_skills=loaded_skills,
+        current_input=current_input,
+        current_node_id=current_node_id,
+        approval_status=approval_status,
     )
 
     # 每次模型调用都是独立轮次；按 run_id 记录，避免多轮工具调用互相污染状态。
