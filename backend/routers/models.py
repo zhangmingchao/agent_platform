@@ -1,4 +1,6 @@
 """模型路由 — 用户级 LLM 模型管理。"""
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -26,12 +28,12 @@ class ModelUpdate(ModelCreate):
 
 
 @router.get("/modelsList")
-async def api_list_models(user: dict = Depends(get_current_user)):
+async def api_list_models(user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
     return await list_models(user["user_id"])
 
 
 @router.get("/models/{model_id}")
-async def api_get_model(model_id: int, user: dict = Depends(get_current_user)):
+async def api_get_model(model_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     model = await get_model_safe(model_id, user["user_id"])
     if not model:
         raise HTTPException(status_code=404, detail="模型不存在")
@@ -39,12 +41,12 @@ async def api_get_model(model_id: int, user: dict = Depends(get_current_user)):
 
 
 @router.post("/models")
-async def api_create_model(data: ModelCreate, user: dict = Depends(get_current_user)):
+async def api_create_model(data: ModelCreate, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     return await create_model(user["user_id"], data.dict())
 
 
 @router.put("/models/{model_id}")
-async def api_update_model(model_id: int, data: ModelUpdate, user: dict = Depends(get_current_user)):
+async def api_update_model(model_id: int, data: ModelUpdate, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     model = await update_model(model_id, user["user_id"], data.dict())
     if not model:
         raise HTTPException(status_code=404, detail="模型不存在")
@@ -52,7 +54,7 @@ async def api_update_model(model_id: int, data: ModelUpdate, user: dict = Depend
 
 
 @router.delete("/models/{model_id}")
-async def api_delete_model(model_id: int, user: dict = Depends(get_current_user)):
+async def api_delete_model(model_id: int, user: dict = Depends(get_current_user)) -> Dict[str, bool]:
     success = await delete_model(model_id, user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="模型不存在")
@@ -60,14 +62,14 @@ async def api_delete_model(model_id: int, user: dict = Depends(get_current_user)
 
 
 @router.post("/models/{model_id}/test")
-async def api_test_model(model_id: int, user: dict = Depends(get_current_user)):
+async def api_test_model(model_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """测试已保存的模型连接是否可用。"""
     result = await test_model_connection(model_id=model_id, user_id=user["user_id"])
     return result
 
 
 @router.post("/models/test")
-async def api_test_model_config(data: ModelCreate, user: dict = Depends(get_current_user)):
+async def api_test_model_config(data: ModelCreate, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """测试未保存的模型配置是否可用（编辑/创建时实时校验）。"""
     result = await test_model_connection(config=data.dict())
     return result

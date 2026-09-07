@@ -25,7 +25,7 @@ class RedisStreamEventPublisher:
     多个协程可能同时发布事件，因此使用异步锁保证 sequence 与 XADD 顺序一致。
     """
 
-    def __init__(self, run_id: int):
+    def __init__(self, run_id: int) -> None:
         self.run_id = run_id
         self._sequence = 0
         self._lock = asyncio.Lock()

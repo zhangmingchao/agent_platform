@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from typing import AsyncIterator, Union
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -40,7 +41,7 @@ log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     log.info("数据库初始化完成 (agent_platform_langchain)")
     await init_workflow_checkpointer()
@@ -82,7 +83,7 @@ if os.path.exists(frontend_dist):
     )
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_frontend(full_path: str, request: Request):
+    async def serve_frontend(full_path: str, request: Request) -> Union[JSONResponse, FileResponse]:
         if full_path.startswith("api/"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
         file_path = os.path.join(frontend_dist, full_path)

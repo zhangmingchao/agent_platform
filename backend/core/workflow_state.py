@@ -2,7 +2,9 @@
 
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 from typing_extensions import NotRequired, TypedDict
 
@@ -49,8 +51,17 @@ def workflow_graph_config(run_id: int) -> Dict[str, Any]:
     }
 
 
-def build_workflow_lifecycle_graph(checkpointer, run_segment: WorkflowSegmentRunner):
+def build_workflow_lifecycle_graph(
+    checkpointer: BaseCheckpointSaver[str],
+    run_segment: WorkflowSegmentRunner,
+) -> CompiledStateGraph:
     """构建可持久化暂停和恢复的工作流生命周期图。
+
+    参数：
+    - ``checkpointer``：LangGraph 状态检查点保存器，用于持久化工作流运行状态；
+    - ``run_segment``：工作流分段执行函数，负责从当前游标执行到结束或审批点。
+
+    返回值：已经完成节点、路由和 Checkpointer 装配的 LangGraph 可执行图。
 
     ``run_segment`` 继续复用当前成熟的 DAG/顺序执行器。执行器遇到人工审批时返回
     ``waiting_approval``，图随后进入 ``interrupt``；审批 API 使用相同 thread_id 和

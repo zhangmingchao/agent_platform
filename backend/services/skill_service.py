@@ -19,7 +19,7 @@ MAX_SKILL_ARCHIVE_SIZE = 20 * 1024 * 1024  # 解压后 20 MiB
 MAX_EDITABLE_SKILL_FILE_SIZE = 1024 * 1024  # 1 MiB
 
 
-def _now():
+def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 

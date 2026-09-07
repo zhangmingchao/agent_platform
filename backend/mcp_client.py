@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 class McpClient:
-    def __init__(self, base_url: str, endpoint: str = "/mcp"):
+    def __init__(self, base_url: str, endpoint: str = "/mcp") -> None:
         self.mcp_url = f"{base_url}{endpoint}"
         self.session_id: Optional[str] = None
         self.initialized = False
@@ -73,7 +73,7 @@ class McpClient:
                 raise Exception(f"MCP error: {data['error']}")
             return data
 
-    async def _send_notification(self, method: str, params: dict = None):
+    async def _send_notification(self, method: str, params: dict = None) -> None:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",

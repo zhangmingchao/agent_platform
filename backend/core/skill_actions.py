@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from ipaddress import ip_address
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 from urllib.parse import quote
 
@@ -171,8 +171,8 @@ def build_skill_action_tools(skills: List[Dict]) -> List[StructuredTool]:
 
             args_schema = _create_args_schema(action["parameters"])
 
-            def make_executor(current_action):
-                async def executor(**kwargs):
+            def make_executor(current_action) -> Callable:
+                async def executor(**kwargs) -> str:
                     return await _call_http_action(current_action, kwargs)
                 return executor
 

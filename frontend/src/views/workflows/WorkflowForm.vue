@@ -95,9 +95,45 @@
                 <el-select v-model="cond.type" size="small" style="margin-top:4px">
                   <el-option label="包含关键词" value="contains" />
                   <el-option label="正则匹配" value="regex" />
+                  <el-option label="结构化字段判断" value="structured" />
                   <el-option label="默认/其他" value="else" />
                 </el-select>
-                <el-input v-if="cond.type !== 'else'" v-model="cond.value" placeholder="关键词或正则表达式" size="small" style="margin-top:4px" />
+                <template v-if="cond.type === 'structured'">
+                  <el-input
+                    v-model="cond.field"
+                    placeholder="字段路径，例如 type 或 result.level"
+                    size="small"
+                    style="margin-top:4px"
+                  />
+                  <el-select v-model="cond.operator" size="small" style="margin-top:4px">
+                    <el-option label="等于" value="eq" />
+                    <el-option label="不等于" value="ne" />
+                    <el-option label="大于" value="gt" />
+                    <el-option label="大于等于" value="gte" />
+                    <el-option label="小于" value="lt" />
+                    <el-option label="小于等于" value="lte" />
+                    <el-option label="包含" value="contains" />
+                    <el-option label="字段存在" value="exists" />
+                    <el-option label="字段不存在" value="not_exists" />
+                  </el-select>
+                  <el-input
+                    v-if="!['exists', 'not_exists'].includes(cond.operator)"
+                    v-model="cond.value"
+                    placeholder="期望值，例如 1、true 或 high"
+                    size="small"
+                    style="margin-top:4px"
+                  />
+                  <div class="cond-hint" style="margin-top:4px">
+                    数字和布尔值按 JSON 类型比较；字符串 1 请填写 &quot;1&quot;。
+                  </div>
+                </template>
+                <el-input
+                  v-else-if="cond.type !== 'else'"
+                  v-model="cond.value"
+                  placeholder="关键词或正则表达式"
+                  size="small"
+                  style="margin-top:4px"
+                />
                 <el-button text type="danger" size="small" @click="removeCondition(i)" style="margin-top:4px">删除分支</el-button>
               </div>
               <el-button text type="primary" size="small" @click="addCondition">+ 添加分支</el-button>
@@ -255,7 +291,13 @@ const deleteSelectedNode = () => {
 
 const addCondition = () => {
   if (!selectedNode.value || selectedNode.value.type !== 'condition') return
-  selectedNode.value.data.conditions.push({ label: `分支 ${selectedNode.value.data.conditions.length + 1}`, type: 'contains', value: '' })
+  selectedNode.value.data.conditions.push({
+    label: `分支 ${selectedNode.value.data.conditions.length + 1}`,
+    type: 'contains',
+    value: '',
+    field: '',
+    operator: 'eq'
+  })
 }
 
 const removeCondition = (index) => {

@@ -7,7 +7,7 @@ import time
 import logging
 import inspect
 from datetime import datetime
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Callable, Dict, List, Optional
 
 from openai import OpenAI
 
@@ -40,19 +40,19 @@ def _sse_event(event_type: str, content: str = "") -> str:
     return f"data:{payload}\n\n"
 
 
-def _log_tool_list(tools: List[Dict]):
+def _log_tool_list(tools: List[Dict]) -> None:
     log.info(f"已注册工具 (共{len(tools)}个):")
     for tool in tools:
         fn = tool["function"]
         log.info(f"  [{fn['name']}]")
 
 
-def _log_round_header(round_num: int, msg_count: int):
+def _log_round_header(round_num: int, msg_count: int) -> None:
     log.info(SEP)
     log.info(f"[LLM交互] 第{round_num}轮 | 消息数={msg_count}")
 
 
-def _log_messages(messages: list):
+def _log_messages(messages: list) -> None:
     for i, msg in enumerate(messages):
         role = msg.get("role", "?")
         content = msg.get("content", "")
@@ -63,16 +63,16 @@ def _log_messages(messages: list):
         log.info(f"  消息[{i}] | role={role} | 摘要={preview}")
 
 
-def _log_tool_call(idx: int, func_name: str, func_args: dict):
+def _log_tool_call(idx: int, func_name: str, func_args: dict) -> None:
     log.info(f"  name={func_name}||请求参数: {json.dumps(func_args, ensure_ascii=False)}")
 
 
-def _log_tool_result(func_name: str, result: str, elapsed_ms: int):
+def _log_tool_result(func_name: str, result: str, elapsed_ms: int) -> None:
     log.info(f"  ToolResult | name={func_name} | 返回: {result}")
 
 
 
-def _log_final_response(text: str):
+def _log_final_response(text: str) -> None:
     log.info(f"[LLM交互] 最终响应: {text}")
 
 
@@ -189,8 +189,8 @@ async def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) ->
             openai_tools = mcp_tools_to_openai_format(mcp_tools)
             tools.extend(openai_tools)
             for mt in mcp_tools:
-                def make_executor(c, n):
-                    async def executor(**kwargs):
+                def make_executor(c, n) -> Callable:
+                    async def executor(**kwargs) -> str:
                         return await c.call_tool(n, kwargs)
                     return executor
                 executors[mt["name"]] = make_executor(client, mt["name"])

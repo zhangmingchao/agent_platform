@@ -6,7 +6,7 @@
 import aiomysql
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Any, Dict, List, Optional
 
 from .config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 _pool: Optional[aiomysql.Pool] = None
 
 
-async def _ensure_database_exists():
+async def _ensure_database_exists() -> None:
     conn = await aiomysql.connect(
         host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD
     )
@@ -50,7 +50,7 @@ async def get_conn() -> aiomysql.Connection:
     return await pool.acquire()
 
 
-async def release_conn(conn: aiomysql.Connection):
+async def release_conn(conn: aiomysql.Connection) -> None:
     pool = await get_pool()
     pool.release(conn)
 
@@ -67,7 +67,7 @@ async def close_pool() -> None:
         _pool = None
 
 
-async def init_db():
+async def init_db() -> None:
     conn = await get_conn()
     try:
         async with conn.cursor() as cur:
@@ -527,7 +527,7 @@ async def execute(sql: str, params: tuple = ()) -> int:
         await release_conn(conn)
 
 
-async def execute_many(sql: str, params_list: List[tuple]):
+async def execute_many(sql: str, params_list: List[tuple]) -> None:
     conn = await get_conn()
     try:
         async with conn.cursor() as cur:
@@ -537,7 +537,7 @@ async def execute_many(sql: str, params_list: List[tuple]):
         await release_conn(conn)
 
 
-async def fetch_val(sql: str, params: tuple = ()):
+async def fetch_val(sql: str, params: tuple = ()) -> Optional[Any]:
     conn = await get_conn()
     try:
         async with conn.cursor() as cur:

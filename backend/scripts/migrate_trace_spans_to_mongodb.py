@@ -5,13 +5,14 @@
 """
 
 import asyncio
-from datetime import timezone
+from datetime import datetime, timezone
+from typing import Optional
 
 from backend.database import close_pool, fetch_all
 from backend.mongo_client import close_mongo, get_trace_spans_collection, init_mongo, trace_expire_at
 
 
-def _as_utc(value):
+def _as_utc(value) -> Optional[datetime]:
     if value is None:
         return None
     if value.tzinfo is None:
@@ -64,7 +65,7 @@ async def migrate() -> tuple[int, int]:
     return len(rows), migrated
 
 
-async def main():
+async def main() -> None:
     try:
         total, migrated = await migrate()
         print(f"MySQL Span 数量: {total}，本次写入 MongoDB: {migrated}")

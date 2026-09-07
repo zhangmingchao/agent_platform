@@ -1,12 +1,13 @@
 """多 Agent 工作流持久化与运行时服务。"""
 import asyncio
 import json
-import re
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from ..core.agent_factory import create_agent_instance, get_model_name
@@ -21,7 +22,9 @@ from ..core.workflow_state import (
     build_workflow_lifecycle_graph,
     workflow_graph_config,
 )
+from ..core.workflow_conditions import evaluate_workflow_conditions
 from ..models.agent import Agent
+from ..models.workflow_condition import WorkflowConditionResult
 from ..database import execute, fetch_all, fetch_one
 from .agent_service import get_agent
 from .mcp_config_service import get_agent_mcps
@@ -36,12 +39,12 @@ MAX_GRAPH_STEPS = 40
 class WorkflowApprovalRequired(Exception):
     """人工确认节点暂停执行时使用的内部控制流异常。"""
 
-    def __init__(self, result: Dict):
+    def __init__(self, result: Dict) -> None:
         super().__init__("工作流等待人工确认")
         self.result = result
 
 
-def _now():
+def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -142,45 +145,21 @@ def _start_node_id(config: Dict) -> str:
     return config.get("nodes", [{}])[0].get("id")
 
 
-def _evaluate_condition_branch(node: Dict, current_input: str) -> int:
-    """根据当前输入文本，按顺序匹配条件分支，返回命中的分支索引。
+def _evaluate_condition_branch(
+    node: Dict[str, Any],
+    current_input: str,
+) -> WorkflowConditionResult:
+    """根据当前输入匹配条件分支并返回结果实体。
 
-    匹配规则：
-    1. 按条件数组顺序逐一检查，先匹配先命中（短路逻辑）
-    2. contains 类型：关键词是否在文本中出现
-    3. regex 类型：正则表达式是否匹配
-    4. else 类型在第一轮跳过，第二轮兜底
-    5. 没有任何 else 且全部未命中时，默认返回第 0 个分支
+    参数：
+    - ``node``：包含 ``data.conditions`` 的条件节点配置；
+    - ``current_input``：上一个节点输出的文本，可能是结构化 JSON。
+
+    支持关键词、正则、结构化字段和默认分支，按配置顺序短路匹配。
     """
     data = node.get("data") or {}
     conditions = data.get("conditions") or []
-    text = current_input or ""
-
-    # 第一轮：匹配非 else 的条件（contains / regex）
-    for i, cond in enumerate(conditions):
-        cond_type = cond.get("type", "else")
-        if cond_type == "else":
-            continue  # else 分支留到第二轮兜底
-        value = str(cond.get("value") or "")
-        if not value:
-            continue
-        # 包含关键词匹配
-        if cond_type == "contains" and value in text:
-            return i
-        # 正则匹配
-        if cond_type == "regex":
-            try:
-                if re.search(value, text):
-                    return i
-            except re.error:
-                continue  # 正则写错了就跳过该条件
-
-    # 第二轮：找 else 分支作为默认兜底
-    for i, cond in enumerate(conditions):
-        if cond.get("type") == "else":
-            return i
-    # 没有 else 分支时，默认走第 0 条边
-    return 0
+    return evaluate_workflow_conditions(conditions, current_input)
 
 
 def _condition_branch_target(config: Dict, node_id: str, branch_idx: int) -> Optional[str]:
@@ -664,10 +643,18 @@ async def _run_workflow_segment(state: WorkflowRuntimeState) -> Dict:
 async def resume_workflow_graph(
     run_id: int,
     user_id: int,
-    resume_decision: Optional[Dict] = None,
-) -> Dict:
-    """首次运行或通过 ``Command(resume=...)`` 恢复同一工作流线程。"""
-    run = await get_workflow_run(run_id, user_id)
+    resume_decision: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """首次运行或通过 ``Command(resume=...)`` 恢复同一工作流线程。
+
+    参数：
+    - ``run_id``：需要启动或恢复的工作流运行记录 ID；
+    - ``user_id``：当前用户 ID，用于校验运行记录归属；
+    - ``resume_decision``：人工审批恢复参数，首次执行时为 ``None``。
+
+    返回值：工作流当前状态、输入、输出等运行结果。
+    """
+    run: Optional[Dict[str, Any]] = await get_workflow_run(run_id, user_id)
     if not run:
         raise HTTPException(status_code=404, detail="运行记录不存在")
     if run["status"] != "running":
@@ -681,31 +668,31 @@ async def resume_workflow_graph(
             "steps": run.get("steps", []),
         }
 
-    workflow_id = run["workflow_id"]
-    publisher = RedisStreamEventPublisher(run_id)
+    workflow_id: int = int(run["workflow_id"])
+    publisher: RedisStreamEventPublisher = RedisStreamEventPublisher(run_id)
 
     try:
-        graph = build_workflow_lifecycle_graph(
-            get_workflow_checkpointer(),
+        checkpointer: BaseCheckpointSaver[str] = get_workflow_checkpointer()
+        graph: CompiledStateGraph = build_workflow_lifecycle_graph(
+            checkpointer,
             _run_workflow_segment,
         )
-        graph_config = workflow_graph_config(run_id)
+        graph_config: Dict[str, Any] = workflow_graph_config(run_id)
         if resume_decision is None:
             # start 只在首次执行时发布，审批恢复不会生成第二条开始事件。
             await publisher.publish(
                 "start",
                 {"run_id": run_id, "workflow_id": workflow_id, "input": run["input_text"]},
             )
-            workflow_config = run.get("workflow_config_json")
-            if not workflow_config:
-                # 兼容迁移前创建但尚未运行的记录；新记录始终具有配置快照。
-                workflow = await get_workflow(workflow_id, user_id)
-                if not workflow:
-                    raise HTTPException(status_code=404, detail="工作流不存在")
-                workflow_config = workflow["config"]
-            if isinstance(workflow_config, str):
-                workflow_config = json.loads(workflow_config)
-            graph_input = {
+            workflow_config_value: Any = run.get("workflow_config_json")
+            if workflow_config_value is None:
+                # 配置快照是运行记录的必要数据，禁止回查可能已经变化的工作流当前配置。
+                raise HTTPException(
+                    status_code=409,
+                    detail="运行记录缺少工作流配置快照，请重新创建运行记录",
+                )
+            workflow_config: Dict[str, Any] = _parse_config(workflow_config_value)
+            graph_input: WorkflowRuntimeState | Command[Any] = {
                 "run_id": run_id,
                 "workflow_id": workflow_id,
                 "user_id": user_id,
@@ -720,7 +707,10 @@ async def resume_workflow_graph(
         else:
             graph_input = Command(resume=resume_decision)
 
-        result = await graph.ainvoke(graph_input, config=graph_config)
+        result: Dict[str, Any] = await graph.ainvoke(
+            graph_input,
+            config=graph_config,
+        )
         if result.get("__interrupt__") or result.get("status") == "waiting_approval":
             return {
                 "run_id": run_id,
@@ -731,7 +721,7 @@ async def resume_workflow_graph(
             }
 
         if result.get("status") == "rejected":
-            output = result.get("output") or "已拒绝"
+            output: str = str(result.get("output") or "已拒绝")
             await execute(
                 "UPDATE multi_agent_runs SET status=%s, output_text=%s, finished_at=%s, "
                 "current_node_id=%s, context_json=NULL WHERE id=%s",
@@ -760,7 +750,7 @@ async def resume_workflow_graph(
         }
     except Exception as exc:
         # 无论失败发生在 Agent、工具还是事件发布阶段，都要先落库终止 running 状态。
-        error_text = str(exc)
+        error_text: str = str(exc)
         await execute(
             "UPDATE multi_agent_runs SET status=%s, error_text=%s, finished_at=%s WHERE id=%s",
             ("error", error_text, _now(), run_id),
@@ -1099,7 +1089,8 @@ async def _walk_graph(
         # ── 条件节点：根据当前输入文本匹配条件，选择一个分支继续执行 ──
         if node_type == "condition":
             # 计算命中哪个分支（返回分支索引）
-            branch_idx = _evaluate_condition_branch(node, current_input)
+            condition_result = _evaluate_condition_branch(node, current_input)
+            branch_idx = condition_result.branch_index
             conditions = (node.get("data") or {}).get("conditions") or []
             # 获取分支的显示名称（前端展示用）
             branch_label = ""
@@ -1115,6 +1106,7 @@ async def _walk_graph(
                     "branch_idx": branch_idx,
                     "branch_label": branch_label,
                     "target_node_id": target_id,
+                    "actual_value": condition_result.actual_value,
                 },
                 node_id=node_id,
             )

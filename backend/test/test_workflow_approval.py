@@ -1,14 +1,23 @@
 import json
 import unittest
+from typing import Any, Dict, Optional, get_type_hints
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from backend.core.workflow_state import (
+    WorkflowSegmentRunner,
     build_workflow_lifecycle_graph,
     workflow_graph_config,
     workflow_thread_id,
+)
+from backend.core.workflow_checkpointer import (
+    get_workflow_checkpointer,
+    init_workflow_checkpointer,
 )
 from backend.services import workflow_service
 
@@ -23,6 +32,28 @@ class _Publisher:
 
 
 class WorkflowApprovalTests(unittest.IsolatedAsyncioTestCase):
+    def test_lifecycle_graph_builder_has_complete_type_hints(self) -> None:
+        """生命周期图构造方法应声明 Checkpointer、分段执行器和返回图类型。"""
+        hints = get_type_hints(build_workflow_lifecycle_graph)
+        self.assertEqual(hints["checkpointer"], BaseCheckpointSaver[str])
+        self.assertIs(hints["run_segment"], WorkflowSegmentRunner)
+        self.assertIs(hints["return"], CompiledStateGraph)
+
+    def test_checkpointer_accessors_have_return_types(self) -> None:
+        """Checkpointer 初始化与获取方法应返回统一的抽象基类类型。"""
+        init_hints = get_type_hints(init_workflow_checkpointer)
+        getter_hints = get_type_hints(get_workflow_checkpointer)
+        self.assertEqual(init_hints["return"], BaseCheckpointSaver[str])
+        self.assertEqual(getter_hints["return"], BaseCheckpointSaver[str])
+
+    def test_resume_workflow_graph_has_complete_type_hints(self) -> None:
+        """工作流恢复入口应完整声明参数与运行结果类型。"""
+        hints = get_type_hints(workflow_service.resume_workflow_graph)
+        self.assertIs(hints["run_id"], int)
+        self.assertIs(hints["user_id"], int)
+        self.assertEqual(hints["resume_decision"], Optional[Dict[str, Any]])
+        self.assertEqual(hints["return"], Dict[str, Any])
+
     async def test_approval_node_persists_resume_context_and_pauses(self):
         config = {
             "nodes": [
@@ -103,6 +134,36 @@ class WorkflowApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "running")
         self.assertEqual(result["resume_decision"]["approved"], False)
         self.assertTrue(any(call.args[1][0] == "running" for call in execute_mock.await_args_list))
+
+    async def test_run_without_config_snapshot_is_rejected(self) -> None:
+        """运行记录缺少配置快照时不得回查工作流当前配置。"""
+        run = {
+            "id": 7,
+            "workflow_id": 3,
+            "status": "running",
+            "input_text": "执行任务",
+            "workflow_config_json": None,
+        }
+        execute_mock = AsyncMock(return_value=1)
+        with (
+            patch.object(workflow_service, "get_workflow_run", AsyncMock(return_value=run)),
+            patch.object(workflow_service, "get_workflow", AsyncMock()) as get_workflow_mock,
+            patch.object(workflow_service, "get_workflow_checkpointer", return_value=InMemorySaver()),
+            patch.object(workflow_service.RedisStreamEventPublisher, "publish", AsyncMock(return_value="1-1")),
+            patch.object(workflow_service, "execute", execute_mock),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await workflow_service.resume_workflow_graph(7, 2)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(
+            raised.exception.detail,
+            "运行记录缺少工作流配置快照，请重新创建运行记录",
+        )
+        get_workflow_mock.assert_not_awaited()
+        self.assertTrue(
+            any(call.args[1][0] == "error" for call in execute_mock.await_args_list)
+        )
 
     async def test_workflow_graph_uses_stable_thread_and_resumes_interrupt(self):
         """同一 run 应从持久化 interrupt 恢复，而不是重新提交初始 State。"""

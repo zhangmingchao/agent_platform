@@ -1,3 +1,5 @@
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from ..auth import get_current_user
@@ -18,19 +20,19 @@ router = APIRouter(prefix="/api/skills", tags=["Skills"])
 
 
 @router.get("")
-async def api_list_skills(user: dict = Depends(get_current_user)):
+async def api_list_skills(user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
     return await list_skills(user["user_id"])
 
 
 @router.get("/{skill_id}/files")
-async def api_list_skill_files(skill_id: int, user: dict = Depends(get_current_user)):
+async def api_list_skill_files(skill_id: int, user: dict = Depends(get_current_user)) -> List[str]:
     if not await get_skill(skill_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Skill 不存在")
     return list_skill_files(skill_id)
 
 
 @router.get("/{skill_id}/files/{file_path:path}")
-async def api_read_skill_file(skill_id: int, file_path: str, user: dict = Depends(get_current_user)):
+async def api_read_skill_file(skill_id: int, file_path: str, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     if not await get_skill(skill_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Skill 不存在")
     try:
@@ -45,7 +47,7 @@ async def api_update_skill_file(
     file_path: str,
     request: Request,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, bool]:
     if not await get_skill(skill_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Skill 不存在")
     body = await request.json()
@@ -60,7 +62,7 @@ async def api_update_skill_file(
 
 
 @router.get("/{skill_id}")
-async def api_get_skill(skill_id: int, user: dict = Depends(get_current_user)):
+async def api_get_skill(skill_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     skill = await get_skill(skill_id, user["user_id"])
     if not skill:
         raise HTTPException(status_code=404, detail="Skill 不存在")
@@ -72,7 +74,7 @@ async def api_update_skill(
     skill_id: int,
     request: Request,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     body = await request.json()
     name = body.get("name", "")
     description = body.get("description", "")
@@ -97,7 +99,7 @@ async def api_upload_skill(
     name: str = Form(...),
     description: str = Form(...),
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     content = await file.read()
     filename = file.filename or ""
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -128,7 +130,7 @@ async def api_upload_skill(
 async def api_create_skill(
     request: Request,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     body = await request.json()
     return await create_skill(
         user["user_id"],
@@ -139,7 +141,7 @@ async def api_create_skill(
 
 
 @router.delete("/{skill_id}")
-async def api_delete_skill(skill_id: int, user: dict = Depends(get_current_user)):
+async def api_delete_skill(skill_id: int, user: dict = Depends(get_current_user)) -> Dict[str, bool]:
     success = await delete_skill(skill_id, user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="Skill 不存在")

@@ -99,7 +99,7 @@ def _rewrite_virtual_input_paths(code: str, input_paths_by_name: Dict[str, str])
     class VirtualPathTransformer(ast.NodeTransformer):
         """仅替换 AST 中已知虚拟文件路径字符串。"""
 
-        def visit_Constant(self, node: ast.Constant):
+        def visit_Constant(self, node: ast.Constant) -> ast.AST:
             """将匹配的字符串常量替换为 Runtime 输入文件路径。"""
             if isinstance(node.value, str) and node.value in aliases:
                 return ast.copy_location(ast.Constant(value=aliases[node.value]), node)

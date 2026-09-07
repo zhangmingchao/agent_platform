@@ -1,4 +1,6 @@
 """聊天路由 — 提供 LangGraph 流式聊天的 HTTP 接口。"""
+from typing import AsyncGenerator, List
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -19,14 +21,14 @@ MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2MB
 MAX_RUNTIME_FILES = 10
 
 
-def _validate_chat_request(message, session_id):
+def _validate_chat_request(message, session_id) -> None:
     if not isinstance(message, str) or not message.strip():
         raise HTTPException(status_code=400, detail="消息不能为空")
     if not isinstance(session_id, int):
         raise HTTPException(status_code=400, detail="需要有效的 session_id")
 
 
-def _validate_images(images):
+def _validate_images(images) -> List[str]:
     """校验图片 base64 列表，返回清洗后的列表。"""
     if not images or not isinstance(images, list):
         return []
@@ -42,7 +44,7 @@ def _validate_images(images):
     return cleaned
 
 
-def _validate_file_ids(file_ids):
+def _validate_file_ids(file_ids) -> List[str]:
     """校验 Runtime 文件 ID 列表，并去除重复项。"""
     if file_ids is None:
         return []
@@ -54,7 +56,7 @@ def _validate_file_ids(file_ids):
     return cleaned
 
 
-async def _guarded_stream(generator, session_id):
+async def _guarded_stream(generator, session_id) -> AsyncGenerator[str, None]:
     """包装流式生成器，确保无论正常结束、客户端断开还是异常，都释放会话锁。"""
     try:
         async for chunk in generator:
@@ -64,7 +66,7 @@ async def _guarded_stream(generator, session_id):
 
 
 @router.post("/stream")
-async def api_chat_stream_post(request: Request, user: dict = Depends(get_current_user)):
+async def api_chat_stream_post(request: Request, user: dict = Depends(get_current_user)) -> StreamingResponse:
     body = await request.json()
     message = body.get("message", "")
     session_id = body.get("session_id")
@@ -94,7 +96,7 @@ async def api_chat_stream(
     message: str = Query(...),
     session_id: int = Query(...),
     user: dict = Depends(get_current_user),
-):
+) -> StreamingResponse:
     _validate_chat_request(message, session_id)
 
     acquired = await acquire_stream_lock(session_id)

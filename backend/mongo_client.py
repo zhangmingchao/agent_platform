@@ -1,7 +1,7 @@
 """MongoDB 连接与 Trace Span 索引管理。"""
 
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from typing import Any, Iterable
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING
@@ -29,7 +29,7 @@ def get_mongo_client() -> AsyncIOMotorClient:
     return _client
 
 
-def get_trace_spans_collection():
+def get_trace_spans_collection() -> Any:
     return get_mongo_client()[MONGODB_DATABASE][MONGODB_TRACE_SPANS_COLLECTION]
 
 

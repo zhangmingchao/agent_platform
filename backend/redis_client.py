@@ -25,7 +25,7 @@ async def get_redis() -> aioredis.Redis:
     return aioredis.Redis(connection_pool=_pool)
 
 
-async def close_redis():
+async def close_redis() -> None:
     """关闭时释放 Redis 连接池。"""
     global _pool
     if _pool is not None:
@@ -33,7 +33,7 @@ async def close_redis():
         _pool = None
 
 
-async def set_token(token: str, user_id: int):
+async def set_token(token: str, user_id: int) -> None:
     """将 token → user_id 存入 Redis，TTL 与 JWT 过期时间一致。"""
     r = await get_redis()
     await r.setex(f"token:{token}", JWT_EXPIRE_HOURS * 3600, str(user_id))
@@ -46,7 +46,7 @@ async def get_token_user_id(token: str) -> Optional[int]:
     return int(val) if val else None
 
 
-async def delete_token(token: str):
+async def delete_token(token: str) -> None:
     """从 Redis 删除 token（登出）。"""
     r = await get_redis()
     await r.delete(f"token:{token}")
@@ -59,7 +59,7 @@ async def acquire_stream_lock(session_id: int, ttl: int = 300) -> bool:
     return result is not None
 
 
-async def release_stream_lock(session_id: int):
+async def release_stream_lock(session_id: int) -> None:
     """释放会话的流式锁。"""
     r = await get_redis()
     await r.delete(f"chat:stream:lock:{session_id}")

@@ -1,6 +1,7 @@
 """Python Runtime 文件上传、下载与执行查询接口。"""
 
 from pathlib import Path
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -29,7 +30,7 @@ async def upload_runtime_file(
     file: UploadFile = File(...),
     session_id: int | None = Form(default=None),
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     """上传一个 Runtime 输入文件，并返回供模型使用的逻辑文件 ID。"""
     await _validate_session(session_id, user["user_id"])
     try:
@@ -44,7 +45,7 @@ async def upload_runtime_file(
 
 
 @router.get("/files/{file_id}")
-async def download_runtime_file(file_id: str, user: dict = Depends(get_current_user)):
+async def download_runtime_file(file_id: str, user: dict = Depends(get_current_user)) -> FileResponse:
     """下载当前用户上传的文件或 Runtime 产出的 Artifact。"""
     file_info = await get_runtime_file(file_id, user["user_id"])
     if not file_info:

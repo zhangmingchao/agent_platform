@@ -21,7 +21,7 @@ class TraceContext:
         model_name: str = "",
         workflow_run_id: Optional[int] = None,
         workflow_step_id: Optional[int] = None,
-    ):
+    ) -> None:
         self.session_id = session_id
         self.user_id = user_id
         self.agent_id = agent_id
@@ -32,7 +32,7 @@ class TraceContext:
         self.spans: Dict[str, dict] = {}
         self.start_time = time.time()
 
-    async def start(self, input_text: str):
+    async def start(self, input_text: str) -> Optional[int]:
         """在数据库中创建 trace_run 记录。"""
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         self.run_id = await execute(
@@ -56,7 +56,7 @@ class TraceContext:
         log.info("[Trace] run #%s started (session=%s)", self.run_id, self.session_id)
         return self.run_id
 
-    async def on_llm_start(self, run_id: str, name: str, input_data: str):
+    async def on_llm_start(self, run_id: str, name: str, input_data: str) -> None:
         """在 MongoDB 中创建 LLM Span。"""
         span_id = await create_trace_span(
             trace_run_id=self.run_id,
@@ -72,7 +72,7 @@ class TraceContext:
         )
         self.spans[run_id] = {"span_id": span_id, "start": time.time()}
 
-    async def on_llm_end(self, run_id: str, output: str, tokens: int = 0):
+    async def on_llm_end(self, run_id: str, output: str, tokens: int = 0) -> None:
         """更新 Span 的输出和耗时。"""
         span = self.spans.pop(run_id, None)
         if not span:
@@ -83,7 +83,7 @@ class TraceContext:
             duration_ms=duration, status="success",
         )
 
-    async def on_tool_start(self, run_id: str, name: str, input_data: str):
+    async def on_tool_start(self, run_id: str, name: str, input_data: str) -> None:
         """在 MongoDB 中创建 Tool Span。"""
         span_id = await create_trace_span(
             trace_run_id=self.run_id,
@@ -99,7 +99,7 @@ class TraceContext:
         )
         self.spans[run_id] = {"span_id": span_id, "start": time.time()}
 
-    async def on_tool_end(self, run_id: str, output: str):
+    async def on_tool_end(self, run_id: str, output: str) -> None:
         """更新 Span 的输出和耗时。"""
         span = self.spans.pop(run_id, None)
         if not span:
@@ -110,7 +110,7 @@ class TraceContext:
             duration_ms=duration, status="success",
         )
 
-    async def finish(self, output_text: str, total_tokens: int = 0):
+    async def finish(self, output_text: str, total_tokens: int = 0) -> None:
         """标记 trace_run 为已完成。"""
         duration = int((time.time() - self.start_time) * 1000)
         await execute(
@@ -119,7 +119,7 @@ class TraceContext:
         )
         log.info("[Trace] run #%s finished (%dms)", self.run_id, duration)
 
-    async def error(self, error_msg: str):
+    async def error(self, error_msg: str) -> None:
         """标记 trace_run 为失败。"""
         duration = int((time.time() - self.start_time) * 1000)
         await execute(

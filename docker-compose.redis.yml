@@ -6,12 +6,9 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-      - --appendfsync
-      - everysec
+    # 使用 REDIS_ARGS 传递持久化参数，保留 Redis Stack 默认的模块加载流程。
+    environment:
+      REDIS_ARGS: "--appendonly yes --appendfsync everysec"
     volumes:
       - agent-platform-redis-data:/data
 

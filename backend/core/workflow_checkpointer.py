@@ -1,7 +1,10 @@
 """工作流专用 Redis Checkpointer 生命周期管理。"""
 
 import logging
+from contextlib import AbstractAsyncContextManager
+from typing import Optional
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -9,11 +12,11 @@ from ..config import WORKFLOW_CHECKPOINT_REDIS_URL, WORKFLOW_CHECKPOINT_TTL_MINU
 
 log = logging.getLogger(__name__)
 
-_checkpointer_context = None
-_workflow_checkpointer = None
+_checkpointer_context: Optional[AbstractAsyncContextManager[AsyncRedisSaver]] = None
+_workflow_checkpointer: Optional[BaseCheckpointSaver[str]] = None
 
 
-async def init_workflow_checkpointer():
+async def init_workflow_checkpointer() -> BaseCheckpointSaver[str]:
     """初始化工作流 Checkpointer，Redis Stack 不可用时安全回退到内存。
 
     回退只用于保证旧环境仍能运行；日志会明确提示此时不具备跨进程恢复能力。
@@ -45,7 +48,7 @@ async def init_workflow_checkpointer():
     return _workflow_checkpointer
 
 
-def get_workflow_checkpointer():
+def get_workflow_checkpointer() -> BaseCheckpointSaver[str]:
     """返回已经初始化的工作流 Checkpointer。"""
     if _workflow_checkpointer is None:
         raise RuntimeError("工作流 Redis Checkpointer 尚未初始化")

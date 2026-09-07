@@ -8,7 +8,7 @@ from ..database import execute, fetch_all, fetch_one
 log = logging.getLogger(__name__)
 
 
-def _now():
+def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 

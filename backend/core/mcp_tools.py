@@ -1,7 +1,7 @@
 """将 MCP 工具转换为 LangChain StructuredTool 实例。"""
 import json
 import logging
-from typing import Dict, List
+from typing import Any, Callable, Dict, List
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
@@ -52,8 +52,8 @@ async def mcp_tools_to_langchain(client: McpClient) -> List[StructuredTool]:
         input_schema = tool.get("inputSchema", {"type": "object", "properties": {}})
         args_schema = _create_pydantic_schema(input_schema)
 
-        def make_executor(c, n):
-            async def executor(**kwargs):
+        def make_executor(c, n) -> Callable:
+            async def executor(**kwargs) -> Any:
                 return await c.call_tool(n, kwargs)
             return executor
 

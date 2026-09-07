@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Any, AsyncGenerator, Dict, List
 
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -37,7 +38,7 @@ def _sse_event(event_id: str, event_type: str, payload: dict) -> str:
     )
 
 
-async def _execute_run_safely(run_id: int, user_id: int, resume_decision=None):
+async def _execute_run_safely(run_id: int, user_id: int, resume_decision=None) -> None:
     """在后台执行工作流并记录未被业务层处理的异常。"""
     try:
         if resume_decision is None:
@@ -50,18 +51,18 @@ async def _execute_run_safely(run_id: int, user_id: int, resume_decision=None):
 
 
 @router.get("")
-async def api_list_workflows(user: dict = Depends(get_current_user)):
+async def api_list_workflows(user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
     return await list_workflows(user["user_id"])
 
 
 @router.post("")
-async def api_create_workflow(request: Request, user: dict = Depends(get_current_user)):
+async def api_create_workflow(request: Request, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     body = await request.json()
     return await create_workflow(user["user_id"], body)
 
 
 @router.get("/{workflow_id}")
-async def api_get_workflow(workflow_id: int, user: dict = Depends(get_current_user)):
+async def api_get_workflow(workflow_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     workflow = await get_workflow(workflow_id, user["user_id"])
     if not workflow:
         raise HTTPException(status_code=404, detail="工作流不存在")
@@ -69,7 +70,7 @@ async def api_get_workflow(workflow_id: int, user: dict = Depends(get_current_us
 
 
 @router.put("/{workflow_id}")
-async def api_update_workflow(workflow_id: int, request: Request, user: dict = Depends(get_current_user)):
+async def api_update_workflow(workflow_id: int, request: Request, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     body = await request.json()
     workflow = await update_workflow(workflow_id, user["user_id"], body)
     if not workflow:
@@ -78,7 +79,7 @@ async def api_update_workflow(workflow_id: int, request: Request, user: dict = D
 
 
 @router.delete("/{workflow_id}")
-async def api_delete_workflow(workflow_id: int, user: dict = Depends(get_current_user)):
+async def api_delete_workflow(workflow_id: int, user: dict = Depends(get_current_user)) -> Dict[str, bool]:
     success = await delete_workflow(workflow_id, user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="工作流不存在")
@@ -91,7 +92,7 @@ async def api_run_workflow(
     request: Request,
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     """创建 run 后立即返回，实际工作流在响应结束后的后台任务中执行。"""
     body = await request.json()
     input_text = body.get("input", "")
@@ -104,12 +105,12 @@ async def api_run_workflow(
 
 
 @router.get("/{workflow_id}/runs")
-async def api_list_workflow_runs(workflow_id: int, user: dict = Depends(get_current_user)):
+async def api_list_workflow_runs(workflow_id: int, user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
     return await list_workflow_runs(workflow_id, user["user_id"])
 
 
 @router.get("/runs/{run_id}")
-async def api_get_workflow_run(run_id: int, user: dict = Depends(get_current_user)):
+async def api_get_workflow_run(run_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     run = await get_workflow_run(run_id, user["user_id"])
     if not run:
         raise HTTPException(status_code=404, detail="运行记录不存在")
@@ -122,7 +123,7 @@ async def api_decide_workflow_approval(
     request: Request,
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     body = await request.json()
     if not isinstance(body.get("approved"), bool):
         raise HTTPException(status_code=400, detail="approved 必须是布尔值")
@@ -143,7 +144,7 @@ async def api_decide_workflow_approval(
 @router.get("/runs/{run_id}/events")
 async def api_stream_workflow_run_events(
     run_id: int, request: Request, user: dict = Depends(get_current_user),
-):
+) -> StreamingResponse:
     """从 Redis Stream 读取指定 run 的事件并转换成 SSE 数据流。
 
     首次订阅从 0-0 读取；审批恢复时可通过 after 参数从指定事件之后继续读取。
@@ -151,7 +152,7 @@ async def api_stream_workflow_run_events(
     if not await get_workflow_run(run_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="运行记录不存在")
 
-    async def generate():
+    async def generate() -> AsyncGenerator[str, None]:
         # after 用于审批恢复，避免重放旧的 approval_required 后立即关闭连接。
         cursor = request.query_params.get("after") or "0-0"
         redis = await get_redis()

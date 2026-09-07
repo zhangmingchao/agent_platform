@@ -38,12 +38,12 @@ class JsonSchemaRequest(BaseModel):
 
 
 @router.get("/ll_models")
-async def api_list_llm_models(user: dict = Depends(get_current_user)):
+async def api_list_llm_models(user: dict = Depends(get_current_user)) -> list:
     return LLM_MODEL_OPTIONS
 
 
 @router.get("/agentsList")
-async def api_list_agents(user: dict = Depends(get_current_user)):
+async def api_list_agents(user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
     agents = await list_agents(user["user_id"])
     return [agent.to_summary_dict() for agent in agents]
 
@@ -52,7 +52,7 @@ async def api_list_agents(user: dict = Depends(get_current_user)):
 async def api_python_schema_to_json(
     data: PythonSchemaRequest,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     """安全解析 Python 风格描述；只读 AST，绝不执行用户提交的代码。"""
     try:
         return {"schema": python_schema_to_json_schema(data.source)}
@@ -64,7 +64,7 @@ async def api_python_schema_to_json(
 async def api_json_schema_to_python(
     data: JsonSchemaRequest,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     """将数据库中的标准 JSON Schema 格式化为可编辑的 Python 风格描述。"""
     try:
         return {"source": json_schema_to_python_schema(data.schema_data)}
@@ -73,7 +73,7 @@ async def api_json_schema_to_python(
 
 
 @router.get("/agents/{agent_id}")
-async def api_get_agent(agent_id: int, user: dict = Depends(get_current_user)):
+async def api_get_agent(agent_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     agent = await get_agent(agent_id, user["user_id"])
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
@@ -81,13 +81,13 @@ async def api_get_agent(agent_id: int, user: dict = Depends(get_current_user)):
 
 
 @router.post("/agents")
-async def api_create_agent(data: AgentCreate, user: dict = Depends(get_current_user)):
+async def api_create_agent(data: AgentCreate, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     agent = await create_agent(user["user_id"], data.dict())
     return agent.to_dict()
 
 
 @router.put("/agents/{agent_id}")
-async def api_update_agent(agent_id: int, data: AgentUpdate, user: dict = Depends(get_current_user)):
+async def api_update_agent(agent_id: int, data: AgentUpdate, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     agent = await update_agent(agent_id, user["user_id"], data.dict())
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
@@ -95,7 +95,7 @@ async def api_update_agent(agent_id: int, data: AgentUpdate, user: dict = Depend
 
 
 @router.delete("/agents/{agent_id}")
-async def api_delete_agent(agent_id: int, user: dict = Depends(get_current_user)):
+async def api_delete_agent(agent_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     success = await delete_agent(agent_id, user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="Agent 不存在")

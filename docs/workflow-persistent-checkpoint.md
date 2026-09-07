@@ -77,6 +77,10 @@ Stack 配置：
 docker compose -f docker-compose.redis.yml up -d
 ```
 
+Compose 使用 `REDIS_ARGS` 配置 AOF，不要通过 `command: redis-server` 覆盖镜像的默认
+启动流程，否则可能导致 RediSearch 和 RedisJSON 模块未加载，出现 `unknown command
+'FT.INFO'`。
+
 该配置启用 AOF，并把数据保存在 Docker Volume。默认 Checkpoint 保留七天，可以通过以下
 环境变量调整：
 
@@ -96,6 +100,10 @@ State 中只保存恢复所需的轻量数据，不保存：
 - 数据库连接或 Redis 客户端；
 - Agent 工具对象；
 - 上传文件内容和宿主机绝对路径。
+
+工作流配置快照属于运行记录的必要数据。创建运行记录时必须写入
+`workflow_config_json`；首次执行发现快照缺失时返回 `409`，不会回查工作流当前配置。
+这可以避免工作流在运行记录创建后被编辑，导致恢复执行使用了不同配置。
 
 ## 当前兼容策略
 

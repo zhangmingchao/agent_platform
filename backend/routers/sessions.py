@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -8,7 +9,7 @@ from ..database import execute, fetch_all, fetch_one
 router = APIRouter(prefix="/api/sessions", tags=["Chat Sessions"])
 
 
-def _now():
+def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -16,7 +17,7 @@ def _now():
 async def api_list_sessions(
     user: dict = Depends(get_current_user),
     agent_id: int = Query(None),
-):
+) -> List[Dict[str, Any]]:
     if agent_id is not None:
         return await fetch_all(
             "SELECT id, agent_id, title, created_at, updated_at FROM chat_sessions "
@@ -31,7 +32,7 @@ async def api_list_sessions(
 
 
 @router.post("")
-async def api_create_session(request: Request, user: dict = Depends(get_current_user)):
+async def api_create_session(request: Request, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     body = await request.json()
     agent_id = body.get("agent_id")
     if not agent_id:
@@ -55,7 +56,7 @@ async def api_rename_session(
     session_id: int,
     request: Request,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, bool]:
     body = await request.json()
     title = body.get("title", "新对话")
     await execute(
@@ -66,7 +67,7 @@ async def api_rename_session(
 
 
 @router.delete("/{session_id}")
-async def api_delete_session(session_id: int, user: dict = Depends(get_current_user)):
+async def api_delete_session(session_id: int, user: dict = Depends(get_current_user)) -> Dict[str, bool]:
     session = await fetch_one(
         "SELECT id FROM chat_sessions WHERE id=%s AND user_id=%s",
         (session_id, user["user_id"]),
@@ -81,7 +82,7 @@ async def api_delete_session(session_id: int, user: dict = Depends(get_current_u
 
 
 @router.get("/{session_id}/messages")
-async def api_get_messages(session_id: int, user: dict = Depends(get_current_user)):
+async def api_get_messages(session_id: int, user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
     session = await fetch_one(
         "SELECT id, agent_id FROM chat_sessions WHERE id=%s AND user_id=%s",
         (session_id, user["user_id"]),

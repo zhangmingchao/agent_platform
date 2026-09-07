@@ -2,7 +2,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..database import execute, execute_many, fetch_one
 from ..core.agent_output import parse_json_object, validate_output_schema
@@ -13,7 +13,7 @@ from fastapi import HTTPException
 log = logging.getLogger(__name__)
 
 
-def _validated_agent_options(data: Dict):
+def _validated_agent_options(data: Dict) -> Tuple[Dict, Any]:
     try:
         return (
             parse_json_object(data.get("prompt_variables"), "prompt_variables") or {},
@@ -33,7 +33,7 @@ async def get_agent(agent_id: int, user_id: int) -> Optional[Agent]:
     return await find_agent_by_id(agent_id, user_id)
 
 
-def _now():
+def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 

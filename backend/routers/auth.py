@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,7 +10,7 @@ from ..database import execute, fetch_one
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 
-def _now():
+def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -30,7 +30,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.post("/login")
-async def api_login(req: LoginRequest):
+async def api_login(req: LoginRequest) -> Dict[str, Any]:
     """登录 — 创建 JWT 并将令牌存储到 Redis。"""
     user = await fetch_one(
         "SELECT id, username FROM users WHERE username=%s AND password=%s",
@@ -44,7 +44,7 @@ async def api_login(req: LoginRequest):
 
 
 @router.post("/register")
-async def api_register(req: RegisterRequest):
+async def api_register(req: RegisterRequest) -> Dict[str, Any]:
     """注册 — 无需身份验证。"""
     existing = await fetch_one("SELECT id FROM users WHERE username=%s", (req.username,))
     if existing:
@@ -57,7 +57,7 @@ async def api_register(req: RegisterRequest):
 
 
 @router.get("/me")
-async def api_me(user: dict = Depends(get_current_user)):
+async def api_me(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """获取当前用户信息 — 需要身份验证。"""
     return user
 
@@ -66,7 +66,7 @@ async def api_me(user: dict = Depends(get_current_user)):
 async def api_change_password(
     data: ChangePasswordRequest,
     user: dict = Depends(get_current_user),
-):
+) -> Dict[str, Any]:
     """修改密码 — 需要身份验证。"""
     if data.new_password == data.current_password:
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
@@ -90,7 +90,7 @@ async def api_change_password(
 
 
 @router.post("/logout")
-async def api_logout(request: Request):
+async def api_logout(request: Request) -> Dict[str, Any]:
     """退出登录 — 从 Redis 删除令牌。无需身份验证（可选验证）。"""
     deleted = await logout_token(request)
     if deleted:

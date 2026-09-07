@@ -1,4 +1,6 @@
 """链路追踪路由：MySQL 查询 Run 汇总，MongoDB 查询 Span 明细。"""
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import get_current_user
@@ -10,7 +12,7 @@ router = APIRouter(prefix="/api/traces", tags=["Traces"])
 
 
 @router.get("")
-async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 200):
+async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 200) -> List[Dict[str, Any]]:
     traces = await fetch_all(
         "SELECT t.id, t.status, t.input_text, t.output_text, t.model, "
         "t.workflow_run_id, t.workflow_step_id, wr.workflow_id, ws.step_order, ws.role_name, "
@@ -34,7 +36,7 @@ async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 2
 
 
 @router.get("/{trace_id}")
-async def api_get_trace(trace_id: int, user: dict = Depends(get_current_user)):
+async def api_get_trace(trace_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     trace = await fetch_one(
         "SELECT t.id, t.status, t.input_text, t.output_text, t.error_text, t.model, "
         "t.workflow_run_id, t.workflow_step_id, wr.workflow_id, ws.step_order, ws.role_name, "
