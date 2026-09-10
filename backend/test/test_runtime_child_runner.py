@@ -42,7 +42,7 @@ class RuntimeChildRunnerTests(unittest.TestCase):
         )
         return process, output_dir, temporary
 
-    def test_writes_result_and_artifact(self):
+    def test_writes_result_and_artifact(self) -> None:
         """允许向 output 目录写文件，并自动保存 result。"""
         process, output_dir, temporary = self._run_code(
             "from pathlib import Path\n"
@@ -56,7 +56,7 @@ class RuntimeChildRunnerTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
-    def test_imports_openpyxl_with_system_mime_data(self):
+    def test_imports_openpyxl_with_system_mime_data(self) -> None:
         """允许 openpyxl 读取标准库声明的系统 MIME 类型文件。"""
         process, output_dir, temporary = self._run_code(
             "import openpyxl\nresult = {'version': openpyxl.__version__}\n"
@@ -67,7 +67,7 @@ class RuntimeChildRunnerTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
-    def test_denies_reading_outside_workspace(self):
+    def test_denies_reading_outside_workspace(self) -> None:
         """拒绝读取工作目录和 Python 安装目录之外的文件。"""
         process, _, temporary = self._run_code("open('/etc/hosts').read()\n")
         try:
@@ -76,7 +76,7 @@ class RuntimeChildRunnerTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
-    def test_denies_deleting_outside_output(self):
+    def test_denies_deleting_outside_output(self) -> None:
         """即使使用 pathlib，也不允许删除 output 目录之外的文件。"""
         process, _, temporary = self._run_code(
             "from pathlib import Path\nPath(INPUT_DIR, 'missing.txt').unlink(missing_ok=True)\n"

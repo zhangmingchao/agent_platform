@@ -7,7 +7,7 @@ import uuid
 import time
 import logging
 import httpx
-from typing import Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
@@ -157,8 +157,8 @@ def mcp_tools_to_openai_format(mcp_tools: List[dict]) -> List[dict]:
 def build_mcp_executors(mcp_clients: Dict[str, McpClient]) -> Dict[str, callable]:
     executors = {}
     for tool_name, (client, _) in mcp_clients.items():
-        def make_executor(c, n):
-            async def executor(**kwargs):
+        def make_executor(c, n) -> Callable[..., Awaitable[str]]:
+            async def executor(**kwargs) -> str:
                 return await c.call_tool(n, kwargs)
             return executor
         executors[tool_name] = make_executor(client, tool_name)

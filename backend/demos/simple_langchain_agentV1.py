@@ -17,6 +17,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, ToolMessage, BaseMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from langgraph.graph.state import CompiledStateGraph
 
 
 @tool
@@ -41,7 +42,7 @@ def query_order(order_id: str) -> str:
     return mock_data.get(order_id, "没有找到这个订单")
 
 
-def build_agent():
+def build_agent() -> CompiledStateGraph:
     """创建支持 Tool Calling 的 LangChain Agent。"""
     api_key = os.getenv("LLM_API_KEY", "sk-0b9d5ce279744c90a423aaf955c843af")
     if not api_key:
@@ -230,7 +231,7 @@ async def arun_agent_stream(
 
 
 
-async def main_async():
+async def main_async() -> None:
     """异步主循环"""
     agent = build_agent()
     history = []
@@ -255,7 +256,7 @@ async def main_async():
             print(f"❌ 调用失败：{exc}")
 
 
-def main():
+def main() -> None:
     """同步入口，启动异步主循环"""
     asyncio.run(main_async())
 

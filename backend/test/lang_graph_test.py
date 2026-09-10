@@ -3,7 +3,7 @@ import typing
 
 from langgraph.graph import StateGraph, MessagesState, START, END
 
-def mock_llm(state: MessagesState):
+def mock_llm(state: MessagesState) -> dict[str, typing.Any]:
     return {"messages": [{"role": "ai", "content": "hello world"}]}
 
 

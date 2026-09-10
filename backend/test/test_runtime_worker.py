@@ -9,7 +9,7 @@ from backend.runtime_worker import process_runtime_task
 class RuntimeWorkerTests(unittest.IsolatedAsyncioTestCase):
     """验证 Worker 对正常任务和排队取消任务的处理。"""
 
-    async def test_processes_and_publishes_runtime_result(self):
+    async def test_processes_and_publishes_runtime_result(self) -> None:
         """正常任务应交给执行器，并将相同结果发布到 Redis。
 
         返回值结构：标准 Runtime 结果字典，status 为 completed。
@@ -34,7 +34,7 @@ class RuntimeWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected)
         publish.assert_awaited_once_with("execution-1", expected)
 
-    async def test_skips_cancelled_runtime_task(self):
+    async def test_skips_cancelled_runtime_task(self) -> None:
         """已取消的排队任务不应进入 Python 执行器。
 
         返回值结构：标准 Runtime 失败字典，error 说明任务已取消。

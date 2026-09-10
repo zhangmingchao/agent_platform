@@ -7,7 +7,7 @@ from backend.runtime.sandbox_client import SandboxServiceError, execute_in_sandb
 
 
 class SandboxClientTests(unittest.IsolatedAsyncioTestCase):
-    async def test_sends_internal_token_and_execution_context(self):
+    async def test_sends_internal_token_and_execution_context(self) -> None:
         response = AsyncMock()
         response.status_code = 200
         response.json = lambda: {"status": "completed", "exitCode": 0}
@@ -28,7 +28,7 @@ class SandboxClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["json"], payload)
         self.assertTrue(kwargs["headers"]["Authorization"].startswith("Bearer "))
 
-    async def test_surfaces_sandbox_rejection(self):
+    async def test_surfaces_sandbox_rejection(self) -> None:
         response = AsyncMock()
         response.status_code = 503
         response.json = lambda: {"detail": "Docker Engine 不可用"}

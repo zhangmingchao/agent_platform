@@ -6,7 +6,6 @@ from typing import Optional
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-from langgraph.checkpoint.memory import InMemorySaver
 
 from ..config import WORKFLOW_CHECKPOINT_REDIS_URL, WORKFLOW_CHECKPOINT_TTL_MINUTES
 
@@ -17,9 +16,10 @@ _workflow_checkpointer: Optional[BaseCheckpointSaver[str]] = None
 
 
 async def init_workflow_checkpointer() -> BaseCheckpointSaver[str]:
-    """初始化工作流 Checkpointer，Redis Stack 不可用时安全回退到内存。
+    """初始化工作流 Redis Checkpointer。
 
-    回退只用于保证旧环境仍能运行；日志会明确提示此时不具备跨进程恢复能力。
+    Redis Stack、RediSearch 或 RedisJSON 不可用时直接抛出异常，使应用启动失败。
+    任何环境都不允许回退到内存模式，避免人工审批产生不可恢复的运行状态。
     """
     global _checkpointer_context, _workflow_checkpointer
     if _workflow_checkpointer is not None:
@@ -36,15 +36,16 @@ async def init_workflow_checkpointer() -> BaseCheckpointSaver[str]:
     )
     try:
         _workflow_checkpointer = await _checkpointer_context.__aenter__()
-        log.info("工作流 Redis Checkpointer 初始化完成")
-    except Exception as exc:
+    except Exception:
+        # 初始化失败的上下文不能继续复用；保留原始异常供启动日志定位。
         _checkpointer_context = None
-        _workflow_checkpointer = InMemorySaver()
-        log.warning(
-            "工作流 Redis Checkpointer 初始化失败，已回退到内存模式；"
-            "跨进程恢复暂不可用，请确认 Redis Stack 已启用 | error=%s",
-            exc,
+        _workflow_checkpointer = None
+        log.exception(
+            "工作流 Redis Checkpointer 初始化失败，应用拒绝启动；"
+            "请确认 Redis Stack、RediSearch 与 RedisJSON 可用"
         )
+        raise
+    log.info("工作流 Redis Checkpointer 初始化完成")
     return _workflow_checkpointer
 
 

@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 
 class FakeMcpClient:
@@ -10,17 +10,17 @@ class FakeMcpClient:
             "result": f"{tool_name} 执行成功"
         }
 
-def make_tool_executor(client: FakeMcpClient,tool_name:str):
-    async def executor(**kwargs):
+def make_tool_executor(client: FakeMcpClient,tool_name:str) -> Callable[..., Awaitable[dict[str, Any]]]:
+    async def executor(**kwargs) -> dict[str, Any]:
         return await client.call_tool(tool_name, kwargs)
     return executor
 
-async def static_main():
+async def static_main() -> None:
     client = FakeMcpClient()
     print(await make_tool_executor(client, "weather")(city="北京"))
     print(await make_tool_executor(client, "order_info")(order_id="222"))
 
-async def dynamic_main():
+async def dynamic_main() -> None:
     client = FakeMcpClient()
     mcp_tools = [
         {"name":"weather"},
@@ -50,7 +50,6 @@ async def dynamic_main():
 
 if __name__ == "__main__":
     asyncio.run(dynamic_main())
-
 
 
 

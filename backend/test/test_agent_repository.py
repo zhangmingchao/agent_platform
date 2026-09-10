@@ -10,7 +10,7 @@ from backend.services.agent_service import get_agent
 
 
 class AgentRepositoryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_repository_returns_agent_entity(self):
+    async def test_repository_returns_agent_entity(self) -> None:
         """Repository 应完成数据库记录到 Agent 实体的转换。"""
         row = {
             "id": 7,
@@ -41,7 +41,7 @@ class AgentRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.skills[0]["name"], "excel")
         self.assertEqual(agent.mcps[0]["name"], "weather")
 
-    def test_service_declares_agent_entity_return_type(self):
+    def test_service_declares_agent_entity_return_type(self) -> None:
         """公共 get_agent 方法不应再声明返回无结构字典。"""
         self.assertEqual(get_type_hints(get_agent)["return"], Optional[Agent])
 

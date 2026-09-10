@@ -89,8 +89,9 @@ export WORKFLOW_CHECKPOINT_REDIS_URL="redis://127.0.0.1:6379/0"
 export WORKFLOW_CHECKPOINT_TTL_MINUTES="10080"
 ```
 
-如果当前 Redis 不支持所需模块或暂时不可连接，应用会输出明确警告并回退到
-`InMemorySaver`，现有聊天和工作流功能仍可运行，但不具备跨进程恢复能力。
+如果 Redis 不可连接，或缺少 RediSearch、RedisJSON 模块，应用会记录原始异常并拒绝
+启动。开发、测试和生产环境均不允许自动回退到 `InMemorySaver`，避免人工审批状态在
+重启或多进程调度时不可恢复。
 
 ## 数据边界
 

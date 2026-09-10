@@ -1,17 +1,22 @@
 import json
 import unittest
+from typing import Any, AsyncIterator, Dict
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from backend.core.streaming import sse_event, stream_agent_response
 
 
-def _decode_sse(raw_event):
+def _decode_sse(raw_event) -> Dict[str, Any]:
     return json.loads(raw_event.removeprefix("data:").strip())
 
 
 class _FakeAgent:
-    async def astream_events(self, *_args, **_kwargs):
+    async def astream_events(
+        self,
+        *_args,
+        **_kwargs,
+    ) -> AsyncIterator[Dict[str, Any]]:
         yield {"event": "on_chat_model_start", "run_id": "round-1", "name": "model", "data": {}}
         yield {
             "event": "on_chat_model_stream",
@@ -39,10 +44,14 @@ class _FakeAgent:
 
 
 class _CapturingAgent:
-    def __init__(self):
+    def __init__(self) -> None:
         self.initial_state = None
 
-    async def astream_events(self, state, **_kwargs):
+    async def astream_events(
+        self,
+        state,
+        **_kwargs,
+    ) -> AsyncIterator[Any]:
         """记录流式入口收到的 State，不产生模型事件。"""
         self.initial_state = state
         if False:
@@ -50,7 +59,7 @@ class _CapturingAgent:
 
 
 class StreamingRoundTests(unittest.IsolatedAsyncioTestCase):
-    async def test_each_llm_round_is_classified_independently(self):
+    async def test_each_llm_round_is_classified_independently(self) -> None:
         events = []
         async for raw_event in stream_agent_response(_FakeAgent(), "天气", "session-1"):
             events.append(_decode_sse(raw_event))
@@ -67,11 +76,11 @@ class StreamingRoundTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_started["tool_run_id"], "tool-1")
         self.assertEqual(tool_completed["tool_run_id"], "tool-1")
 
-    def test_sse_event_accepts_protocol_metadata(self):
+    def test_sse_event_accepts_protocol_metadata(self) -> None:
         event = _decode_sse(sse_event("pending_text_delta", "文本", round_id="round-1"))
         self.assertEqual(event, {"type": "pending_text_delta", "content": "文本", "round_id": "round-1"})
 
-    async def test_stream_injects_custom_business_state(self):
+    async def test_stream_injects_custom_business_state(self) -> None:
         """聊天流入口应将文件、Skill 和当前输入放入自定义 State。"""
         agent = _CapturingAgent()
         events = []

@@ -7,21 +7,21 @@ from backend.core.event_publisher import RedisStreamEventPublisher
 
 
 class _FakePipeline:
-    def __init__(self, redis):
+    def __init__(self, redis) -> None:
         self.redis = redis
         self.fields = None
 
-    def xadd(self, key, fields, **kwargs):
+    def xadd(self, key, fields, **kwargs) -> "_FakePipeline":
         self.key = key
         self.fields = dict(fields)
         self.kwargs = kwargs
         return self
 
-    def expire(self, key, ttl):
+    def expire(self, key, ttl) -> "_FakePipeline":
         self.expire_call = (key, ttl)
         return self
 
-    async def execute(self):
+    async def execute(self) -> list:
         await asyncio.sleep(0)
         event_id = f"1000-{len(self.redis.entries)}"
         self.redis.entries.append((event_id, self.key, self.fields))
@@ -29,15 +29,15 @@ class _FakePipeline:
 
 
 class _FakeRedis:
-    def __init__(self):
+    def __init__(self) -> None:
         self.entries = []
 
-    def pipeline(self, transaction=True):
+    def pipeline(self, transaction=True) -> _FakePipeline:
         return _FakePipeline(self)
 
 
 class EventPublisherTest(unittest.IsolatedAsyncioTestCase):
-    async def test_publishes_ordered_run_event_fields(self):
+    async def test_publishes_ordered_run_event_fields(self) -> None:
         redis = _FakeRedis()
         publisher = RedisStreamEventPublisher(run_id=42)
 

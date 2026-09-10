@@ -8,7 +8,7 @@ from backend.services import mongo_trace_service
 
 
 class MongoTraceServiceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_create_span_contains_owner_and_workflow_scope(self):
+    async def test_create_span_contains_owner_and_workflow_scope(self) -> None:
         collection = SimpleNamespace(
             insert_one=AsyncMock(return_value=SimpleNamespace(inserted_id=ObjectId()))
         )
@@ -32,7 +32,7 @@ class MongoTraceServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(document["status"], "running")
         self.assertIsNotNone(document["expire_at"])
 
-    async def test_finish_span_updates_terminal_fields(self):
+    async def test_finish_span_updates_terminal_fields(self) -> None:
         collection = SimpleNamespace(update_one=AsyncMock())
         span_id = str(ObjectId())
         with patch.object(mongo_trace_service, "get_trace_spans_collection", return_value=collection):

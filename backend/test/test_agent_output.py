@@ -10,7 +10,7 @@ from backend.core.schema_dsl import json_schema_to_python_schema, python_schema_
 
 
 class AgentOutputTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.schema = {
             "type": "object",
             "required": ["risk_level", "approved"],
@@ -21,7 +21,7 @@ class AgentOutputTests(unittest.TestCase):
             "additionalProperties": False,
         }
 
-    def test_runtime_variables_override_defaults(self):
+    def test_runtime_variables_override_defaults(self) -> None:
         rendered = render_prompt_template(
             "使用{{language}}回答 {{username}}：{{user_input}}；保留{{missing}}",
             {"language": "中文", "username": "错误名称"},
@@ -29,12 +29,12 @@ class AgentOutputTests(unittest.TestCase):
         )
         self.assertEqual(rendered, "使用中文回答 张三：你好；保留{{missing}}")
 
-    def test_schema_instruction_is_appended(self):
+    def test_schema_instruction_is_appended(self) -> None:
         prompt = append_schema_instruction("你是审核员", self.schema)
         self.assertIn("合法 JSON", prompt)
         self.assertIn('"risk_level"', prompt)
 
-    def test_parses_and_validates_json_and_fenced_json(self):
+    def test_parses_and_validates_json_and_fenced_json(self) -> None:
         expected = {"risk_level": "high", "approved": False}
         self.assertEqual(
             parse_and_validate_structured_output('{"risk_level":"high","approved":false}', self.schema),
@@ -45,15 +45,15 @@ class AgentOutputTests(unittest.TestCase):
             expected,
         )
 
-    def test_rejects_output_that_does_not_match_schema(self):
+    def test_rejects_output_that_does_not_match_schema(self) -> None:
         with self.assertRaisesRegex(ValueError, "不符合 Schema"):
             parse_and_validate_structured_output('{"risk_level":"medium","approved":false}', self.schema)
 
-    def test_rejects_invalid_schema(self):
+    def test_rejects_invalid_schema(self) -> None:
         with self.assertRaisesRegex(ValueError, "output_schema 无效"):
             validate_output_schema({"type": "unknown"})
 
-    def test_converts_python_schema_description_without_execution(self):
+    def test_converts_python_schema_description_without_execution(self) -> None:
         source = '''
 class PersonInfo(BaseModel):
     name: str = Field(description="人物的姓名")
@@ -68,13 +68,13 @@ class PersonInfo(BaseModel):
         self.assertEqual(schema["properties"]["hobby"]["default"], None)
         self.assertEqual(schema["properties"]["tags"]["type"], "array")
 
-    def test_python_schema_rejects_executable_statements(self):
+    def test_python_schema_rejects_executable_statements(self) -> None:
         with self.assertRaisesRegex(ValueError, "顶层只允许"):
             python_schema_to_json_schema('open("/tmp/unsafe", "w")\nclass Result(BaseModel):\n    answer: str')
         with self.assertRaisesRegex(ValueError, "只允许带类型标注"):
             python_schema_to_json_schema('class Result(BaseModel):\n    def run(self):\n        return 1')
 
-    def test_supports_safe_imports_and_required_ellipsis(self):
+    def test_supports_safe_imports_and_required_ellipsis(self) -> None:
         schema = python_schema_to_json_schema('''
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -86,11 +86,11 @@ class Result(BaseModel):
         self.assertEqual(schema["required"], ["answer"])
         self.assertEqual(schema["properties"]["answer"]["description"], "回答")
 
-    def test_rejects_root_model_recursive_reference(self):
+    def test_rejects_root_model_recursive_reference(self) -> None:
         with self.assertRaisesRegex(ValueError, "递归引用"):
             python_schema_to_json_schema('class Node(BaseModel):\n    children: list[Node]')
 
-    def test_json_schema_can_be_rendered_and_parsed_again(self):
+    def test_json_schema_can_be_rendered_and_parsed_again(self) -> None:
         source = json_schema_to_python_schema(self.schema)
         reparsed = python_schema_to_json_schema(source)
         self.assertEqual(reparsed["properties"]["risk_level"]["enum"], ["low", "high"])

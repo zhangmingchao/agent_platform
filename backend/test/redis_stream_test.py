@@ -31,7 +31,7 @@ def write_event(event_type:str,payload:dict ) -> str:
     return event_id
 
 
-def agent_producer():
+def agent_producer() -> None:
     """模拟后台 Agent Worker 持续产生状态、工具调用和 LLM Token。"""
     write_event("status", {"status": "RUNNING", "message": "Agent 开始执行"})
     time.sleep(1)
@@ -64,7 +64,7 @@ def agent_producer():
         },
     )
 
-def event_consumer(start_event_id: str = "0-0"):
+def event_consumer(start_event_id: str = "0-0") -> None:
     """
     模拟 SSE Event 接口持续读取 Stream。
 
@@ -110,7 +110,7 @@ def event_consumer(start_event_id: str = "0-0"):
                     return
 
 
-def main():
+def main() -> None:
     # 仅用于保证每次演示输出干净。
     # 正式环境不要在创建任务时删除历史 Stream。
     redis_client.delete(STREAM_KEY)
