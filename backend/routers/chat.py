@@ -1,5 +1,6 @@
 """聊天路由 — 提供 LangGraph 流式聊天的 HTTP 接口。"""
-from typing import AsyncGenerator, List
+from collections.abc import AsyncGenerator, AsyncIterable
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -21,15 +22,28 @@ MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2MB
 MAX_RUNTIME_FILES = 10
 
 
-def _validate_chat_request(message, session_id) -> None:
+def _validate_chat_request(message: object, session_id: object) -> None:
+    """校验聊天消息和会话 ID。
+
+    Args:
+        message: 从请求体中读取、尚未完成类型校验的聊天消息。
+        session_id: 从请求体中读取、尚未完成类型校验的会话 ID。
+    """
     if not isinstance(message, str) or not message.strip():
         raise HTTPException(status_code=400, detail="消息不能为空")
     if not isinstance(session_id, int):
         raise HTTPException(status_code=400, detail="需要有效的 session_id")
 
 
-def _validate_images(images) -> List[str]:
-    """校验图片 base64 列表，返回清洗后的列表。"""
+def _validate_images(images: object) -> List[str]:
+    """校验图片 Base64 列表。
+
+    Args:
+        images: 从请求体中读取、尚未完成类型校验的图片列表。
+
+    Returns:
+        过滤无效图片并完成数量、大小校验后的 Base64 字符串列表。
+    """
     if not images or not isinstance(images, list):
         return []
     if len(images) > MAX_IMAGES:
@@ -44,8 +58,15 @@ def _validate_images(images) -> List[str]:
     return cleaned
 
 
-def _validate_file_ids(file_ids) -> List[str]:
-    """校验 Runtime 文件 ID 列表，并去除重复项。"""
+def _validate_file_ids(file_ids: object) -> List[str]:
+    """校验 Runtime 文件 ID 列表，并去除重复项。
+
+    Args:
+        file_ids: 从请求体中读取、尚未完成类型校验的 Runtime 文件 ID 列表。
+
+    Returns:
+        去除空值和重复项后的 Runtime 文件 ID 列表。
+    """
     if file_ids is None:
         return []
     if not isinstance(file_ids, list) or any(not isinstance(item, str) for item in file_ids):
@@ -56,8 +77,19 @@ def _validate_file_ids(file_ids) -> List[str]:
     return cleaned
 
 
-async def _guarded_stream(generator, session_id) -> AsyncGenerator[str, None]:
-    """包装流式生成器，确保无论正常结束、客户端断开还是异常，都释放会话锁。"""
+async def _guarded_stream(
+    generator: AsyncIterable[str],
+    session_id: int,
+) -> AsyncGenerator[str, None]:
+    """包装异步数据流，确保流结束后释放会话锁。
+
+    Args:
+        generator: 按顺序产生 SSE 字符串数据块的异步可迭代对象。
+        session_id: 当前流式聊天对应的会话 ID，用于释放会话锁。
+
+    Yields:
+        上游异步数据流产生的 SSE 字符串数据块。
+    """
     try:
         async for chunk in generator:
             yield chunk
@@ -66,7 +98,10 @@ async def _guarded_stream(generator, session_id) -> AsyncGenerator[str, None]:
 
 
 @router.post("/stream")
-async def api_chat_stream_post(request: Request, user: dict = Depends(get_current_user)) -> StreamingResponse:
+async def api_chat_stream_post(
+    request: Request,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> StreamingResponse:
     body = await request.json()
     message = body.get("message", "")
     session_id = body.get("session_id")
@@ -95,7 +130,7 @@ async def api_chat_stream_post(request: Request, user: dict = Depends(get_curren
 async def api_chat_stream(
     message: str = Query(...),
     session_id: int = Query(...),
-    user: dict = Depends(get_current_user),
+    user: Dict[str, Any] = Depends(get_current_user),
 ) -> StreamingResponse:
     _validate_chat_request(message, session_id)
 
