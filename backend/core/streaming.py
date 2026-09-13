@@ -100,21 +100,21 @@ async def stream_agent_response(
         elif role == "assistant":
             messages.append(AIMessage(content=content))
 
-    # 日期提示只加到当前用户这轮，避免污染历史消息。
-    if messages and isinstance(messages[-1], HumanMessage):
-        if isinstance(messages[-1].content, str):
-            messages[-1].content = f"[当前日期：{today}] {messages[-1].content}"
-        elif isinstance(messages[-1].content, list):
-            for part in messages[-1].content:
-                if part.get("type") == "text":
-                    part["text"] = f"[当前日期：{today}] {part['text']}"
-                    break
-    else:
-        if images:
-            content = _build_multimodal_content(f"[当前日期：{today}] {user_message}", images)
-            messages.append(HumanMessage(content=content))
-        else:
-            messages.append(HumanMessage(content=f"[当前日期：{today}] {user_message}"))
+    # # 日期提示只加到当前用户这轮，避免污染历史消息。
+    # if messages and isinstance(messages[-1], HumanMessage):
+    #     if isinstance(messages[-1].content, str):
+    #         messages[-1].content = f"[当前日期：{today}] {messages[-1].content}"
+    #     elif isinstance(messages[-1].content, list):
+    #         for part in messages[-1].content:
+    #             if part.get("type") == "text":
+    #                 part["text"] = f"[当前日期：{today}] {part['text']}"
+    #                 break
+    # else:
+    #     if images:
+    #         content = _build_multimodal_content(f"[当前日期：{today}] {user_message}", images)
+    #         messages.append(HumanMessage(content=content))
+    #     else:
+    #         messages.append(HumanMessage(content=f"[当前日期：{today}] {user_message}"))
 
     config = {
         "configurable": {"thread_id": thread_id},
@@ -137,7 +137,7 @@ async def stream_agent_response(
         current_input = state_context.get("current_input", user_message)
         current_node_id = state_context.get("current_node_id")
         approval_status = state_context.get("approval_status", "")
-    initial_state:AgentPlatformState = build_agent_state(
+    initial_state = build_agent_state(
         messages,
         runtime_file_ids=runtime_file_ids,
         available_skills=available_skills,

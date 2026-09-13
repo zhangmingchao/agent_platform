@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Union
+from typing import AsyncIterator
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,7 +12,7 @@ if __package__ in (None, ""):
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import SERVER_PORT, LANGSMITH_API_KEY
@@ -82,8 +82,17 @@ if os.path.exists(frontend_dist):
         name="assets",
     )
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_frontend(full_path: str, request: Request) -> Union[JSONResponse, FileResponse]:
+    @app.get("/{full_path:path}", include_in_schema=False, response_model=None)
+    async def serve_frontend(full_path: str, request: Request) -> Response:
+        """返回前端静态文件，未知前端路径回退到单页应用入口。
+
+        Args:
+            full_path: 浏览器请求的前端相对路径。
+            request: 当前 HTTP 请求上下文，由 FastAPI 注入。
+
+        Returns:
+            API 路径返回 JSON 404，其他路径返回静态文件或前端入口文件。
+        """
         if full_path.startswith("api/"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
         file_path = os.path.join(frontend_dist, full_path)

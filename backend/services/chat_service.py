@@ -125,13 +125,17 @@ async def prepare_chat_run(
         "session_id": session_id,
         "current_date": datetime.now().strftime("%Y-%m-%d"),
     }
+    # 系统提示词中的模版变量渲染
     rendered_prompt = render_prompt_template(
         agent.system_prompt, agent.prompt_variables, runtime_variables,
     )
+    log.info(f"系统提示词模版变量之后的值：{rendered_prompt}")
     runtime_agent = agent.with_system_prompt(
         append_schema_instruction(rendered_prompt, agent.output_schema),
     )
-    agent_executor: CompiledStateGraph = await create_agent_instance(
+    log.info(f"系统提示词 结构化 之后的值：{runtime_agent['system_prompt']}")
+
+    agent_executor_graph: CompiledStateGraph = await create_agent_instance(
         runtime_agent,
         skills_data,
         mcps_data,
@@ -158,7 +162,7 @@ async def prepare_chat_run(
     await trace_ctx.start(message)
 
     return PreparedChatRun(
-        agent_executor=agent_executor,
+        agent_executor=agent_executor_graph,
         history_messages=history_messages,
         max_tool_rounds=max_tool_rounds,
         thread_id=thread_id,

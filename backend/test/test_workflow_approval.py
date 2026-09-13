@@ -56,6 +56,49 @@ class WorkflowApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(workflow_thread_id(7), "workflow_run_v2_7")
         self.assertEqual(workflow_graph_config(7)["configurable"]["thread_id"], "workflow_run_v2_7")
 
+    async def test_prepare_approval_node_resolves_next_target(self) -> None:
+        """审批准备阶段应使用公共图查询方法取得审批后的下游节点。"""
+        state: NativeWorkflowState = {
+            "run_id": 11,
+            "workflow_id": 3,
+            "user_id": 2,
+            "workflow_config": {
+                "nodes": [
+                    {"id": "approval-1", "type": "approval"},
+                    {"id": "agent-2", "type": "agent"},
+                ],
+                "edges": [{"source": "approval-1", "target": "agent-2"}],
+            },
+            "initial_input": "请审核",
+            "node_outputs": {},
+            "status": "running",
+        }
+        node = {
+            "id": "approval-1",
+            "type": "approval",
+            "data": {"label": "人工审核", "prompt": "是否继续？"},
+        }
+
+        with (
+            patch.object(workflow_service, "execute", AsyncMock(side_effect=[21, 1])),
+            patch.object(
+                workflow_service.RedisStreamEventPublisher,
+                "publish",
+                AsyncMock(return_value="1-1"),
+            ),
+        ):
+            context = await workflow_service._prepare_native_approval_node(
+                node,
+                state,
+                "待审批内容",
+                1,
+            )
+
+        self.assertEqual(context.approval_step_id, 21)
+        self.assertEqual(context.approval_node_id, "approval-1")
+        self.assertEqual(context.resume_node_id, "agent-2")
+        self.assertEqual(context.current_input, "待审批内容")
+
 
 if __name__ == "__main__":
     unittest.main()

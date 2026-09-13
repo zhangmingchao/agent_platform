@@ -1,3 +1,4 @@
+import logging
 import os
 from urllib.parse import quote
 
@@ -17,7 +18,7 @@ JWT_EXPIRE_HOURS = 24
 
 # --- 凭据安全 ---
 # 32 字节随机密钥的 URL-safe Base64；仅在保存或读取模型 API Key 时强制要求。
-MODEL_API_KEY_ENCRYPTION_KEY = os.getenv("MODEL_API_KEY_ENCRYPTION_KEY", "")
+MODEL_API_KEY_ENCRYPTION_KEY = os.getenv("MODEL_API_KEY_ENCRYPTION_KEY", "PJfvnyBqRG6n-iEU2Xtan_tgVJwm238ojUi2Wov2sh8")
 # 只有部署在可信反向代理后方时才允许读取 X-Forwarded-For。
 TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "false").lower() in (
     "1", "true", "yes", "on",
@@ -86,6 +87,7 @@ WORKFLOW_CHECKPOINT_REDIS_URL = os.getenv(
     "WORKFLOW_CHECKPOINT_REDIS_URL",
     f"redis://{_redis_auth}{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
 )
+logging.info(f"WORKFLOW_CHECKPOINT_REDIS_URL = {WORKFLOW_CHECKPOINT_REDIS_URL}")
 # 官方 Redis Checkpointer 的 TTL 单位为分钟，默认保留七天运行现场。
 WORKFLOW_CHECKPOINT_TTL_MINUTES = float(
     os.getenv("WORKFLOW_CHECKPOINT_TTL_MINUTES", "10080")

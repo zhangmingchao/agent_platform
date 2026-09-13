@@ -1,5 +1,6 @@
 """多 Agent 工作流持久化与运行时服务。"""
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,7 @@ from ..core.workflow_native_engine import (
     NativeWorkflowState,
 )
 from ..core.workflow_graph import (
+    all_targets,
     normalize_workflow_steps as _normalize_steps,
     parse_workflow_config as _parse_config,
 )
@@ -129,7 +131,7 @@ async def _invoke_agent_step(
         prompt_parts.append(f"当前步骤指令：\n{instruction}")
     prompt_parts.append(f"工作流当前输入：\n{input_text[:MAX_STEP_INPUT_CHARS]}")
     prompt = "\n\n".join(prompt_parts)
-
+    logging.info(f"prompt={prompt},{node_id}")
     trace_ctx = TraceContext(
         session_id=None,
         user_id=user_id,
@@ -364,7 +366,7 @@ async def _prepare_native_approval_node(
     data = node.get("data") or {}
     label = str(data.get("label") or "人工确认")[:100]
     prompt = str(data.get("prompt") or "请确认是否继续执行此工作流").strip()
-    next_targets = _all_targets(state["workflow_config"], node_id)
+    next_targets = all_targets(state["workflow_config"], node_id)
     resume_node_id = next_targets[0] if next_targets else None
     step_id = await execute(
         "INSERT INTO multi_agent_run_steps "
@@ -495,10 +497,10 @@ async def resume_workflow_graph(
 
     try:
         try:
-            workflow_config_value: Dict[str, Any] = run.require_workflow_config()
+            workflow_config: Dict[str, Any] = run.require_workflow_config()
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        workflow_config: Dict[str, Any] = _parse_config(workflow_config_value)
+        workflow_config: Dict[str, Any] = _parse_config(workflow_config)
         checkpointer: BaseCheckpointSaver[str] = get_workflow_checkpointer()
         engine = NativeWorkflowEngine(
             workflow_config,
@@ -506,7 +508,7 @@ async def resume_workflow_graph(
             _execute_native_agent_node,
             _prepare_native_approval_node,
         )
-        graph: CompiledStateGraph = engine.compile(checkpointer)
+        graph:CompiledStateGraph = engine.compile(checkpointer)
         graph_config: Dict[str, Any] = workflow_graph_config(run_id)
         if resume_decision is None:
             # start 只在首次执行时发布，审批恢复不会生成第二条开始事件。

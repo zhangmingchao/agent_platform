@@ -57,7 +57,8 @@ def append_schema_instruction(prompt: str, schema: Any) -> str:
         "输出必须符合以下 JSON Schema：\n"
         + json.dumps(normalized, ensure_ascii=False)
     )
-    return f"{prompt}\n\n{instruction}" if prompt else instruction
+    schema_propmt = f"{prompt}\n\n{instruction}" if prompt else instruction
+    return schema_propmt
 
 
 def parse_and_validate_structured_output(text: str, schema: Any) -> Optional[Dict]:

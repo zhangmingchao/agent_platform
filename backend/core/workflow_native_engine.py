@@ -1,5 +1,5 @@
 """将前端工作流配置动态编译为原生 LangGraph。"""
-
+import logging
 from operator import or_
 from functools import lru_cache
 import json
@@ -151,7 +151,18 @@ class NativeWorkflowEngine:
                     self.parallel_merges.setdefault(merge_id, []).append(parallel_id)
 
     def _incoming_sources(self, node_id: str) -> List[str]:
-        """按配置顺序返回节点的直接前驱 ID。"""
+        """按配置顺序返回当前节点的直接前驱节点 ID。
+
+        Args:
+            node_id: 当前节点 ID，用于匹配工作流连线中的 ``target`` 字段。
+
+        Returns:
+            直接前驱节点 ID 的字符串列表。该结果可序列化为 JSON 数组，例如：
+
+            ``["agent-analysis", "agent-review"]``
+
+            当前节点没有前驱节点时返回空列表 ``[]``。
+        """
         return [
             edge["source"]
             for edge in self.config.get("edges", [])
@@ -159,7 +170,25 @@ class NativeWorkflowEngine:
         ]
 
     def _node_input(self, node_id: str, state: NativeWorkflowState) -> str:
-        """根据已执行前驱节点输出组装当前节点输入。"""
+        """根据已执行前驱节点的输出组装当前节点输入。
+
+        Args:
+            node_id: 当前节点 ID，用于查询该节点的直接前驱节点。
+            state: 当前工作流共享状态，主要读取 ``node_outputs`` 和
+                ``initial_input``。相关结构示例：
+
+                ``{"initial_input": "原始任务", "node_outputs": {"agent-a": "结果 A"}}``
+
+        Returns:
+            当前节点接收的字符串输入，具体规则如下：
+
+            - 没有已经产生输出的前驱节点时，返回 ``state["initial_input"]``；
+            - 只有一个前驱节点输出时，直接返回该输出；
+            - 存在多个前驱节点输出时，按配置顺序使用空行和 ``---`` 分隔符拼接。
+
+            例如前驱输出为 ``"结果 A"`` 和 ``"结果 B"`` 时，返回：
+            ``"结果 A\n\n---\n\n结果 B"``。
+        """
         outputs = state.get("node_outputs") or {}
         values = [
             outputs[source]
@@ -171,7 +200,22 @@ class NativeWorkflowEngine:
         return values[0] if len(values) == 1 else "\n\n---\n\n".join(values)
 
     def _mapped_target(self, target_id: str) -> str:
-        """审批节点的入边先连接到其幂等准备节点。"""
+        """将配置中的目标节点 ID 转换为 LangGraph 实际连接的节点 ID。
+
+        Args:
+            target_id: 工作流配置中连线指向的原始目标节点 ID。
+
+        Returns:
+            LangGraph 添加连线时使用的目标节点 ID，具体规则如下：
+
+            - 普通节点保持原 ID，例如 ``"agent-1"`` 返回 ``"agent-1"``；
+            - 审批节点映射到内部准备节点，例如 ``"approval-1"`` 返回
+              ``"approval-1__prepare"``；
+            - 配置中找不到目标节点时保持原 ID，由后续图编译校验其合法性。
+
+            审批节点需要先执行准备节点，完成数据库记录、审批上下文保存和事件
+            发布，然后才能进入调用 ``interrupt()`` 的正式审批节点。
+        """
         target = self.nodes.get(target_id) or {}
         return f"{target_id}__prepare" if target.get("type") == "approval" else target_id
 
@@ -218,6 +262,7 @@ class NativeWorkflowEngine:
 
         if node_type == "agent":
             async def agent_node(state: NativeWorkflowState) -> Dict[str, Any]:
+                logging.info(f"开始执行agent 节点：{node_id},order={order}")
                 node_input = self._node_input(node_id, state)
                 await self._publish_parallel_completion(node_id, node_input)
                 output = await self.agent_runner(node, state, node_input, order)
@@ -233,6 +278,7 @@ class NativeWorkflowEngine:
             prepare_id = f"{node_id}__prepare"
 
             async def prepare_node(state: NativeWorkflowState) -> Dict[str, Any]:
+                logging.info(f"开始执行审批 prepare 节点：{node_id},order={order}")
                 node_input = self._node_input(node_id, state)
                 await self._publish_parallel_completion(node_id, node_input)
                 context = await self.approval_preparer(node, state, node_input, order)
@@ -250,9 +296,13 @@ class NativeWorkflowEngine:
                 }
 
             def approval_node(state: NativeWorkflowState) -> Dict[str, Any]:
+
                 decision = interrupt(state.get("approval_payload") or {})
                 approved = bool(decision.get("approved"))
                 comment = str(decision.get("comment") or "").strip()
+
+                logging.info(f"开始执行审批  节点：{node_id},order={order},decision={decision},approved={approved},comment={comment}")
+
                 if not approved:
                     decision_text = "已拒绝" + (f"：{comment}" if comment else "")
                     return {
@@ -274,6 +324,7 @@ class NativeWorkflowEngine:
             return
 
         async def passthrough_node(state: NativeWorkflowState) -> Dict[str, Any]:
+            # input,output,parallel,condition函数会执行这里
             node_input = self._node_input(node_id, state)
             await self._publish_parallel_completion(node_id, node_input)
             update: Dict[str, Any] = {"node_outputs": {node_id: node_input}}
