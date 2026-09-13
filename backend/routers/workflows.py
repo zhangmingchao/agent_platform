@@ -9,8 +9,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ..auth import get_current_user
+from ..config import (
+    HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
+    WORKFLOW_APPROVAL_RATE_LIMIT,
+    WORKFLOW_RUN_RATE_LIMIT,
+)
 from ..core.event_publisher import workflow_event_stream_key
 from ..redis_client import get_redis
+from ..rate_limit import RateLimitRule, enforce_rate_limit
 from ..services.workflow_service import (
     create_workflow,
     decide_workflow_approval,
@@ -27,6 +33,16 @@ from ..services.workflow_service import (
 
 router = APIRouter(prefix="/api/workflows", tags=["Multi-Agent Workflows"])
 log = logging.getLogger(__name__)
+WORKFLOW_RUN_RULE = RateLimitRule(
+    name="workflow-run-user",
+    limit=WORKFLOW_RUN_RATE_LIMIT,
+    window_seconds=HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
+)
+WORKFLOW_APPROVAL_RULE = RateLimitRule(
+    name="workflow-approval-user",
+    limit=WORKFLOW_APPROVAL_RATE_LIMIT,
+    window_seconds=HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
+)
 
 
 def _sse_event(event_id: str, event_type: str, payload: dict) -> str:
@@ -94,6 +110,7 @@ async def api_run_workflow(
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """创建 run 后立即返回，实际工作流在响应结束后的后台任务中执行。"""
+    await enforce_rate_limit(WORKFLOW_RUN_RULE, str(user["user_id"]))
     body = await request.json()
     input_text = body.get("input", "")
     if not isinstance(input_text, str) or not input_text.strip():
@@ -124,6 +141,7 @@ async def api_decide_workflow_approval(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    await enforce_rate_limit(WORKFLOW_APPROVAL_RULE, str(user["user_id"]))
     body = await request.json()
     if not isinstance(body.get("approved"), bool):
         raise HTTPException(status_code=400, detail="approved 必须是布尔值")

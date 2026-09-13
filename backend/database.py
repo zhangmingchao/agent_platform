@@ -5,7 +5,6 @@
 """
 import aiomysql
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
@@ -76,7 +75,7 @@ async def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS users (
                     id INT AUTO_INCREMENT PRIMARY KEY COMMENT '用户ID',
                     username VARCHAR(50) UNIQUE NOT NULL COMMENT '用户名',
-                    password VARCHAR(100) NOT NULL COMMENT '登录密码',
+                    password VARCHAR(255) NOT NULL COMMENT 'Argon2id 密码哈希',
                     created_at DATETIME NOT NULL COMMENT '创建时间'
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表'
                 """,
@@ -87,7 +86,7 @@ async def init_db() -> None:
                     name VARCHAR(100) NOT NULL COMMENT '配置名称',
                     provider VARCHAR(50) DEFAULT 'openai' COMMENT '模型提供商 openai/deepseek/anthropic/qwen',
                     model_id VARCHAR(100) NOT NULL COMMENT '模型标识 如 gpt-4o / deepseek-chat',
-                    api_key VARCHAR(500) NOT NULL COMMENT 'API 密钥',
+                    api_key VARCHAR(1024) NOT NULL COMMENT 'AES-256-GCM 加密的 API 密钥',
                     base_url VARCHAR(500) DEFAULT '' COMMENT 'API 基础地址',
                     temperature FLOAT DEFAULT 0.7 COMMENT '采样温度 0-2',
                     max_tokens INT DEFAULT 4096 COMMENT '最大生成 token 数',
@@ -452,11 +451,40 @@ async def init_db() -> None:
                         "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND COLUMN_NAME=%s",
                         (DB_NAME, table_name, column_name),
                     )
-                    if not await cur.fetchone():
+                    column = await cur.fetchone()
+                    if not column:
                         await cur.execute(alter_sql)
                         log.info("[DB] added %s column to %s table", column_name, table_name)
                 except Exception:
                     pass
+
+            # Argon2id 哈希可能超过历史 VARCHAR(100)，只在字段长度不足时扩容。
+            await cur.execute(
+                "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='users' AND COLUMN_NAME='password'",
+                (DB_NAME,),
+            )
+            password_column = await cur.fetchone()
+            if password_column and int(password_column[0] or 0) < 255:
+                await cur.execute(
+                    "ALTER TABLE users MODIFY COLUMN password VARCHAR(255) NOT NULL "
+                    "COMMENT 'Argon2id 密码哈希'"
+                )
+                log.info("[DB] expanded users.password for Argon2id hashes")
+
+            # AES-GCM 密文经过 Base64 后比原始 API Key 更长，需要扩展存储空间。
+            await cur.execute(
+                "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='models' AND COLUMN_NAME='api_key'",
+                (DB_NAME,),
+            )
+            api_key_column = await cur.fetchone()
+            if api_key_column and int(api_key_column[0] or 0) < 1024:
+                await cur.execute(
+                    "ALTER TABLE models MODIFY COLUMN api_key VARCHAR(1024) NOT NULL "
+                    "COMMENT 'AES-256-GCM 加密的 API 密钥'"
+                )
+                log.info("[DB] expanded models.api_key for encrypted values")
 
             # 数据迁移：将 multi_agent_run_steps 中的 agent_id 改为可空
             try:
@@ -474,17 +502,8 @@ async def init_db() -> None:
             except Exception:
                 pass
 
-            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            await cur.execute(
-                "INSERT INTO users (username, password, created_at) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE username=username",
-                ("admin", "123456", now)
-            )
-            await cur.execute(
-                "INSERT INTO users (username, password, created_at) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE username=username",
-                ("test", "123456", now)
-            )
             await conn.commit()
-            log.info("[DB] initialized (agent_platform_langchain), default users: admin/123456, test/123456")
+            log.info("[DB] initialized (agent_platform_langchain), default users are disabled")
     finally:
         await release_conn(conn)
 

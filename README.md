@@ -98,6 +98,7 @@ pip install -r backend/requirements.txt
 export DEEPSEEK_API_KEY="your-api-key"
 export DEEPSEEK_MODEL="deepseek-chat"
 export JWT_SECRET="your-secret"
+export MODEL_API_KEY_ENCRYPTION_KEY="请填写32字节随机密钥的URL-safe Base64"
 export SERVER_PORT="20000"
 
 # 配置 MySQL 连接（可选，默认值如下）
@@ -134,7 +135,7 @@ API 进程只负责准备任务并写入 Redis 队列；`runtime_worker` 负责�
 
 后端启动后：
 - API 地址: `http://127.0.0.1:20000`
-- 默认账号: `admin / 123456`
+- 首次使用请通过注册页面创建账号；系统不再创建默认弱口令账号
 - 数据库: MySQL（默认使用 `agent_platform_langchain` 数据库）
 
 后端启动时会自动创建数据库和表结构。也可以在首次启动前手动初始化：

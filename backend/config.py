@@ -15,6 +15,47 @@ JWT_SECRET = os.getenv("JWT_SECRET", "agent-platform-secret-2026")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
+# --- 凭据安全 ---
+# 32 字节随机密钥的 URL-safe Base64；仅在保存或读取模型 API Key 时强制要求。
+MODEL_API_KEY_ENCRYPTION_KEY = os.getenv("MODEL_API_KEY_ENCRYPTION_KEY", "")
+# 只有部署在可信反向代理后方时才允许读取 X-Forwarded-For。
+TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "false").lower() in (
+    "1", "true", "yes", "on",
+)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """读取必须大于零的整数环境变量。
+
+    Args:
+        name: 环境变量名称。
+        default: 环境变量未设置时使用的默认值。
+
+    Returns:
+        经过正整数校验的配置值。
+    """
+    value = int(os.getenv(name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{name} 必须大于 0")
+    return value
+
+
+# 高风险接口的默认限流策略，均可通过环境变量覆盖。
+LOGIN_RATE_LIMIT_PER_IP = _positive_int_env("LOGIN_RATE_LIMIT_PER_IP", 10)
+LOGIN_RATE_LIMIT_PER_USERNAME = _positive_int_env("LOGIN_RATE_LIMIT_PER_USERNAME", 5)
+REGISTER_RATE_LIMIT_PER_IP = _positive_int_env("REGISTER_RATE_LIMIT_PER_IP", 5)
+AUTH_RATE_LIMIT_WINDOW_SECONDS = _positive_int_env("AUTH_RATE_LIMIT_WINDOW_SECONDS", 300)
+MODEL_TEST_RATE_LIMIT = _positive_int_env("MODEL_TEST_RATE_LIMIT", 10)
+MCP_CALL_RATE_LIMIT = _positive_int_env("MCP_CALL_RATE_LIMIT", 30)
+CHAT_RATE_LIMIT = _positive_int_env("CHAT_RATE_LIMIT", 30)
+WORKFLOW_RUN_RATE_LIMIT = _positive_int_env("WORKFLOW_RUN_RATE_LIMIT", 10)
+WORKFLOW_APPROVAL_RATE_LIMIT = _positive_int_env("WORKFLOW_APPROVAL_RATE_LIMIT", 30)
+RUNTIME_UPLOAD_RATE_LIMIT = _positive_int_env("RUNTIME_UPLOAD_RATE_LIMIT", 20)
+RUNTIME_EXECUTION_RATE_LIMIT = _positive_int_env("RUNTIME_EXECUTION_RATE_LIMIT", 10)
+HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS = _positive_int_env(
+    "HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS", 60,
+)
+
 # --- 大语言模型（DeepSeek，兼容 OpenAI 接口）---
 DEEPSEEK_API_KEY = ""
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")

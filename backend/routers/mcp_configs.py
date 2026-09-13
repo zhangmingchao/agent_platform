@@ -5,7 +5,9 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth import get_current_user
+from ..config import HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS, MCP_CALL_RATE_LIMIT
 from ..mcp_client import McpClient
+from ..rate_limit import RateLimitRule, enforce_rate_limit
 from ..services.mcp_config_service import (
     create_mcp_config,
     delete_mcp_config,
@@ -16,6 +18,11 @@ from ..services.mcp_config_service import (
 
 router = APIRouter(prefix="/api/mcp-configs", tags=["MCP Configurations"])
 log = logging.getLogger(__name__)
+MCP_CALL_RULE = RateLimitRule(
+    name="mcp-call-user",
+    limit=MCP_CALL_RATE_LIMIT,
+    window_seconds=HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
+)
 
 
 @router.get("")
@@ -71,6 +78,7 @@ async def api_list_mcp_tools(config_id: int, user: dict = Depends(get_current_us
 
 @router.post("/{config_id}/call")
 async def api_call_mcp_tool(config_id: int, request: Request, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    await enforce_rate_limit(MCP_CALL_RULE, str(user["user_id"]))
     cfg = await get_mcp_config(config_id, user["user_id"])
     if not cfg:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")

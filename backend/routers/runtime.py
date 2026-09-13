@@ -7,10 +7,17 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from ..auth import get_current_user
+from ..config import HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS, RUNTIME_UPLOAD_RATE_LIMIT
 from ..database import fetch_one
+from ..rate_limit import RateLimitRule, enforce_rate_limit
 from ..services.runtime_service import get_runtime_file, save_runtime_file
 
 router = APIRouter(prefix="/api/runtime", tags=["Runtime"])
+RUNTIME_UPLOAD_RULE = RateLimitRule(
+    name="runtime-upload-user",
+    limit=RUNTIME_UPLOAD_RATE_LIMIT,
+    window_seconds=HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
+)
 
 
 async def _validate_session(session_id: int | None, user_id: int) -> None:
@@ -32,6 +39,7 @@ async def upload_runtime_file(
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """上传一个 Runtime 输入文件，并返回供模型使用的逻辑文件 ID。"""
+    await enforce_rate_limit(RUNTIME_UPLOAD_RULE, str(user["user_id"]))
     await _validate_session(session_id, user["user_id"])
     try:
         content = await file.read()
@@ -58,4 +66,3 @@ async def download_runtime_file(file_id: str, user: dict = Depends(get_current_u
         media_type=file_info.get("mime_type") or "application/octet-stream",
         filename=file_info["file_name"],
     )
-

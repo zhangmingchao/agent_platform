@@ -11,16 +11,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from redis.exceptions import RedisError
+
 from ..config import (
     PYTHON_RUNTIME_MAX_OUTPUT_MB,
     PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS,
     PYTHON_RUNTIME_MAX_UPLOAD_MB,
     PYTHON_RUNTIME_TIMEOUT_SECONDS,
     RUNTIME_DATA_DIR,
+    RUNTIME_EXECUTION_RATE_LIMIT,
     RUNTIME_WORKER_QUEUE_WAIT_SECONDS,
+    HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
     SKILLS_DIR,
 )
 from ..database import execute, fetch_all, fetch_one
+from ..rate_limit import RateLimitRule, check_rate_limit
 from ..runtime.models import RuntimeContext
 from ..runtime.policy import validate_python_code
 from ..runtime.sandbox_client import execute_in_sandbox
@@ -36,6 +41,11 @@ ALLOWED_UPLOAD_SUFFIXES = {
 }
 MAX_RUNTIME_INPUT_FILES = 10
 MAX_LOG_BYTES = 1024 * 1024
+RUNTIME_EXECUTION_RULE = RateLimitRule(
+    name="runtime-execution-user",
+    limit=RUNTIME_EXECUTION_RATE_LIMIT,
+    window_seconds=HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
+)
 
 
 def _now() -> str:
@@ -296,6 +306,16 @@ async def prepare_runtime_execution(
     ``{"executionId": str, "userId": int, "timeoutSeconds": int, "context": dict}``。
     该字典不包含完整代码，只包含 Worker 定位工作目录和记录审计上下文所需的数据。
     """
+    # Runtime 执行消耗较高且运行不可信代码，必须在准备文件前完成分布式限流。
+    try:
+        rate_limit = await check_rate_limit(RUNTIME_EXECUTION_RULE, str(context.user_id))
+    except RedisError as exc:
+        raise RuntimeError("Runtime 安全限流服务暂时不可用") from exc
+    if not rate_limit.allowed:
+        raise ValueError(
+            f"Python Runtime 执行过于频繁，请在 {rate_limit.retry_after_seconds} 秒后重试"
+        )
+
     # 第 1 步：入队前进行 AST 静态校验，拒绝危险导入和调用。
     validate_python_code(code)
 

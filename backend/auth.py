@@ -1,26 +1,48 @@
 """
 认证模块 —— 基于 JWT + Redis 的 Token 管理，支持 FastAPI Depends 依赖注入。
 """
-import jwt
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict
+from typing import Any, Dict, Optional
+
+import jwt
 
 from fastapi import Request, HTTPException
 
 from .config import JWT_ALGORITHM, JWT_EXPIRE_HOURS, JWT_SECRET
-from .database import fetch_one
+from .database import execute, fetch_one
 from .redis_client import set_token, get_token_user_id, delete_token
+from .security import hash_password, verify_password
 
 log = logging.getLogger(__name__)
 
 
-async def authenticate_user(username: str, password: str) -> Optional[Dict]:
+async def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
+    """校验用户密码，并在成功时自动升级历史明文或旧参数哈希。
+
+    Args:
+        username: 用户提交的登录名称。
+        password: 用户提交的密码明文。
+
+    Returns:
+        验证成功时返回不包含密码的用户信息，失败时返回 ``None``。
+    """
     user = await fetch_one(
-        "SELECT id, username FROM users WHERE username=%s AND password=%s",
-        (username, password)
+        "SELECT id, username, password FROM users WHERE username=%s",
+        (username,),
     )
-    return user
+    if not user:
+        return None
+    verification = verify_password(password, str(user.get("password") or ""))
+    if not verification.verified:
+        return None
+    if verification.requires_upgrade:
+        await execute(
+            "UPDATE users SET password=%s WHERE id=%s",
+            (hash_password(password), user["id"]),
+        )
+        log.info("[Auth] upgraded password hash for user_id=%s", user["id"])
+    return {"id": user["id"], "username": user["username"]}
 
 
 def create_token(user_id: int, username: str) -> str:
@@ -41,7 +63,7 @@ async def login_and_store_token(user_id: int, username: str) -> str:
     return token
 
 
-async def get_current_user(request: Request) -> Dict:
+async def get_current_user(request: Request) -> Dict[str, Any]:
     """
     强制认证 —— 未认证时抛出 401 错误。
     可作为 Depends(get_current_user) 使用，或直接传入 request 调用。
@@ -72,7 +94,7 @@ async def get_current_user(request: Request) -> Dict:
         raise HTTPException(status_code=401, detail="无效的token")
 
 
-async def get_current_user_optional(request: Request) -> Optional[Dict]:
+async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]]:
     """
     可选认证 —— 已认证则返回用户字典，否则返回 None。
     适用于登出/注册等不需要强制认证但能从中受益的接口。

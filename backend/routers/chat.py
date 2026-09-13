@@ -6,10 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..auth import get_current_user
+from ..config import CHAT_RATE_LIMIT, HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS
+from ..rate_limit import RateLimitRule, enforce_rate_limit
 from ..redis_client import acquire_stream_lock, release_stream_lock
 from ..services.chat_service import stream_chat
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+CHAT_STREAM_RULE = RateLimitRule(
+    name="chat-stream-user",
+    limit=CHAT_RATE_LIMIT,
+    window_seconds=HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
+)
 
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
@@ -108,6 +115,7 @@ async def api_chat_stream_post(
     images = _validate_images(body.get("images"))
     file_ids = _validate_file_ids(body.get("file_ids"))
     _validate_chat_request(message, session_id)
+    await enforce_rate_limit(CHAT_STREAM_RULE, str(user["user_id"]))
 
     acquired = await acquire_stream_lock(session_id)
     if not acquired:
@@ -133,6 +141,7 @@ async def api_chat_stream(
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> StreamingResponse:
     _validate_chat_request(message, session_id)
+    await enforce_rate_limit(CHAT_STREAM_RULE, str(user["user_id"]))
 
     acquired = await acquire_stream_lock(session_id)
     if not acquired:

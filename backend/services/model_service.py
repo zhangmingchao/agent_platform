@@ -1,9 +1,10 @@
 """模型管理服务 — 用户级 LLM 模型配置。"""
 import logging
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ..database import execute, fetch_all, fetch_one
+from ..security import decrypt_model_api_key, encrypt_model_api_key
 
 log = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
-async def list_models(user_id: int) -> List[Dict]:
+async def list_models(user_id: int) -> List[Dict[str, Any]]:
     """列出用户的所有模型。"""
     return await fetch_all(
         "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, is_active, "
@@ -21,15 +22,35 @@ async def list_models(user_id: int) -> List[Dict]:
     )
 
 
-async def get_model(model_id: int, user_id: int) -> Optional[Dict]:
-    """根据 ID 获取单个模型，包含供 Agent 工厂使用的 api_key。"""
-    return await fetch_one(
+async def get_model(model_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """获取模型配置，在内存中解密 API Key 并迁移历史明文。
+
+    Args:
+        model_id: 需要读取的模型配置 ID。
+        user_id: 模型配置所属的用户 ID，用于资源隔离。
+
+    Returns:
+        包含临时 API Key 明文的模型配置；配置不存在时返回 ``None``。
+    """
+    model = await fetch_one(
         "SELECT * FROM models WHERE id=%s AND user_id=%s",
         (model_id, user_id)
     )
+    if not model:
+        return None
+    decryption = decrypt_model_api_key(str(model.get("api_key") or ""))
+    model["api_key"] = decryption.plaintext
+    if decryption.requires_upgrade:
+        encrypted_api_key = encrypt_model_api_key(decryption.plaintext)
+        await execute(
+            "UPDATE models SET api_key=%s WHERE id=%s AND user_id=%s",
+            (encrypted_api_key, model_id, user_id),
+        )
+        log.info("[Model] encrypted legacy api_key for model_id=%s user_id=%s", model_id, user_id)
+    return model
 
 
-async def get_model_safe(model_id: int, user_id: int) -> Optional[Dict]:
+async def get_model_safe(model_id: int, user_id: int) -> Optional[Dict[str, Any]]:
     """获取不包含 api_key 的模型信息（用于 API 响应）。"""
     return await fetch_one(
         "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, is_active, "
@@ -38,7 +59,7 @@ async def get_model_safe(model_id: int, user_id: int) -> Optional[Dict]:
     )
 
 
-async def create_model(user_id: int, data: Dict) -> Dict:
+async def create_model(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
     """创建新的模型配置。"""
     now = _now()
     model_id = await execute(
@@ -50,7 +71,7 @@ async def create_model(user_id: int, data: Dict) -> Dict:
             data.get("name", ""),
             data.get("provider", "openai"),
             data.get("model_id", ""),
-            data.get("api_key", ""),
+            encrypt_model_api_key(str(data.get("api_key") or "")),
             data.get("base_url", ""),
             data.get("temperature", 0.7),
             data.get("max_tokens", 4096),
@@ -63,16 +84,27 @@ async def create_model(user_id: int, data: Dict) -> Dict:
     return await get_model_safe(model_id, user_id)
 
 
-async def update_model(model_id: int, user_id: int, data: Dict) -> Optional[Dict]:
+async def update_model(
+    model_id: int,
+    user_id: int,
+    data: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
     """更新现有模型。"""
     existing = await fetch_one(
-        "SELECT id FROM models WHERE id=%s AND user_id=%s",
+        "SELECT id, api_key FROM models WHERE id=%s AND user_id=%s",
         (model_id, user_id)
     )
     if not existing:
         return None
 
     now = _now()
+    submitted_api_key = str(data.get("api_key") or "")
+    # API 不回传已保存的 Key，因此编辑页面提交空值时保留原密文。
+    encrypted_api_key = (
+        encrypt_model_api_key(submitted_api_key)
+        if submitted_api_key
+        else str(existing.get("api_key") or "")
+    )
     await execute(
         "UPDATE models SET name=%s, provider=%s, model_id=%s, api_key=%s, base_url=%s, "
         "temperature=%s, max_tokens=%s, is_active=%s, updated_at=%s WHERE id=%s",
@@ -80,7 +112,7 @@ async def update_model(model_id: int, user_id: int, data: Dict) -> Optional[Dict
             data.get("name", ""),
             data.get("provider", "openai"),
             data.get("model_id", ""),
-            data.get("api_key", ""),
+            encrypted_api_key,
             data.get("base_url", ""),
             data.get("temperature", 0.7),
             data.get("max_tokens", 4096),
@@ -93,10 +125,10 @@ async def update_model(model_id: int, user_id: int, data: Dict) -> Optional[Dict
 
 
 async def test_model_connection(
-    model_id: int = None,
-    user_id: int = None,
-    config: Dict = None,
-) -> Dict:
+    model_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """测试模型连接是否可用。支持已保存模型的 ID 或直接传入配置。"""
     from langchain_openai import ChatOpenAI
 

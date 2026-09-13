@@ -11,7 +11,7 @@ USE agent_platform_langchain;
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
-    password VARCHAR(100) NOT NULL,
+    password VARCHAR(255) NOT NULL COMMENT 'Argon2id 密码哈希',
     created_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS models (
     name VARCHAR(100) NOT NULL,
     provider VARCHAR(50) DEFAULT 'openai',
     model_id VARCHAR(100) NOT NULL,
-    api_key VARCHAR(500) NOT NULL,
+    api_key VARCHAR(1024) NOT NULL COMMENT 'AES-256-GCM 加密的 API 密钥',
     base_url VARCHAR(500) DEFAULT '',
     temperature FLOAT DEFAULT 0.7,
     max_tokens INT DEFAULT 4096,
@@ -263,11 +263,3 @@ CREATE TABLE IF NOT EXISTS multi_agent_run_steps (
     CONSTRAINT fk_run_step_agent FOREIGN KEY (agent_id) REFERENCES agents(id),
     CONSTRAINT fk_run_step_trace FOREIGN KEY (trace_run_id) REFERENCES trace_runs(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT INTO users (username, password, created_at)
-VALUES ('admin', '123456', NOW())
-ON DUPLICATE KEY UPDATE username = VALUES(username);
-
-INSERT INTO users (username, password, created_at)
-VALUES ('test', '123456', NOW())
-ON DUPLICATE KEY UPDATE username = VALUES(username);
