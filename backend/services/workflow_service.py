@@ -508,7 +508,7 @@ async def resume_workflow_graph(
             _execute_native_agent_node,
             _prepare_native_approval_node,
         )
-        graph:CompiledStateGraph = engine.compile(checkpointer)
+        graph = engine.compile(checkpointer)
         graph_config: Dict[str, Any] = workflow_graph_config(run_id)
         if resume_decision is None:
             # start 只在首次执行时发布，审批恢复不会生成第二条开始事件。

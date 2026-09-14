@@ -398,7 +398,7 @@ class NativeWorkflowEngine:
                         node_id=current_node_id,
                     )
                     return result.branch_index
-
+                logging.info(f"condition: nodeId={node_id},path_map={json.dumps(path_map)}")
                 builder.add_conditional_edges(node_id, route_condition, path_map)
                 continue
 
