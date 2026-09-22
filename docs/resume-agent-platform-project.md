@@ -63,7 +63,7 @@ Agent Platform——企业级 AI Agent 开发与工作流编排平台
 
 ### Python Runtime
 
-- 为 Agent 提供 `ExecutePython` 和 `RunSkillScript` 工具，支持动态代码及固定 Skill 脚本执行。
+- 为 Agent 提供 `ExecutePython` 工具，支持在隔离 Runtime 中执行模型生成的 Python 代码。
 - 采用 API、Redis Queue、Runtime Worker、Sandbox Service 和 Docker 用户容器分层架构。
 - 支持代码静态策略校验、用户文件隔离、资源限制、执行超时、网络限制和只读文件系统。
 - 支持 Excel 数据分析、文档解析、图表生成和结果文件导出。
@@ -107,4 +107,3 @@ Agent Platform——企业级 AI Agent 开发与工作流编排平台
 - 设计隔离式 Python Runtime，通过 Redis Queue、独立 Worker、Sandbox Service 和用户级 Docker 容器安全执行模型生成代码，支持 Excel/PDF/Word 数据处理及 Artifact 输出。
 - 实现多 Agent DAG 工作流，支持条件分支、并行执行、人工审批、恢复运行和 Redis Stream 实时事件订阅。
 - 建设覆盖 LLM、Tool、Runtime 和工作流节点的 Trace 体系，实现输入输出、异常、Token 和耗时的全链路观测。
-

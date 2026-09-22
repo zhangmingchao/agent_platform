@@ -1,7 +1,7 @@
 """
 数据库层 —— 基于 aiomysql 的 MySQL 异步操作。
-数据表：users, models, agents, agent_skills, agent_mcps, skills, mcp_configs,
-        chat_sessions, chat_messages, trace_runs, trace_spans
+数据表：users, user_api_keys, models, agents, agent_skills, agent_mcps, skills,
+        mcp_configs, chat_sessions, chat_messages, trace_runs, trace_spans
 """
 import aiomysql
 import logging
@@ -80,6 +80,24 @@ async def init_db() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表'
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS user_api_keys (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT 'API Key记录ID',
+                    user_id INT NOT NULL COMMENT '所属用户ID',
+                    key_id VARCHAR(32) NOT NULL COMMENT '用于快速定位密钥的公开ID',
+                    key_prefix VARCHAR(64) NOT NULL COMMENT '可展示的脱敏密钥前缀',
+                    key_hash CHAR(64) NOT NULL COMMENT '完整API Key的SHA-256哈希',
+                    status VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT '状态 active/revoked',
+                    created_at DATETIME NOT NULL COMMENT '创建或轮换时间',
+                    updated_at DATETIME NOT NULL COMMENT '更新时间',
+                    last_used_at DATETIME DEFAULT NULL COMMENT '最后成功调用时间',
+                    revoked_at DATETIME DEFAULT NULL COMMENT '吊销时间',
+                    UNIQUE KEY uk_user_api_key_user (user_id),
+                    UNIQUE KEY uk_user_api_key_key_id (key_id),
+                    CONSTRAINT fk_user_api_key_user FOREIGN KEY (user_id)
+                        REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户外部接口API Key表'
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS models (
                     id INT AUTO_INCREMENT PRIMARY KEY COMMENT '模型配置ID',
                     user_id INT NOT NULL COMMENT '所属用户ID',
@@ -90,12 +108,34 @@ async def init_db() -> None:
                     base_url VARCHAR(500) DEFAULT '' COMMENT 'API 基础地址',
                     temperature FLOAT DEFAULT 0.7 COMMENT '采样温度 0-2',
                     max_tokens INT DEFAULT 4096 COMMENT '最大生成 token 数',
+                    quota_mode VARCHAR(20) NOT NULL DEFAULT 'unlimited' COMMENT 'Token 限额模式 unlimited/daily',
+                    daily_token_limit BIGINT DEFAULT NULL COMMENT '每日 Token 限额，unlimited 时为空',
                     is_active TINYINT DEFAULT 1 COMMENT '是否启用 1启用 0禁用',
                     created_at DATETIME NOT NULL COMMENT '创建时间',
                     updated_at DATETIME NOT NULL COMMENT '更新时间',
                     INDEX idx_user (user_id),
                     CONSTRAINT fk_model_user FOREIGN KEY (user_id) REFERENCES users(id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模型配置表（用户级）'
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS model_daily_token_usage (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '模型每日用量ID',
+                    model_config_id INT NOT NULL COMMENT '模型配置ID',
+                    user_id INT NOT NULL COMMENT '所属用户ID',
+                    usage_date DATE NOT NULL COMMENT '上海时区自然日',
+                    input_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '当日输入 Token',
+                    output_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '当日输出 Token',
+                    total_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '当日总 Token',
+                    request_count BIGINT NOT NULL DEFAULT 0 COMMENT '当日模型调用次数',
+                    created_at DATETIME NOT NULL COMMENT '创建时间',
+                    updated_at DATETIME NOT NULL COMMENT '更新时间',
+                    UNIQUE KEY uk_model_usage_date (model_config_id, usage_date),
+                    INDEX idx_model_usage_user_date (user_id, usage_date),
+                    CONSTRAINT fk_model_usage_model FOREIGN KEY (model_config_id)
+                        REFERENCES models(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_model_usage_user FOREIGN KEY (user_id)
+                        REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模型每日 Token 用量表'
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS agents (
@@ -110,6 +150,9 @@ async def init_db() -> None:
                     model_config_id INT DEFAULT NULL COMMENT '自定义模型配置ID 关联 models.id',
                     temperature FLOAT DEFAULT 0.7 COMMENT '采样温度 0-2',
                     iteration_count INT NOT NULL DEFAULT 6 COMMENT '最大工具迭代次数',
+                    execution_timeout_seconds INT NOT NULL DEFAULT 120 COMMENT 'Agent整体执行超时秒数',
+                    planning_mode VARCHAR(20) NOT NULL DEFAULT 'disabled' COMMENT '任务规划模式 disabled/explicit',
+                    permission_preset VARCHAR(30) NOT NULL DEFAULT 'standard' COMMENT '工具权限预设 safe/standard/auto/developer',
                     created_at DATETIME NOT NULL COMMENT '创建时间',
                     updated_at DATETIME NOT NULL COMMENT '更新时间',
                     INDEX idx_user (user_id),
@@ -135,6 +178,7 @@ async def init_db() -> None:
                     name VARCHAR(200) NOT NULL COMMENT 'MCP 服务器名称',
                     base_url VARCHAR(500) NOT NULL COMMENT 'MCP 服务器地址',
                     endpoint VARCHAR(100) DEFAULT '/mcp' COMMENT 'MCP SSE 端点路径',
+                    timeout_seconds INT NOT NULL DEFAULT 30 COMMENT 'MCP完整操作超时秒数，范围1-60',
                     description TEXT COMMENT 'MCP 描述',
                     created_at DATETIME NOT NULL COMMENT '创建时间',
                     INDEX idx_user (user_id),
@@ -167,6 +211,9 @@ async def init_db() -> None:
                     user_id INT NOT NULL COMMENT '所属用户ID',
                     agent_id INT NOT NULL COMMENT '关联 Agent ID',
                     title VARCHAR(200) DEFAULT '新对话' COMMENT '会话标题',
+                    permission_preset VARCHAR(30) DEFAULT NULL COMMENT '会话级工具权限预设，空值继承 Agent',
+                    sandbox_mode VARCHAR(30) DEFAULT NULL COMMENT '会话级沙箱模式覆盖值',
+                    approval_policy VARCHAR(20) DEFAULT NULL COMMENT '会话级审批策略覆盖值',
                     created_at DATETIME NOT NULL COMMENT '创建时间',
                     updated_at DATETIME NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '最后活跃时间',
                     INDEX idx_user (user_id),
@@ -195,9 +242,12 @@ async def init_db() -> None:
                     session_id INT COMMENT '聊天会话ID（单聊时）',
                     user_id INT NOT NULL COMMENT '所属用户ID',
                     agent_id INT NOT NULL COMMENT 'Agent ID',
+                    invocation_source VARCHAR(20) NOT NULL DEFAULT 'platform' COMMENT '调用来源 platform/api/workflow',
+                    request_id VARCHAR(64) DEFAULT NULL COMMENT '对外暴露的一次请求唯一编号',
+                    client_conversation_id VARCHAR(100) DEFAULT NULL COMMENT '外部调用方会话标识',
                     workflow_run_id INT DEFAULT NULL COMMENT '工作流运行ID（工作流场景）',
                     workflow_step_id INT DEFAULT NULL COMMENT '工作流步骤ID（工作流场景）',
-                    status VARCHAR(20) DEFAULT 'running' COMMENT '运行状态 running/success/error/cancelled',
+                    status VARCHAR(20) DEFAULT 'running' COMMENT '运行状态 running/success/error/cancelled/timeout',
                     input_text TEXT COMMENT '输入文本',
                     output_text TEXT COMMENT '输出文本',
                     error_text TEXT COMMENT '错误信息',
@@ -208,6 +258,7 @@ async def init_db() -> None:
                     created_at DATETIME NOT NULL COMMENT '创建时间',
                     INDEX idx_session (session_id),
                     INDEX idx_user (user_id),
+                    UNIQUE INDEX uk_trace_runs_request_id (request_id),
                     INDEX idx_workflow_run (workflow_run_id),
                     INDEX idx_workflow_step (workflow_step_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Trace 调用链运行记录表'
@@ -230,6 +281,76 @@ async def init_db() -> None:
                     INDEX idx_run (run_id),
                     CONSTRAINT fk_span_run FOREIGN KEY (run_id) REFERENCES trace_runs(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Trace Span 明细表'
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS session_events (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT 'Session事件ID',
+                    user_id INT NOT NULL COMMENT '所属用户ID',
+                    session_id INT DEFAULT NULL COMMENT '聊天会话ID，外部API或工作流可为空',
+                    trace_run_id INT DEFAULT NULL COMMENT '关联Trace Run ID',
+                    agent_id INT DEFAULT NULL COMMENT '执行Agent ID',
+                    workflow_run_id INT DEFAULT NULL COMMENT '工作流运行ID',
+                    workflow_step_id INT DEFAULT NULL COMMENT '工作流步骤ID',
+                    event_source VARCHAR(50) NOT NULL COMMENT '事件来源 agent_loop/tool_pipeline/permission/system',
+                    event_type VARCHAR(50) NOT NULL COMMENT '事件类型',
+                    turn_id VARCHAR(120) DEFAULT '' COMMENT '本轮执行ID',
+                    step_id VARCHAR(160) DEFAULT '' COMMENT 'Agent步骤ID',
+                    run_id VARCHAR(120) DEFAULT '' COMMENT 'LangChain或工具运行ID',
+                    phase VARCHAR(80) DEFAULT '' COMMENT '生命周期或Pipeline阶段',
+                    name VARCHAR(200) DEFAULT '' COMMENT '模型、工具、节点或阶段名称',
+                    status VARCHAR(40) DEFAULT '' COMMENT '事件状态',
+                    payload_json JSON DEFAULT NULL COMMENT '事件摘要载荷',
+                    created_at DATETIME NOT NULL COMMENT '追加时间',
+                    INDEX idx_session_events_user_id (user_id, id),
+                    INDEX idx_session_events_session_id (session_id, id),
+                    INDEX idx_session_events_trace_run_id (trace_run_id, id),
+                    CONSTRAINT fk_session_events_user FOREIGN KEY (user_id)
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_session_events_session FOREIGN KEY (session_id)
+                        REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_session_events_trace FOREIGN KEY (trace_run_id)
+                        REFERENCES trace_runs(id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Session append-only事件日志表'
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agent_task_plans (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '任务计划ID',
+                    trace_run_id INT NOT NULL COMMENT '关联 Trace 运行ID',
+                    user_id INT NOT NULL COMMENT '所属用户ID',
+                    agent_id INT NOT NULL COMMENT '执行计划的 Agent ID',
+                    goal VARCHAR(500) NOT NULL COMMENT '本轮任务总目标',
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT 'pending/running/completed/failed',
+                    current_step_order INT NOT NULL DEFAULT 0 COMMENT '当前执行步骤序号',
+                    created_at DATETIME NOT NULL COMMENT '创建时间',
+                    updated_at DATETIME NOT NULL COMMENT '更新时间',
+                    finished_at DATETIME DEFAULT NULL COMMENT '完成或失败时间',
+                    UNIQUE KEY uk_agent_task_plan_trace (trace_run_id),
+                    INDEX idx_agent_task_plan_user (user_id),
+                    INDEX idx_agent_task_plan_agent (agent_id),
+                    CONSTRAINT fk_agent_task_plan_trace FOREIGN KEY (trace_run_id)
+                        REFERENCES trace_runs(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 显式任务计划表'
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS agent_task_plan_steps (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '任务计划步骤ID',
+                    plan_id BIGINT NOT NULL COMMENT '所属任务计划ID',
+                    step_key VARCHAR(32) NOT NULL COMMENT '计划内稳定步骤标识',
+                    step_order INT NOT NULL COMMENT '从1开始的执行顺序',
+                    title VARCHAR(100) NOT NULL COMMENT '步骤名称',
+                    instruction TEXT NOT NULL COMMENT '步骤执行指令',
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT 'pending/running/completed/failed/skipped',
+                    result_summary MEDIUMTEXT DEFAULT NULL COMMENT '步骤执行结果',
+                    error_text TEXT DEFAULT NULL COMMENT '步骤错误信息',
+                    started_at DATETIME DEFAULT NULL COMMENT '开始时间',
+                    finished_at DATETIME DEFAULT NULL COMMENT '完成时间',
+                    created_at DATETIME NOT NULL COMMENT '创建时间',
+                    updated_at DATETIME NOT NULL COMMENT '更新时间',
+                    UNIQUE KEY uk_agent_task_plan_step_order (plan_id, step_order),
+                    UNIQUE KEY uk_agent_task_plan_step_key (plan_id, step_key),
+                    CONSTRAINT fk_agent_task_plan_step_plan FOREIGN KEY (plan_id)
+                        REFERENCES agent_task_plans(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 显式任务计划步骤表'
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS multi_agent_workflows (
@@ -320,10 +441,8 @@ async def init_db() -> None:
                     workflow_run_id INT DEFAULT NULL COMMENT '工作流运行ID',
                     workflow_step_id INT DEFAULT NULL COMMENT '工作流步骤ID',
                     node_id VARCHAR(100) DEFAULT NULL COMMENT '节点ID',
-                    source_type VARCHAR(30) NOT NULL COMMENT '来源 generated_code/skill_script',
-                    skill_id INT DEFAULT NULL COMMENT 'Skill ID',
                     code_sha256 VARCHAR(64) NOT NULL COMMENT '代码摘要',
-                    status VARCHAR(20) NOT NULL COMMENT '执行状态 queued/running/completed/failed/timed_out',
+                    status VARCHAR(20) NOT NULL COMMENT '执行状态 queued/running/completed/failed/timed_out/cancelled',
                     timeout_seconds INT NOT NULL COMMENT '超时秒数',
                     exit_code INT DEFAULT NULL COMMENT '子进程退出码',
                     sandbox_container_id VARCHAR(100) DEFAULT NULL COMMENT '执行所在用户沙箱容器ID',
@@ -375,6 +494,48 @@ async def init_db() -> None:
                     "agents",
                     "output_schema",
                     "ALTER TABLE agents ADD COLUMN output_schema JSON DEFAULT NULL AFTER prompt_variables",
+                ),
+                (
+                    "agents",
+                    "planning_mode",
+                    "ALTER TABLE agents ADD COLUMN planning_mode VARCHAR(20) NOT NULL "
+                    "DEFAULT 'disabled' COMMENT '任务规划模式 disabled/explicit' AFTER iteration_count",
+                ),
+                (
+                    "agents",
+                    "permission_preset",
+                    "ALTER TABLE agents ADD COLUMN permission_preset VARCHAR(30) NOT NULL "
+                    "DEFAULT 'standard' COMMENT '工具权限预设 safe/standard/auto/developer' AFTER planning_mode",
+                ),
+                (
+                    "chat_sessions",
+                    "permission_preset",
+                    "ALTER TABLE chat_sessions ADD COLUMN permission_preset VARCHAR(30) DEFAULT NULL "
+                    "COMMENT '会话级工具权限预设，空值继承 Agent' AFTER title",
+                ),
+                (
+                    "chat_sessions",
+                    "sandbox_mode",
+                    "ALTER TABLE chat_sessions ADD COLUMN sandbox_mode VARCHAR(30) DEFAULT NULL "
+                    "COMMENT '会话级沙箱模式覆盖值' AFTER permission_preset",
+                ),
+                (
+                    "chat_sessions",
+                    "approval_policy",
+                    "ALTER TABLE chat_sessions ADD COLUMN approval_policy VARCHAR(20) DEFAULT NULL "
+                    "COMMENT '会话级审批策略覆盖值' AFTER sandbox_mode",
+                ),
+                (
+                    "agents",
+                    "execution_timeout_seconds",
+                    "ALTER TABLE agents ADD COLUMN execution_timeout_seconds INT NOT NULL "
+                    "DEFAULT 120 COMMENT 'Agent整体执行超时秒数' AFTER iteration_count",
+                ),
+                (
+                    "mcp_configs",
+                    "timeout_seconds",
+                    "ALTER TABLE mcp_configs ADD COLUMN timeout_seconds INT NOT NULL "
+                    "DEFAULT 30 COMMENT 'MCP完整操作超时秒数，范围1-60' AFTER endpoint",
                 ),
                 (
                     "trace_runs",
@@ -443,6 +604,36 @@ async def init_db() -> None:
                     "ALTER TABLE code_executions ADD COLUMN sandbox_container_id VARCHAR(100) "
                     "DEFAULT NULL AFTER exit_code",
                 ),
+                (
+                    "models",
+                    "quota_mode",
+                    "ALTER TABLE models ADD COLUMN quota_mode VARCHAR(20) NOT NULL "
+                    "DEFAULT 'unlimited' COMMENT 'Token 限额模式 unlimited/daily' AFTER max_tokens",
+                ),
+                (
+                    "models",
+                    "daily_token_limit",
+                    "ALTER TABLE models ADD COLUMN daily_token_limit BIGINT DEFAULT NULL "
+                    "COMMENT '每日 Token 限额，unlimited 时为空' AFTER quota_mode",
+                ),
+                (
+                    "trace_runs",
+                    "invocation_source",
+                    "ALTER TABLE trace_runs ADD COLUMN invocation_source VARCHAR(20) NOT NULL "
+                    "DEFAULT 'platform' COMMENT '调用来源 platform/api/workflow' AFTER agent_id",
+                ),
+                (
+                    "trace_runs",
+                    "client_conversation_id",
+                    "ALTER TABLE trace_runs ADD COLUMN client_conversation_id VARCHAR(100) "
+                    "DEFAULT NULL COMMENT '外部调用方会话标识' AFTER invocation_source",
+                ),
+                (
+                    "trace_runs",
+                    "request_id",
+                    "ALTER TABLE trace_runs ADD COLUMN request_id VARCHAR(64) "
+                    "DEFAULT NULL COMMENT '对外暴露的一次请求唯一编号' AFTER invocation_source",
+                ),
             ]
             for table_name, column_name, alter_sql in migrations:
                 try:
@@ -457,6 +648,35 @@ async def init_db() -> None:
                         log.info("[DB] added %s column to %s table", column_name, table_name)
                 except Exception:
                     pass
+
+            # request_id 会作为后续反馈接口的公开关联键，必须保证一次请求只对应一个 Trace。
+            await cur.execute(
+                "SELECT INDEX_NAME FROM information_schema.STATISTICS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='trace_runs' "
+                "AND INDEX_NAME='uk_trace_runs_request_id'",
+                (DB_NAME,),
+            )
+            if not await cur.fetchone():
+                await cur.execute(
+                    "ALTER TABLE trace_runs ADD UNIQUE INDEX "
+                    "uk_trace_runs_request_id (request_id)"
+                )
+                log.info("[DB] added unique request_id index to trace_runs table")
+
+            # RunSkillScript 已下线，空历史环境可直接删除其专用来源字段。
+            removed_runtime_columns = ("source_type", "skill_id")
+            for column_name in removed_runtime_columns:
+                await cur.execute(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='code_executions' AND COLUMN_NAME=%s",
+                    (DB_NAME, column_name),
+                )
+                runtime_column = await cur.fetchone()
+                if runtime_column:
+                    await cur.execute(
+                        f"ALTER TABLE code_executions DROP COLUMN {column_name}"
+                    )
+                    log.info("[DB] removed obsolete %s column from code_executions", column_name)
 
             # Argon2id 哈希可能超过历史 VARCHAR(100)，只在字段长度不足时扩容。
             await cur.execute(

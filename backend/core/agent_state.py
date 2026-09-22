@@ -38,6 +38,16 @@ class AgentPlatformState(AgentState):
     approval_status: NotRequired[str]
     # Agent 或工作流执行过程中的错误信息；没有错误时不写入。
     error: NotRequired[str]
+    # 当前请求显式生成的任务计划；关闭规划模式时不写入。
+    task_plan: NotRequired[Dict[str, Any]]
+    # 当前准备执行的步骤列表下标，从 0 开始。
+    current_plan_step_index: NotRequired[int]
+    # 规划执行阶段，例如 executing、completed 或 failed。
+    planning_phase: NotRequired[str]
+    # 当前步骤执行失败时的错误，用于路由到最终汇总节点。
+    plan_execution_error: NotRequired[str]
+    # 当前 Agent 的规划模式，供流式事件层区分步骤输出和最终答案。
+    planning_mode: NotRequired[str]
 
 
 def _unique_strings(values: Optional[Iterable[Any]]) -> List[str]:
@@ -62,6 +72,7 @@ def build_agent_state(
     current_input: str = "",
     current_node_id: Optional[str] = None,
     approval_status: str = "",
+    planning_mode: str = "disabled",
 ) -> AgentPlatformState:
     """构造兼容原 Agent 的初始 State。
 
@@ -74,6 +85,7 @@ def build_agent_state(
         "available_skills": _unique_strings(available_skills),
         "loaded_skills": _unique_strings(loaded_skills),
         "current_input": str(current_input or ""),
+        "planning_mode": str(planning_mode or "disabled"),
     }
     if current_node_id is not None:
         state["current_node_id"] = str(current_node_id)

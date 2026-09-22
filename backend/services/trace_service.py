@@ -82,13 +82,14 @@ async def create_span(
 
 async def list_traces(user_id: int, limit: int = 100) -> List[Dict]:
     return await fetch_all(
-        "SELECT t.id, t.agent_id, t.session_id, t.status, t.model, t.input_text, "
+        "SELECT t.id, t.request_id, t.agent_id, t.session_id, t.invocation_source, "
+        "t.client_conversation_id, t.status, t.model, t.input_text, "
         "t.duration_ms, t.started_at, t.ended_at, t.created_at, "
         "a.name AS agent_name, s.title AS session_title, "
         "(SELECT COUNT(*) FROM trace_spans sp WHERE sp.trace_id=t.id) AS span_count "
         "FROM trace_runs t "
         "JOIN agents a ON a.id=t.agent_id "
-        "JOIN chat_sessions s ON s.id=t.session_id "
+        "LEFT JOIN chat_sessions s ON s.id=t.session_id "
         "WHERE t.user_id=%s ORDER BY t.id DESC LIMIT %s",
         (user_id, limit),
     )
@@ -99,7 +100,7 @@ async def get_trace(trace_id: int, user_id: int) -> Optional[Dict]:
         "SELECT t.*, a.name AS agent_name, s.title AS session_title "
         "FROM trace_runs t "
         "JOIN agents a ON a.id=t.agent_id "
-        "JOIN chat_sessions s ON s.id=t.session_id "
+        "LEFT JOIN chat_sessions s ON s.id=t.session_id "
         "WHERE t.id=%s AND t.user_id=%s",
         (trace_id, user_id),
     )

@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from ..database import execute, fetch_all, fetch_one
 from ..security import decrypt_model_api_key, encrypt_model_api_key
+from ..models.token_quota import ModelTokenQuotaExceededError, TokenQuotaMode
+from ..services.token_quota_service import get_daily_quota_status
 
 log = logging.getLogger(__name__)
 
@@ -13,13 +15,23 @@ def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _quota_mode_value(value: Any) -> str:
+    """将 Pydantic 枚举或字符串规范化为数据库枚举值。"""
+    return value.value if isinstance(value, TokenQuotaMode) else str(value or "unlimited")
+
+
 async def list_models(user_id: int) -> List[Dict[str, Any]]:
     """列出用户的所有模型。"""
-    return await fetch_all(
-        "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, is_active, "
+    models = await fetch_all(
+        "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, "
+        "quota_mode, daily_token_limit, is_active, "
         "created_at, updated_at FROM models WHERE user_id=%s ORDER BY created_at DESC",
         (user_id,)
     )
+    for model in models:
+        status = await get_daily_quota_status(model, user_id)
+        model["today_usage"] = status.to_dict()
+    return models
 
 
 async def get_model(model_id: int, user_id: int) -> Optional[Dict[str, Any]]:
@@ -52,11 +64,15 @@ async def get_model(model_id: int, user_id: int) -> Optional[Dict[str, Any]]:
 
 async def get_model_safe(model_id: int, user_id: int) -> Optional[Dict[str, Any]]:
     """获取不包含 api_key 的模型信息（用于 API 响应）。"""
-    return await fetch_one(
-        "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, is_active, "
+    model = await fetch_one(
+        "SELECT id, name, provider, model_id, base_url, temperature, max_tokens, "
+        "quota_mode, daily_token_limit, is_active, "
         "created_at, updated_at FROM models WHERE id=%s AND user_id=%s",
         (model_id, user_id)
     )
+    if model:
+        model["today_usage"] = (await get_daily_quota_status(model, user_id)).to_dict()
+    return model
 
 
 async def create_model(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -64,8 +80,8 @@ async def create_model(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
     now = _now()
     model_id = await execute(
         "INSERT INTO models (user_id, name, provider, model_id, api_key, base_url, "
-        "temperature, max_tokens, is_active, created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "temperature, max_tokens, quota_mode, daily_token_limit, is_active, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             user_id,
             data.get("name", ""),
@@ -75,6 +91,8 @@ async def create_model(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
             data.get("base_url", ""),
             data.get("temperature", 0.7),
             data.get("max_tokens", 4096),
+            _quota_mode_value(data.get("quota_mode")),
+            data.get("daily_token_limit"),
             1 if data.get("is_active", True) else 0,
             now,
             now,
@@ -107,7 +125,8 @@ async def update_model(
     )
     await execute(
         "UPDATE models SET name=%s, provider=%s, model_id=%s, api_key=%s, base_url=%s, "
-        "temperature=%s, max_tokens=%s, is_active=%s, updated_at=%s WHERE id=%s",
+        "temperature=%s, max_tokens=%s, quota_mode=%s, daily_token_limit=%s, "
+        "is_active=%s, updated_at=%s WHERE id=%s",
         (
             data.get("name", ""),
             data.get("provider", "openai"),
@@ -116,6 +135,8 @@ async def update_model(
             data.get("base_url", ""),
             data.get("temperature", 0.7),
             data.get("max_tokens", 4096),
+            _quota_mode_value(data.get("quota_mode")),
+            data.get("daily_token_limit"),
             1 if data.get("is_active", True) else 0,
             now,
             model_id,
@@ -130,7 +151,8 @@ async def test_model_connection(
     config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """测试模型连接是否可用。支持已保存模型的 ID 或直接传入配置。"""
-    from langchain_openai import ChatOpenAI
+    from ..llm_adapters.registry import get_llm_adapter, normalize_provider
+    from ..models.llm_adapter import LlmBuildConfig
 
     if model_id and user_id:
         model = await get_model(model_id, user_id)
@@ -144,6 +166,7 @@ async def test_model_connection(
     api_key = (model.get("api_key") or "").strip()
     model_name = (model.get("model_id") or "").strip()
     base_url = (model.get("base_url") or "").strip()
+    provider = normalize_provider(model.get("provider"))
 
     if not api_key:
         return {"success": False, "detail": "API Key 为空"}
@@ -151,24 +174,41 @@ async def test_model_connection(
         return {"success": False, "detail": "模型 ID 为空"}
 
     try:
-        llm = ChatOpenAI(
-            model=model_name,
-            api_key=api_key,
-            base_url=base_url if base_url else None,
-            temperature=0,
-            max_tokens=10,
-            timeout=15,
-            max_retries=0,
+        adapter = get_llm_adapter(provider)
+        llm = adapter.build_chat_model(
+            LlmBuildConfig(
+                provider=provider,
+                model_name=model_name,
+                api_key=api_key,
+                base_url=base_url if base_url else None,
+                temperature=0,
+                max_tokens=10,
+                timeout_seconds=15,
+                max_retries=0,
+            )
         )
-        resp = await llm.ainvoke("你好")
+        invoke_config = None
+        if model_id and user_id:
+            from ..core.token_quota_callback import ModelTokenQuotaCallback
+
+            test_quota_config = dict(model)
+            test_quota_config["max_tokens"] = 10
+            invoke_config = {
+                "callbacks": [ModelTokenQuotaCallback(test_quota_config, user_id, [])],
+            }
+        resp = await llm.ainvoke("你好", config=invoke_config)
         content = resp.content if hasattr(resp, "content") else str(resp)
         preview = str(content)[:100] if content else ""
         return {
             "success": True,
             "detail": "连接成功",
+            "provider": provider,
+            "adapter": adapter.__class__.__name__,
             "model": model_name,
             "response": preview,
         }
+    except ModelTokenQuotaExceededError:
+        raise
     except Exception as exc:
         msg = str(exc)
         if "401" in msg or "Authentication" in msg or "api key" in msg.lower():

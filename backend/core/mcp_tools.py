@@ -75,7 +75,11 @@ async def build_mcp_langchain_tools(mcp_configs: List[Dict]) -> List[StructuredT
 
     for mcp_cfg in mcp_configs:
         try:
-            client = McpClient(mcp_cfg["base_url"], mcp_cfg["endpoint"])
+            client = McpClient(
+                mcp_cfg["base_url"],
+                mcp_cfg["endpoint"],
+                int(mcp_cfg.get("timeout_seconds") or 30),
+            )
             tools = await mcp_tools_to_langchain(client)
             all_tools.extend(tools)
             log.info(f"[MCP] {mcp_cfg['name']} loaded {len(tools)} tools")

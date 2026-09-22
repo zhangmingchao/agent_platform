@@ -12,9 +12,11 @@ from langgraph.types import Command
 from ..core.agent_factory import create_agent_instance, get_model_name
 from ..core.agent_state import build_agent_state, update_agent_checkpoint_state
 from ..core.agent_output import append_schema_instruction, parse_and_validate_structured_output, render_prompt_template
+from ..core.execution_control import AgentExecutionTimeoutError, stream_with_total_timeout
 from ..runtime.models import RuntimeContext
 from ..core.event_publisher import RedisStreamEventPublisher
 from ..core.trace_handler import TraceContext
+from ..core.token_usage import extract_token_usage
 from ..core.workflow_checkpointer import get_workflow_checkpointer
 from ..core.workflow_native_engine import (
     NativeWorkflowEngine,
@@ -27,6 +29,8 @@ from ..core.workflow_graph import (
 )
 from ..core.workflow_state import workflow_graph_config
 from ..models.agent import Agent
+from ..models.api_access import InvocationSource
+from ..models.mcp import McpConfig
 from ..models.workflow import WorkflowResumeContext, WorkflowRun
 from ..database import execute, fetch_all
 from ..repositories.workflow_repository import find_workflow_run_entity
@@ -89,7 +93,8 @@ async def _invoke_agent_step(
     """
     # 每次执行时根据 Agent 配置装配 Skill、MCP 工具和模型。
     skills_data = await get_agent_skills(agent.id)
-    mcps_data = await get_agent_mcps(agent.id)
+    mcps: List[McpConfig] = await get_agent_mcps(agent.id)
+    mcps_data = [item.to_factory_dict() for item in mcps]
     model_config = await _load_model_config(agent, user_id)
     rendered_prompt = render_prompt_template(
         agent.system_prompt,
@@ -120,6 +125,9 @@ async def _invoke_agent_step(
             workflow_run_id=run_id,
             workflow_step_id=workflow_step_id,
             node_id=node_id,
+            agent_id=agent.id,
+            permission_preset=agent.permission_preset,
+            invocation_source=InvocationSource.WORKFLOW.value,
         ),
     )
 
@@ -139,6 +147,7 @@ async def _invoke_agent_step(
         model_name=get_model_name(runtime_agent, model_config),
         workflow_run_id=run_id,
         workflow_step_id=workflow_step_id,
+        invocation_source=InvocationSource.WORKFLOW,
     )
     trace_run_id = await trace_ctx.start(prompt)
     await execute(
@@ -163,10 +172,14 @@ async def _invoke_agent_step(
             current_input=input_text,
             current_node_id=node_id,
         )
-        async for event in agent_executor.astream_events(
+        event_stream = agent_executor.astream_events(
             initial_state,
             config=config,
             version="v2",
+        )
+        async for event in stream_with_total_timeout(
+            event_stream,
+            agent.execution_timeout_seconds,
         ):
             kind = event["event"]
             event_run_id = event.get("run_id", "")
@@ -191,7 +204,12 @@ async def _invoke_agent_step(
             elif kind == "on_chat_model_end":
                 raw_output = event.get("data", {}).get("output")
                 output = str(raw_output or "")
-                await trace_ctx.on_llm_end(event_run_id, output)
+                usage = extract_token_usage(raw_output)
+                await trace_ctx.on_llm_end(
+                    event_run_id,
+                    output,
+                    tokens=usage.total_tokens,
+                )
                 if not (getattr(raw_output, "tool_calls", None) or []):
                     last_final_response = "".join(current_llm_chunks).strip()
 
@@ -242,6 +260,9 @@ async def _invoke_agent_step(
                 node_id=node_id,
             )
         return output_text, trace_run_id, structured_output
+    except AgentExecutionTimeoutError as exc:
+        await trace_ctx.timeout(str(exc))
+        raise
     except Exception as exc:
         await trace_ctx.error(str(exc))
         raise

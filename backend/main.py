@@ -21,8 +21,10 @@ from .core.workflow_checkpointer import close_workflow_checkpointer, init_workfl
 from .mongo_client import close_mongo, init_mongo
 from .redis_client import close_redis
 from .routers.agents import router as agents_router
+from .routers.api_keys import router as api_keys_router
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
+from .routers.external_chat import router as external_chat_router
 from .routers.mcp_configs import router as mcp_configs_router
 from .routers.models import router as models_router
 from .routers.runtime import router as runtime_router
@@ -64,6 +66,7 @@ app = FastAPI(title="Agent Platform (LangChain)", lifespan=lifespan)
 
 
 app.include_router(auth_router)
+app.include_router(api_keys_router)
 app.include_router(agents_router)
 app.include_router(skills_router)
 app.include_router(mcp_configs_router)
@@ -71,6 +74,7 @@ app.include_router(models_router)
 app.include_router(runtime_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
+app.include_router(external_chat_router)
 app.include_router(traces_router)
 app.include_router(workflows_router)
 

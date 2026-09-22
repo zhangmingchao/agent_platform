@@ -24,6 +24,8 @@ class AgentRepositoryTests(unittest.IsolatedAsyncioTestCase):
             "model_config_id": None,
             "temperature": 0.3,
             "iteration_count": 6,
+            "execution_timeout_seconds": 180,
+            "planning_mode": "explicit",
         }
         with (
             patch.object(agent_repository, "fetch_one", AsyncMock(return_value=row)),
@@ -40,6 +42,8 @@ class AgentRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.prompt_variables["language"], "zh-CN")
         self.assertEqual(agent.skills[0]["name"], "excel")
         self.assertEqual(agent.mcps[0]["name"], "weather")
+        self.assertEqual(agent.execution_timeout_seconds, 180)
+        self.assertEqual(agent.planning_mode.value, "explicit")
 
     def test_service_declares_agent_entity_return_type(self) -> None:
         """公共 get_agent 方法不应再声明返回无结构字典。"""

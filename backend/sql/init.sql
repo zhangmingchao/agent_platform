@@ -15,6 +15,22 @@ CREATE TABLE IF NOT EXISTS users (
     created_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS user_api_keys (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    key_id VARCHAR(32) NOT NULL,
+    key_prefix VARCHAR(64) NOT NULL,
+    key_hash CHAR(64) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    last_used_at DATETIME DEFAULT NULL,
+    revoked_at DATETIME DEFAULT NULL,
+    UNIQUE KEY uk_user_api_key_user (user_id),
+    UNIQUE KEY uk_user_api_key_key_id (key_id),
+    CONSTRAINT fk_user_api_key_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS models (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -25,11 +41,30 @@ CREATE TABLE IF NOT EXISTS models (
     base_url VARCHAR(500) DEFAULT '',
     temperature FLOAT DEFAULT 0.7,
     max_tokens INT DEFAULT 4096,
+    quota_mode VARCHAR(20) NOT NULL DEFAULT 'unlimited',
+    daily_token_limit BIGINT DEFAULT NULL,
     is_active TINYINT DEFAULT 1,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     INDEX idx_models_user (user_id),
     CONSTRAINT fk_model_user FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS model_daily_token_usage (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    model_config_id INT NOT NULL,
+    user_id INT NOT NULL,
+    usage_date DATE NOT NULL,
+    input_tokens BIGINT NOT NULL DEFAULT 0,
+    output_tokens BIGINT NOT NULL DEFAULT 0,
+    total_tokens BIGINT NOT NULL DEFAULT 0,
+    request_count BIGINT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    UNIQUE KEY uk_model_usage_date (model_config_id, usage_date),
+    INDEX idx_model_usage_user_date (user_id, usage_date),
+    CONSTRAINT fk_model_usage_model FOREIGN KEY (model_config_id) REFERENCES models(id) ON DELETE CASCADE,
+    CONSTRAINT fk_model_usage_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -44,6 +79,9 @@ CREATE TABLE IF NOT EXISTS agents (
     model_config_id INT DEFAULT NULL,
     temperature FLOAT DEFAULT 0.7,
     iteration_count INT NOT NULL DEFAULT 6,
+    execution_timeout_seconds INT NOT NULL DEFAULT 120,
+    planning_mode VARCHAR(20) NOT NULL DEFAULT 'disabled',
+    permission_preset VARCHAR(30) NOT NULL DEFAULT 'standard',
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     INDEX idx_agents_user (user_id),
@@ -69,6 +107,7 @@ CREATE TABLE IF NOT EXISTS mcp_configs (
     name VARCHAR(200) NOT NULL,
     base_url VARCHAR(500) NOT NULL,
     endpoint VARCHAR(100) DEFAULT '/mcp',
+    timeout_seconds INT NOT NULL DEFAULT 30,
     description TEXT,
     created_at DATETIME NOT NULL,
     INDEX idx_mcp_configs_user (user_id),
@@ -98,6 +137,9 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     user_id INT NOT NULL,
     agent_id INT NOT NULL,
     title VARCHAR(200) DEFAULT '新对话',
+    permission_preset VARCHAR(30) DEFAULT NULL,
+    sandbox_mode VARCHAR(30) DEFAULT NULL,
+    approval_policy VARCHAR(20) DEFAULT NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_chat_sessions_user (user_id),
@@ -144,10 +186,8 @@ CREATE TABLE IF NOT EXISTS code_executions (
     workflow_run_id INT DEFAULT NULL,
     workflow_step_id INT DEFAULT NULL,
     node_id VARCHAR(100) DEFAULT NULL,
-    source_type VARCHAR(30) NOT NULL,
-    skill_id INT DEFAULT NULL,
     code_sha256 VARCHAR(64) NOT NULL,
-    status VARCHAR(20) NOT NULL COMMENT 'queued/running/completed/failed/timed_out',
+    status VARCHAR(20) NOT NULL COMMENT 'queued/running/completed/failed/timed_out/cancelled',
     timeout_seconds INT NOT NULL,
     exit_code INT DEFAULT NULL,
     sandbox_container_id VARCHAR(100) DEFAULT NULL,
@@ -169,6 +209,9 @@ CREATE TABLE IF NOT EXISTS trace_runs (
     session_id INT DEFAULT NULL,
     user_id INT NOT NULL,
     agent_id INT NOT NULL,
+    invocation_source VARCHAR(20) NOT NULL DEFAULT 'platform',
+    request_id VARCHAR(64) DEFAULT NULL,
+    client_conversation_id VARCHAR(100) DEFAULT NULL,
     workflow_run_id INT DEFAULT NULL,
     workflow_step_id INT DEFAULT NULL,
     status VARCHAR(20) DEFAULT 'running',
@@ -182,6 +225,7 @@ CREATE TABLE IF NOT EXISTS trace_runs (
     created_at DATETIME NOT NULL,
     INDEX idx_trace_runs_session (session_id),
     INDEX idx_trace_runs_user (user_id),
+    UNIQUE INDEX uk_trace_runs_request_id (request_id),
     INDEX idx_trace_runs_workflow_run (workflow_run_id),
     INDEX idx_trace_runs_workflow_step (workflow_step_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -202,6 +246,68 @@ CREATE TABLE IF NOT EXISTS trace_spans (
     created_at DATETIME NOT NULL,
     INDEX idx_trace_spans_run (run_id),
     CONSTRAINT fk_span_run FOREIGN KEY (run_id) REFERENCES trace_runs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS session_events (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT DEFAULT NULL,
+    trace_run_id INT DEFAULT NULL,
+    agent_id INT DEFAULT NULL,
+    workflow_run_id INT DEFAULT NULL,
+    workflow_step_id INT DEFAULT NULL,
+    event_source VARCHAR(50) NOT NULL,
+    event_type VARCHAR(50) NOT NULL,
+    turn_id VARCHAR(120) DEFAULT '',
+    step_id VARCHAR(160) DEFAULT '',
+    run_id VARCHAR(120) DEFAULT '',
+    phase VARCHAR(80) DEFAULT '',
+    name VARCHAR(200) DEFAULT '',
+    status VARCHAR(40) DEFAULT '',
+    payload_json JSON DEFAULT NULL,
+    created_at DATETIME NOT NULL,
+    INDEX idx_session_events_user_id (user_id, id),
+    INDEX idx_session_events_session_id (session_id, id),
+    INDEX idx_session_events_trace_run_id (trace_run_id, id),
+    CONSTRAINT fk_session_events_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_session_events_session FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_session_events_trace FOREIGN KEY (trace_run_id) REFERENCES trace_runs(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS agent_task_plans (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    trace_run_id INT NOT NULL,
+    user_id INT NOT NULL,
+    agent_id INT NOT NULL,
+    goal VARCHAR(500) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    current_step_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    finished_at DATETIME DEFAULT NULL,
+    UNIQUE KEY uk_agent_task_plan_trace (trace_run_id),
+    INDEX idx_agent_task_plan_user (user_id),
+    INDEX idx_agent_task_plan_agent (agent_id),
+    CONSTRAINT fk_agent_task_plan_trace FOREIGN KEY (trace_run_id) REFERENCES trace_runs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS agent_task_plan_steps (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    plan_id BIGINT NOT NULL,
+    step_key VARCHAR(32) NOT NULL,
+    step_order INT NOT NULL,
+    title VARCHAR(100) NOT NULL,
+    instruction TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    result_summary MEDIUMTEXT DEFAULT NULL,
+    error_text TEXT DEFAULT NULL,
+    started_at DATETIME DEFAULT NULL,
+    finished_at DATETIME DEFAULT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    UNIQUE KEY uk_agent_task_plan_step_order (plan_id, step_order),
+    UNIQUE KEY uk_agent_task_plan_step_key (plan_id, step_key),
+    CONSTRAINT fk_agent_task_plan_step_plan FOREIGN KEY (plan_id) REFERENCES agent_task_plans(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS multi_agent_workflows (

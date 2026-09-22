@@ -77,7 +77,7 @@ Sandbox Service 是唯一允许访问 Docker Engine 的组件，负责用户容�
 │  ├── Skill Tool                                                    │
 │  ├── MCP Tool                                                      │
 │  ├── HTTP Action                                                   │
-│  └── ExecutePython / RunSkillScript                                │
+│  └── ExecutePython                                                 │
 └──────────────────────────────┬─────────────────────────────────────┘
                                │ 创建执行记录、准备目录、任务入队
                                ▼
@@ -192,10 +192,7 @@ create_agent_instance
       └── build_mcp_langchain_tools
 ```
 
-`build_runtime_tools()` 根据 `RuntimeContext` 创建：
-
-- `ExecutePython`
-- `RunSkillScript`
+`build_runtime_tools()` 根据 `RuntimeContext` 创建 `ExecutePython`。
 
 ### 5.2 LLM 决定调用 Tool
 
@@ -335,7 +332,6 @@ python -I /opt/sandbox/child_runner.py runtime.json
 - `INPUT_DIR`
 - `OUTPUT_DIR`
 - `INPUT_FILES`
-- `RUNTIME_ARGS`
 
 用户代码可以将最终结构化数据赋值给 `result`，由 child runner 写入：
 
@@ -388,7 +384,6 @@ LangGraph Agent
 | `build_all_tools()` | `backend/core/agent_factory.py` | 汇总所有可供 Agent 调用的工具 |
 | `build_runtime_tools()` | `backend/runtime/tools.py` | 根据 RuntimeContext 创建 Python Runtime 工具 |
 | `ExecutePythonInput` | `backend/runtime/tools.py` | 定义 ExecutePython 对 LLM 暴露的参数 Schema |
-| `RunSkillScriptInput` | `backend/runtime/tools.py` | 定义 Skill 脚本工具的参数 Schema |
 | `StructuredTool` | LangChain | 将异步 Python 函数包装成 LLM 可调用 Tool |
 
 ### 6.2 Runtime 上下文
@@ -418,7 +413,6 @@ LangGraph Agent
 | `save_runtime_file()` | 同上 | 保存用户上传的 Runtime 输入文件 |
 | `get_runtime_file()` | 同上 | 按用户查询单个 Runtime 文件 |
 | `get_runtime_files()` | 同上 | 批量验证文件归属并保持输入顺序 |
-| `resolve_skill_script()` | 同上 | 校验 Skill 脚本路径，防止目录穿越 |
 | `_workspace_id()` | 同上 | 将上下文转换成安全 workspace 标识 |
 | `_register_artifacts()` | 同上 | 登记沙箱生成文件并返回下载信息 |
 | `_rewrite_virtual_input_paths()` | 同上 | 兼容模型生成的 `/mnt/data/文件名` 路径 |

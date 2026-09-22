@@ -59,6 +59,43 @@
         />
       </el-form-item>
 
+      <el-form-item label="执行超时" prop="execution_timeout_seconds">
+        <el-input-number
+          v-model="form.execution_timeout_seconds"
+          :min="10"
+          :max="1800"
+          :step="10"
+          controls-position="right"
+        />
+        <span class="switch-label">秒，包含规划、模型调用、工具执行和结果汇总</span>
+      </el-form-item>
+
+      <el-form-item label="任务规划">
+        <el-switch
+          v-model="form.planning_mode"
+          active-value="explicit"
+          inactive-value="disabled"
+        />
+        <span class="switch-label">开启后先生成计划，再按步骤执行并汇总</span>
+      </el-form-item>
+
+      <el-form-item label="权限预设">
+        <el-select v-model="form.permission_preset" style="width: 100%">
+          <el-option
+            v-for="item in permissionPresetOptions"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+          >
+            <div class="permission-option">
+              <span>{{ item.label }}</span>
+              <small>{{ item.description }}</small>
+            </div>
+          </el-option>
+        </el-select>
+        <div class="field-hint">控制工具调用的沙箱边界和高风险操作审批策略。</div>
+      </el-form-item>
+
       <el-form-item label="模型来源">
         <el-radio-group v-model="modelSource" @change="onModelSourceChange">
           <el-radio-button label="custom" value="custom" >自定义模型</el-radio-button>
@@ -162,6 +199,9 @@ const form = reactive({
   prompt_variables: {},
   output_schema: null,
   iteration_count: 6,
+  execution_timeout_seconds: 120,
+  planning_mode: 'disabled',
+  permission_preset: 'standard',
   model: 'deepseek-chat',
   model_config_id: null,
   temperature: 0.7,
@@ -180,6 +220,12 @@ const builtinModels = ref([])
 const skills = ref([])
 const moduleList = ref([])
 const mcps = ref([])
+const permissionPresetOptions = [
+  { value: 'safe', label: '安全模式', description: '只允许低风险只读工具，高风险工具直接拒绝' },
+  { value: 'standard', label: '标准模式', description: '允许工作区写入，高风险工具需要审批' },
+  { value: 'auto', label: '自动模式', description: '无人值守，中低风险工具可执行，高风险工具拒绝' },
+  { value: 'developer', label: '开发者模式', description: '更宽执行边界，高风险工具仍需要审批' }
+]
 
 const parsePythonSchema = async () => {
   const result = await request.post('/api/output-schema/python-to-json', { source: pythonSchemaText.value })
@@ -271,6 +317,9 @@ const loadData = async () => {
         }
       }
       form.iteration_count = agent.iteration_count || 6
+      form.execution_timeout_seconds = agent.execution_timeout_seconds || 120
+      form.planning_mode = agent.planning_mode || 'disabled'
+      form.permission_preset = agent.permission_preset || 'standard'
       form.model = agent.model
       form.model_config_id = agent.model_config_id
       form.temperature = agent.temperature
@@ -333,4 +382,6 @@ onMounted(async () => {
 .switch-label { margin-left: 10px; color: #606266; font-size: 13px; }
 .schema-editor { width: 100%; display: flex; flex-direction: column; gap: 10px; }
 .schema-editor :deep(textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; line-height: 1.55; }
+.permission-option { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; padding: 4px 0; }
+.permission-option small { color: #909399; font-size: 12px; }
 </style>

@@ -21,7 +21,8 @@ async def find_agent_by_id(agent_id: int, user_id: int) -> Optional[Agent]:
         (agent_id,),
     )
     mcps: List[Dict[str, Any]] = await fetch_all(
-        "SELECT m.id, m.name, m.base_url, m.endpoint, m.description FROM mcp_configs m "
+        "SELECT m.id, m.name, m.base_url, m.endpoint, m.description, m.timeout_seconds "
+        "FROM mcp_configs m "
         "JOIN agent_mcps ao ON m.id=ao.mcp_id WHERE ao.agent_id=%s",
         (agent_id,),
     )
@@ -32,7 +33,8 @@ async def find_agents_by_user(user_id: int) -> List[Agent]:
     """查询用户的 Agent 列表并转换为实体。列表场景不额外加载关联详情。"""
     rows: List[Dict[str, Any]] = await fetch_all(
         "SELECT id, user_id, name, description, system_prompt, prompt_variables, output_schema, "
-        "model, model_config_id, temperature, iteration_count, created_at, updated_at "
+        "model, model_config_id, temperature, iteration_count, execution_timeout_seconds, "
+        "planning_mode, permission_preset, created_at, updated_at "
         "FROM agents WHERE user_id=%s ORDER BY updated_at DESC",
         (user_id,),
     )

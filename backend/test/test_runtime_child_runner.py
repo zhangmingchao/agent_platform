@@ -29,7 +29,6 @@ class RuntimeChildRunnerTests(unittest.TestCase):
             "inputDir": str(input_dir),
             "outputDir": str(output_dir),
             "inputFiles": {},
-            "arguments": {},
         }), encoding="utf-8")
         runner = Path(__file__).resolve().parents[1] / "runtime" / "child_runner.py"
         process = subprocess.run(
@@ -84,6 +83,18 @@ class RuntimeChildRunnerTests(unittest.TestCase):
         try:
             self.assertNotEqual(process.returncode, 0)
             self.assertIn("Runtime 仅允许修改", process.stderr)
+        finally:
+            temporary.cleanup()
+
+    def test_does_not_expose_removed_runtime_arguments(self) -> None:
+        """下线 RunSkillScript 后不再向执行代码暴露 RUNTIME_ARGS。"""
+        process, output_dir, temporary = self._run_code(
+            "result = {'has_runtime_args': 'RUNTIME_ARGS' in globals()}\n"
+        )
+        try:
+            self.assertEqual(process.returncode, 0, process.stderr)
+            result = json.loads((output_dir / "result.json").read_text())
+            self.assertFalse(result["has_runtime_args"])
         finally:
             temporary.cleanup()
 

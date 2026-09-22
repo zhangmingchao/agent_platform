@@ -64,6 +64,10 @@
                   <el-icon><Lock /></el-icon>
                   修改密码
                 </el-dropdown-item>
+                <el-dropdown-item @click="openApiKeyDialog">
+                  <el-icon><Key /></el-icon>
+                  API Key
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -100,6 +104,58 @@
       </div>
     </template>
   </el-dialog>
+
+  <el-dialog v-model="showApiKey" title="API Key" width="560px" @closed="issuedApiKey = ''">
+    <div v-loading="apiKeyLoading" class="api-key-dialog">
+      <el-descriptions :column="1" border>
+        <el-descriptions-item label="状态">
+          <el-tag v-if="apiKeyStatus.configured" :type="apiKeyStatus.status === 'active' ? 'success' : 'info'">
+            {{ apiKeyStatus.status === 'active' ? '有效' : '已吊销' }}
+          </el-tag>
+          <span v-else>尚未创建</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="密钥标识">
+          {{ apiKeyStatus.key_prefix ? `${apiKeyStatus.key_prefix}...` : '-' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="最后使用">
+          {{ formatDate(apiKeyStatus.last_used_at) }}
+        </el-descriptions-item>
+      </el-descriptions>
+
+      <div v-if="issuedApiKey" class="issued-key">
+        <el-alert
+          title="完整密钥只显示一次，请立即保存"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-input :model-value="issuedApiKey" readonly>
+          <template #append>
+            <el-button title="复制 API Key" @click="copyApiKey">
+              <el-icon><CopyDocument /></el-icon>
+            </el-button>
+          </template>
+        </el-input>
+      </div>
+    </div>
+    <template #footer>
+      <div class="dialog-footer api-key-actions">
+        <el-button
+          v-if="apiKeyStatus.status === 'active'"
+          type="danger"
+          plain
+          :loading="apiKeyLoading"
+          @click="revokeCurrentApiKey"
+        >
+          吊销
+        </el-button>
+        <el-button type="primary" :loading="apiKeyLoading" @click="issueCurrentApiKey">
+          <el-icon><Refresh /></el-icon>
+          {{ apiKeyStatus.status === 'active' ? '重新生成' : '生成密钥' }}
+        </el-button>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -107,7 +163,7 @@ import {computed, reactive, ref} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import request from '../utils/request'
-import {ElMessage} from "element-plus";
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
@@ -121,8 +177,12 @@ const activeMenu = computed(() => {
 const currentTitle = computed(() => route.meta?.title || '')
 
 const showUpdatePassword = ref(false)
+const showApiKey = ref(false)
 const formLabelWidth = '140px'
 const loading = ref(false)
+const apiKeyLoading = ref(false)
+const issuedApiKey = ref('')
+const apiKeyStatus = ref({ configured: false })
 const isCollapse = ref(false)
 const toggleCollapse = () => {
   isCollapse.value = !isCollapse.value
@@ -147,6 +207,76 @@ const rules = {
   confirmPassword:[
     {required: true,message:'请输入确认密码',trigger: 'blur'}
   ]
+}
+
+const formatDate = (value) => value ? new Date(value).toLocaleString('zh-CN') : '-'
+
+const loadApiKeyStatus = async () => {
+  apiKeyStatus.value = await request.get('/api/api-key')
+}
+
+const openApiKeyDialog = async () => {
+  showApiKey.value = true
+  issuedApiKey.value = ''
+  apiKeyLoading.value = true
+  try {
+    await loadApiKeyStatus()
+  } finally {
+    apiKeyLoading.value = false
+  }
+}
+
+const issueCurrentApiKey = async () => {
+  if (apiKeyStatus.value.status === 'active') {
+    try {
+      await ElMessageBox.confirm(
+        '重新生成后，旧 API Key 会立即失效。确认继续吗？',
+        '重新生成 API Key',
+        { type: 'warning', confirmButtonText: '确认生成', cancelButtonText: '取消' }
+      )
+    } catch (error) {
+      return
+    }
+  }
+  apiKeyLoading.value = true
+  try {
+    const result = await request.post('/api/api-key')
+    issuedApiKey.value = result.api_key
+    await loadApiKeyStatus()
+    ElMessage.success('API Key 已生成')
+  } finally {
+    apiKeyLoading.value = false
+  }
+}
+
+const copyApiKey = async () => {
+  try {
+    await navigator.clipboard.writeText(issuedApiKey.value)
+    ElMessage.success('API Key 已复制')
+  } catch (error) {
+    ElMessage.error('复制失败，请手动选择密钥文本')
+  }
+}
+
+const revokeCurrentApiKey = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '吊销后，使用当前 API Key 的后端请求会立即失败。',
+      '吊销 API Key',
+      { type: 'warning', confirmButtonText: '确认吊销', cancelButtonText: '取消' }
+    )
+  } catch (error) {
+    return
+  }
+  apiKeyLoading.value = true
+  try {
+    await request.delete('/api/api-key')
+    issuedApiKey.value = ''
+    await loadApiKeyStatus()
+    ElMessage.success('API Key 已吊销')
+  } finally {
+    apiKeyLoading.value = false
+  }
 }
 
 const handleLogout = async () => {
@@ -247,5 +377,18 @@ const submitPassword = async () => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+.api-key-dialog {
+  min-height: 150px;
+}
+.issued-key {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+.api-key-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

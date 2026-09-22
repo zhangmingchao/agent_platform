@@ -1,5 +1,6 @@
 """本地 Python Runtime 的文件和代码执行服务。"""
 
+import asyncio
 import ast
 import hashlib
 import json
@@ -22,7 +23,6 @@ from ..config import (
     RUNTIME_EXECUTION_RATE_LIMIT,
     RUNTIME_WORKER_QUEUE_WAIT_SECONDS,
     HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS,
-    SKILLS_DIR,
 )
 from ..database import execute, fetch_all, fetch_one
 from ..rate_limit import RateLimitRule, check_rate_limit
@@ -202,22 +202,6 @@ async def get_runtime_files(file_ids: List[str], user_id: int) -> List[Dict]:
     return [by_id[file_id] for file_id in clean_ids]
 
 
-def resolve_skill_script(skill_id: int, relative_path: str) -> Path:
-    """解析 Skill 内的 Python 脚本，并阻止路径越界。
-
-    返回值结构：通过目录边界、扩展名和大小校验后的绝对 ``Path`` 对象。
-    """
-    skill_root = (Path(SKILLS_DIR) / str(skill_id)).resolve()
-    script_path = (skill_root / relative_path).resolve()
-    if skill_root != script_path and skill_root not in script_path.parents:
-        raise ValueError("脚本路径超出 Skill 目录")
-    if not script_path.is_file() or script_path.suffix.lower() != ".py":
-        raise ValueError("Skill 脚本不存在或不是 .py 文件")
-    if script_path.stat().st_size > 200_000:
-        raise ValueError("Skill 脚本超过 200KB 限制")
-    return script_path
-
-
 def _read_limited(path: Path, limit: int = MAX_LOG_BYTES) -> str:
     """读取有限长度的日志，避免大输出占用过多内存。
 
@@ -284,6 +268,11 @@ def _runtime_context_to_dict(context: RuntimeContext) -> Dict:
         "workflow_run_id": context.workflow_run_id,
         "workflow_step_id": context.workflow_step_id,
         "node_id": context.node_id,
+        "agent_id": context.agent_id,
+        "permission_preset": context.permission_preset.value
+        if hasattr(context.permission_preset, "value")
+        else context.permission_preset,
+        "invocation_source": context.invocation_source,
     }
 
 
@@ -292,10 +281,6 @@ async def prepare_runtime_execution(
     code: str,
     input_file_ids: Optional[List[str]] = None,
     timeout_seconds: Optional[int] = None,
-    *,
-    source_type: str = "generated_code",
-    skill_id: Optional[int] = None,
-    arguments: Optional[Dict] = None,
 ) -> Dict:
     """校验代码和文件，并准备一条可由 Runtime Worker 消费的任务。
 
@@ -365,7 +350,7 @@ async def prepare_runtime_execution(
     source_path.write_text(executable_code, encoding="utf-8")
 
     # 第 7 步：生成父子进程之间的运行配置文件。child_runner.py 会读取它，
-    # 并向被执行代码提供 INPUT_DIR、OUTPUT_DIR、INPUT_FILES 和 RUNTIME_ARGS。
+    # 并向被执行代码提供 INPUT_DIR、OUTPUT_DIR 和 INPUT_FILES。
     config_path = workspace / "runtime.json"
     config_path.write_text(
         json.dumps({
@@ -374,7 +359,6 @@ async def prepare_runtime_execution(
             "inputDir": str(container_workspace / "input"),
             "outputDir": str(container_workspace / "output"),
             "inputFiles": input_map,
-            "arguments": arguments or {},
         }, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -385,12 +369,12 @@ async def prepare_runtime_execution(
     await execute(
         "INSERT INTO code_executions "
         "(id, user_id, workspace_id, session_id, workflow_run_id, workflow_step_id, node_id, "
-        "source_type, skill_id, code_sha256, status, timeout_seconds, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "code_sha256, status, timeout_seconds, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             execution_id, context.user_id, workspace_id, context.session_id,
             context.workflow_run_id, context.workflow_step_id, context.node_id,
-            source_type, skill_id, code_hash, "queued", timeout, _now(),
+            code_hash, "queued", timeout, _now(),
         ),
     )
 
@@ -528,15 +512,11 @@ async def execute_python_code(
     code: str,
     input_file_ids: Optional[List[str]] = None,
     timeout_seconds: Optional[int] = None,
-    *,
-    source_type: str = "generated_code",
-    skill_id: Optional[int] = None,
-    arguments: Optional[Dict] = None,
 ) -> Dict:
     """准备任务、提交到 Redis，并等待独立 Runtime Worker 返回结果。
 
-    这是 ``ExecutePython`` 和 ``RunSkillScript`` 共同调用的 API 侧入口。它不再
-    创建 Python 子进程，只负责准备任务、入队及通过 Redis 结果通道等待 Worker。
+    这是 ``ExecutePython`` 的 API侧入口。它不再创建 Python子进程，只负责准备任务、
+    入队及通过 Redis结果通道等待 Worker。
 
     返回值结构：
     ``{"executionId": str, "status": str, "exitCode": int|None, "stdout": str,
@@ -549,16 +529,23 @@ async def execute_python_code(
         code=code,
         input_file_ids=input_file_ids,
         timeout_seconds=timeout_seconds,
-        source_type=source_type,
-        skill_id=skill_id,
-        arguments=arguments,
     )
     execution_id = task["executionId"]
     await enqueue_runtime_task(task)
 
     # 等待时间由“最大排队时间 + 代码执行超时 + Worker 收尾缓冲”组成。
     wait_seconds = RUNTIME_WORKER_QUEUE_WAIT_SECONDS + task["timeoutSeconds"] + 10
-    result = await wait_runtime_result(execution_id, wait_seconds)
+    try:
+        result = await wait_runtime_result(execution_id, wait_seconds)
+    except asyncio.CancelledError:
+        # Agent 被用户取消或达到整体超时时，阻止尚未被 Worker 领取的任务继续执行。
+        await cancel_runtime_task(execution_id, PYTHON_RUNTIME_MAX_TIMEOUT_SECONDS + 60)
+        await execute(
+            "UPDATE code_executions SET status=%s, error_text=%s, finished_at=%s "
+            "WHERE id=%s AND status=%s",
+            ("cancelled", "Agent 执行已取消", _now(), execution_id, "queued"),
+        )
+        raise
     if result is not None:
         return result
 

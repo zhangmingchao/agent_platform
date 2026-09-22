@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..database import execute, execute_many, fetch_one
 from ..core.agent_output import parse_json_object, validate_output_schema
 from ..models.agent import Agent
+from ..models.permission import PermissionPreset
+from ..models.task_planning import PlanningMode
 from ..repositories.agent_repository import find_agent_by_id, find_agents_by_user
 from fastapi import HTTPException
 
@@ -21,6 +23,22 @@ def _validated_agent_options(data: Dict) -> Tuple[Dict, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _planning_mode_value(value: Any) -> str:
+    """将接口枚举或字符串规范化为可持久化的规划模式。"""
+    try:
+        return PlanningMode(value).value
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="任务规划模式无效") from exc
+
+
+def _permission_preset_value(value: Any) -> str:
+    """将接口枚举或字符串规范化为可持久化的权限预设。"""
+    try:
+        return PermissionPreset(value).value
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="权限预设无效") from exc
 
 
 async def list_agents(user_id: int) -> List[Agent]:
@@ -42,8 +60,9 @@ async def create_agent(user_id: int, data: Dict) -> Agent:
     now = _now()
     agent_id = await execute(
         "INSERT INTO agents (user_id, name, description, system_prompt, prompt_variables, output_schema, model, model_config_id, "
-        "temperature, iteration_count, created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "temperature, iteration_count, execution_timeout_seconds, planning_mode, permission_preset, "
+        "created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             user_id,
             data.get("name", "新Agent"),
@@ -55,6 +74,9 @@ async def create_agent(user_id: int, data: Dict) -> Agent:
             data.get("model_config_id"),
             data.get("temperature", 0.7),
             data.get("iteration_count", 6),
+            data.get("execution_timeout_seconds", 120),
+            _planning_mode_value(data.get("planning_mode", PlanningMode.DISABLED)),
+            _permission_preset_value(data.get("permission_preset", PermissionPreset.STANDARD)),
             now,
             now,
         )
@@ -93,7 +115,8 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Agen
     now = _now()
     await execute(
         "UPDATE agents SET name=%s, description=%s, system_prompt=%s, prompt_variables=%s, output_schema=%s, model=%s, "
-        "model_config_id=%s, temperature=%s, iteration_count=%s, updated_at=%s "
+        "model_config_id=%s, temperature=%s, iteration_count=%s, execution_timeout_seconds=%s, "
+        "planning_mode=%s, permission_preset=%s, updated_at=%s "
         "WHERE id=%s",
         (
             data.get("name", "新Agent"),
@@ -105,6 +128,9 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Agen
             data.get("model_config_id"),
             data.get("temperature", 0.7),
             data.get("iteration_count", 6),
+            data.get("execution_timeout_seconds", 120),
+            _planning_mode_value(data.get("planning_mode", PlanningMode.DISABLED)),
+            _permission_preset_value(data.get("permission_preset", PermissionPreset.STANDARD)),
             now,
             agent_id,
         )

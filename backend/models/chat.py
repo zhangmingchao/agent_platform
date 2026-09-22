@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
+from .mcp import McpConfig
+from .task_planning import PlanningMode
+
 if TYPE_CHECKING:
     from ..core.trace_handler import TraceContext
     from langgraph.graph.state import CompiledStateGraph
@@ -78,23 +81,6 @@ class SkillConfig:
 
 
 @dataclass(frozen=True)
-class McpConfig:
-    """当前 Agent 关联的 MCP Server 配置。"""
-
-    id: int
-    name: str
-    raw: Dict[str, Any] = field(repr=False)
-
-    @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "McpConfig":
-        return cls(
-            id=_required_int(data, "id"),
-            name=str(data.get("name") or ""),
-            raw=dict(data),
-        )
-
-
-@dataclass(frozen=True)
 class RuntimeFile:
     """用户本轮允许 Agent 访问的 Runtime 文件。"""
 
@@ -142,18 +128,39 @@ class ChatHistoryMessage:
 
 @dataclass(frozen=True)
 class AgentStateContext:
-    """注入 LangGraph 自定义 State 的聊天业务字段。"""
+    """注入 LangGraph 自定义 State 的聊天业务字段。
+
+    Attributes:
+        runtime_file_ids: 本轮允许 Runtime 工具访问的文件 ID。
+        available_skills: 当前 Agent 已授权使用的 Skill 名称。
+        loaded_skills: 本轮已经读取的 Skill 名称。
+        current_input: 当前用户目标或工作流节点输入。
+        current_node_id: 当前业务节点标识。
+        planning_mode: 当前 Agent 是否启用显式任务规划。
+    """
 
     runtime_file_ids: List[str]
     available_skills: List[str]
     loaded_skills: List[str]
     current_input: str
     current_node_id: str = "chat"
+    planning_mode: PlanningMode = PlanningMode.DISABLED
 
 
 @dataclass(frozen=True)
 class PreparedChatRun:
-    """执行一次聊天请求所需的全部强类型运行时数据。"""
+    """执行一次聊天请求所需的全部强类型运行时数据。
+
+    Attributes:
+        agent_executor: 已经编译的 LangGraph Agent 执行器。
+        history_messages: 本次发送给 Agent 的聊天历史。
+        max_tool_rounds: 最大工具迭代次数。
+        thread_id: 本次 LangGraph 执行使用的线程标识。
+        trace_ctx: 本次执行关联的 Trace 上下文。
+        output_schema: Agent 最终输出需要满足的 JSON Schema。
+        state_context: 注入 LangGraph State 的业务上下文。
+        execution_timeout_seconds: Agent 整体执行允许的最大秒数。
+    """
 
     agent_executor: CompiledStateGraph
     history_messages: List[ChatHistoryMessage]
@@ -162,3 +169,4 @@ class PreparedChatRun:
     trace_ctx: TraceContext
     output_schema: Optional[Dict[str, Any]]
     state_context: AgentStateContext
+    execution_timeout_seconds: int = 120

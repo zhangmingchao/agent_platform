@@ -56,6 +56,22 @@
           </div>
           <div class="message-content">
             <div class="message-role">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
+            <div v-if="msg.role === 'assistant' && msg.task_plan" class="plan-panel completed">
+              <div class="plan-header">
+                <strong>{{ msg.task_plan.goal }}</strong>
+                <el-tag size="small" :type="planStatusType(msg.task_plan.status)">
+                  {{ planStatusText(msg.task_plan.status) }}
+                </el-tag>
+              </div>
+              <div class="plan-steps">
+                <div v-for="step in msg.task_plan.steps" :key="step.step_key" class="plan-step">
+                  <span class="plan-step-marker" :class="`status-${step.status}`"></span>
+                  <span class="plan-step-order">{{ step.order }}</span>
+                  <span class="plan-step-title">{{ step.title }}</span>
+                  <span class="plan-step-status">{{ planStepStatusText(step.status) }}</span>
+                </div>
+              </div>
+            </div>
             <!-- 执行说明与正式回答分开存储，历史消息中默认折叠。 -->
             <div v-if="msg.role === 'assistant' && msg.reasoning_content" class="thinking-panel completed">
               <div class="panel-header" @click="msg.reasoningExpanded = !msg.reasoningExpanded">
@@ -105,6 +121,22 @@
             <el-avatar :icon="Robot" class="ai-avatar" />
           </div>
           <div class="message-content">
+            <div v-if="taskPlan" class="plan-panel">
+              <div class="plan-header">
+                <strong>{{ taskPlan.goal }}</strong>
+                <el-tag size="small" :type="planStatusType(taskPlan.status)">
+                  {{ planStatusText(taskPlan.status) }}
+                </el-tag>
+              </div>
+              <div class="plan-steps">
+                <div v-for="step in taskPlan.steps" :key="step.step_key" class="plan-step">
+                  <span class="plan-step-marker" :class="`status-${step.status}`"></span>
+                  <span class="plan-step-order">{{ step.order }}</span>
+                  <span class="plan-step-title">{{ step.title }}</span>
+                  <span class="plan-step-status">{{ planStepStatusText(step.status) }}</span>
+                </div>
+              </div>
+            </div>
             <!-- 思考过程面板 -->
             <div v-if="thinkingText || pendingText" class="thinking-panel">
               <div class="panel-header" @click="showThinking = !showThinking">
@@ -204,6 +236,72 @@
       </div>
     </div>
 
+    <aside v-if="currentSessionId" class="observer-panel">
+      <div class="observer-header">
+        <div>
+          <h3>执行观察</h3>
+          <p>{{ loopDebug.statusText }}</p>
+        </div>
+        <el-tag size="small" :type="loopDebug.tagType">{{ loopDebug.phaseLabel }}</el-tag>
+      </div>
+
+      <el-tabs v-model="observerTab" stretch>
+        <el-tab-pane label="时间线" name="timeline">
+          <div v-if="loopTimeline.length === 0" class="observer-empty">等待本轮执行事件</div>
+          <div v-else class="timeline-list">
+            <div
+              v-for="event in loopTimeline"
+              :key="event.local_id"
+              class="timeline-item"
+              :class="`phase-${event.phase_group}`"
+            >
+              <span class="timeline-dot"></span>
+              <div class="timeline-body">
+                <div class="timeline-title">
+                  <span>{{ event.phase_label }}</span>
+                  <small>{{ event.time_text }}</small>
+                </div>
+                <div class="timeline-meta">{{ event.detail }}</div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="Trace" name="trace">
+          <div v-if="loopTraceSteps.length === 0" class="observer-empty">暂无步骤结构</div>
+          <div v-else class="trace-tree">
+            <div v-for="step in loopTraceSteps" :key="step.step_id" class="trace-step">
+              <div class="trace-step-title">
+                <span>Step {{ step.step_no }}</span>
+                <small>{{ step.status }}</small>
+              </div>
+              <div class="trace-children">
+                <div v-for="item in step.items" :key="item.local_id" class="trace-child">
+                  <span class="trace-kind">{{ item.kind }}</span>
+                  <span class="trace-name">{{ item.name || item.phase_label }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="调试" name="debug">
+          <div class="debug-grid">
+            <span>Phase</span><strong>{{ loopDebug.phase || '-' }}</strong>
+            <span>Step</span><strong>{{ loopDebug.step_no || '-' }}</strong>
+            <span>Tool</span><strong>{{ loopDebug.tool || '-' }}</strong>
+            <span>Turn</span><strong>{{ loopDebug.turn_id || '-' }}</strong>
+            <span>Run</span><strong>{{ loopDebug.run_id || '-' }}</strong>
+          </div>
+          <div class="debug-events">
+            <div v-for="event in loopTimeline.slice(-8).reverse()" :key="`debug-${event.local_id}`">
+              {{ event.phase }} · {{ event.name || event.detail }}
+            </div>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </aside>
+
     <!-- 图片预览弹窗 -->
     <el-dialog v-model="imageViewerVisible" title="图片预览" width="auto" @close="imageViewerVisible = false">
       <img :src="viewerImage" style="max-width: 100%; max-height: 70vh; display: block; margin: 0 auto;" />
@@ -273,6 +371,7 @@ const inputText = ref('')
 const streaming = ref(false)
 const streamingText = ref('')
 const structuredResult = ref(null)
+const taskPlan = ref(null)
 const thinkingText = ref('')
 // 每个 LLM 轮次独立缓存；轮次完成前仅用于实时展示，不提前判定为正文。
 const pendingRounds = ref({})
@@ -286,6 +385,109 @@ const uploadingFile = ref(false)
 const imageViewerVisible = ref(false)
 const viewerImage = ref('')
 const abortController = ref(null)
+const observerTab = ref('timeline')
+const loopTimeline = ref([])
+const loopTraceSteps = computed(() => {
+  const steps = []
+  const byId = new Map()
+  for (const event of loopTimeline.value) {
+    if (!event.step_id) continue
+    if (!byId.has(event.step_id)) {
+      const step = {
+        step_id: event.step_id,
+        step_no: event.step_no,
+        status: '运行中',
+        items: []
+      }
+      byId.set(event.step_id, step)
+      steps.push(step)
+    }
+    const step = byId.get(event.step_id)
+    if (event.phase === 'step/end') {
+      step.status = event.reason === 'turn_completed' ? '完成' : event.reason || '结束'
+    }
+    if (['llm/start', 'llm/end', 'tool/start', 'tool/end'].includes(event.phase)) {
+      step.items.push(event)
+    }
+  }
+  return steps
+})
+const loopDebug = computed(() => {
+  const latest = loopTimeline.value[loopTimeline.value.length - 1]
+  if (!latest) {
+    return {
+      phase: '',
+      phaseLabel: '空闲',
+      statusText: '当前没有运行中的观察数据',
+      tagType: 'info',
+      step_no: '',
+      tool: '',
+      turn_id: '',
+      run_id: ''
+    }
+  }
+  const isError = ['turn/error', 'turn/timeout'].includes(latest.phase)
+  const isDone = latest.phase === 'turn/end'
+  const currentTool = [...loopTimeline.value].reverse().find(item => item.phase === 'tool/start' || item.phase === 'tool/end')
+  return {
+    phase: latest.phase,
+    phaseLabel: latest.phase_label,
+    statusText: latest.detail || '正在执行',
+    tagType: isError ? 'danger' : (isDone ? 'success' : 'primary'),
+    step_no: latest.step_no,
+    tool: currentTool?.name || '',
+    turn_id: latest.turn_id,
+    run_id: latest.run_id
+  }
+})
+
+const phaseLabels = {
+  'turn/start': '本轮开始',
+  'step/start': '步骤开始',
+  'llm/start': '模型开始',
+  'llm/end': '模型结束',
+  'tool/start': '工具开始',
+  'tool/end': '工具结束',
+  'step/end': '步骤结束',
+  'turn/end': '本轮完成',
+  'turn/error': '本轮失败',
+  'turn/timeout': '本轮超时',
+  'turn/cancelled': '本轮取消'
+}
+
+const phaseGroup = (phase = '') => {
+  if (phase.startsWith('turn/')) return 'turn'
+  if (phase.startsWith('step/')) return 'step'
+  if (phase.startsWith('llm/')) return 'llm'
+  if (phase.startsWith('tool/')) return 'tool'
+  return 'other'
+}
+
+const loopEventDetail = (event) => {
+  if (event.name) return event.name
+  if (event.reason) return event.reason
+  if (event.status) return event.status
+  if (event.error) return event.error
+  return event.step_no ? `Step ${event.step_no}` : ''
+}
+
+const appendLoopEvent = (event) => {
+  const createdAt = new Date()
+  loopTimeline.value.push({
+    ...event,
+    local_id: `${Date.now()}-${loopTimeline.value.length}`,
+    phase_label: phaseLabels[event.phase] || event.phase,
+    phase_group: phaseGroup(event.phase),
+    detail: loopEventDetail(event),
+    time_text: createdAt.toLocaleTimeString('zh-CN', { hour12: false }),
+    created_at: createdAt
+  })
+}
+
+const resetLoopObserver = () => {
+  loopTimeline.value = []
+  observerTab.value = 'timeline'
+}
 
 const formatTime = (d) => {
   if (!d) return ''
@@ -298,6 +500,25 @@ const formatStructured = (value) => {
     try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
   }
   return JSON.stringify(value, null, 2)
+}
+
+const planStatusText = (status) => ({
+  pending: '待执行', running: '执行中', completed: '已完成', failed: '失败'
+}[status] || status)
+const planStatusType = (status) => ({
+  running: 'primary', completed: 'success', failed: 'danger'
+}[status] || 'info')
+const planStepStatusText = (status) => ({
+  pending: '等待', running: '执行中', completed: '完成', failed: '失败', skipped: '跳过'
+}[status] || status)
+
+// 使用服务端返回的稳定 step_key 更新实时计划步骤。
+const updateTaskPlanStep = (step) => {
+  if (!taskPlan.value || !step) return
+  const steps = taskPlan.value.steps || []
+  const index = steps.findIndex(item => item.step_key === step.step_key)
+  if (index >= 0) steps[index] = { ...steps[index], ...step }
+  taskPlan.value = { ...taskPlan.value, steps: [...steps], status: step.status === 'failed' ? 'failed' : 'running' }
 }
 
 const scrollToBottom = async () => {
@@ -319,6 +540,7 @@ const loadSessions = async () => {
 
 const selectSession = async (session) => {
   currentSessionId.value = session.id
+  resetLoopObserver()
   const msgs = await request.get(`/api/sessions/${session.id}/messages`)
   // 解析每条消息的 attachments
   messages.value = msgs.map(m => ({
@@ -333,6 +555,7 @@ const selectSession = async (session) => {
 const createSession = async () => {
   const session = await request.post('/api/sessions', { agent_id: agentId.value })
   currentSessionId.value = session.session_id
+  resetLoopObserver()
   messages.value = [{"role":"assistant","content":"你好啊！请说出你的问题！","attachments":null}]
   await loadSessions()
 }
@@ -514,8 +737,10 @@ const sendMessage = async () => {
   scrollToBottom()
 
   streaming.value = true
+  resetLoopObserver()
   streamingText.value = ''
   structuredResult.value = null
+  taskPlan.value = null
   thinkingText.value = ''
   pendingRounds.value = {}
   showThinking.value = true
@@ -578,6 +803,14 @@ const sendMessage = async () => {
               delete pendingRounds.value[event.round_id]
             } else if (event.type === 'structured_result') {
               try { structuredResult.value = JSON.parse(event.content) } catch { structuredResult.value = event.content }
+            } else if (event.type === 'plan_created') {
+              taskPlan.value = event.plan || null
+            } else if (event.type === 'plan_step_started' || event.type === 'plan_step_completed' || event.type === 'plan_step_failed') {
+              updateTaskPlanStep(event.step)
+            } else if (event.type === 'plan_completed') {
+              taskPlan.value = event.plan || taskPlan.value
+            } else if (event.type === 'agent_loop_event') {
+              appendLoopEvent(event)
             } else if (event.type === 'tool_started') {
               toolCalls.value.push({ id: event.tool_run_id, name: event.name, input: event.input || '', status: 'running' })
               scrollToBottom()
@@ -597,13 +830,13 @@ const sendMessage = async () => {
     }
 
     if (streamingText.value) {
-      messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, structured_content: structuredResult.value })
+      messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, structured_content: structuredResult.value, task_plan: taskPlan.value })
     }
   } catch (e) {
     if (e.name === 'AbortError') {
       // 用户主动停止，保留已生成的内容
       if (streamingText.value) {
-        messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false })
+        messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, task_plan: taskPlan.value })
       }
     } else {
       ElMessage.error(e.message || '对话请求失败')
@@ -612,6 +845,7 @@ const sendMessage = async () => {
     streaming.value = false
     streamingText.value = ''
     structuredResult.value = null
+    taskPlan.value = null
     thinkingText.value = ''
     pendingRounds.value = {}
     toolCalls.value = []
@@ -626,12 +860,19 @@ const stopGenerate = () => {
   }
   streaming.value = false
   if (streamingText.value) {
-    messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false })
+    messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, task_plan: taskPlan.value })
   }
   streamingText.value = ''
+  taskPlan.value = null
   thinkingText.value = ''
   pendingRounds.value = {}
   toolCalls.value = []
+  appendLoopEvent({
+    type: 'agent_loop_event',
+    phase: 'turn/cancelled',
+    turn_id: `session_${currentSessionId.value || 'unknown'}`,
+    status: 'cancelled'
+  })
 }
 
 onMounted(async () => {
@@ -731,11 +972,178 @@ onMounted(async () => {
 }
 .chat-main {
   flex: 1;
+  min-width: 0;
   background: #fff;
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+.observer-panel {
+  width: 320px;
+  min-width: 320px;
+  background: #fff;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.observer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.observer-header h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #111827;
+}
+.observer-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+.observer-panel :deep(.el-tabs) {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+.observer-panel :deep(.el-tabs__content) {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.observer-panel :deep(.el-tab-pane) {
+  height: 100%;
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+}
+.observer-empty {
+  padding: 18px 8px;
+  color: #9ca3af;
+  font-size: 13px;
+  text-align: center;
+}
+.timeline-list {
+  display: grid;
+  gap: 10px;
+}
+.timeline-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 8px;
+  align-items: flex-start;
+}
+.timeline-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+.phase-turn .timeline-dot { background: #2563eb; }
+.phase-step .timeline-dot { background: #7c3aed; }
+.phase-llm .timeline-dot { background: #0891b2; }
+.phase-tool .timeline-dot { background: #16a34a; }
+.timeline-body {
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.timeline-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: #111827;
+}
+.timeline-title small {
+  flex-shrink: 0;
+  color: #9ca3af;
+  font-size: 11px;
+}
+.timeline-meta {
+  margin-top: 3px;
+  color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.trace-tree {
+  display: grid;
+  gap: 10px;
+}
+.trace-step {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.trace-step-title {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: #f9fafb;
+  font-size: 13px;
+  color: #111827;
+}
+.trace-step-title small {
+  color: #6b7280;
+}
+.trace-children {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px 10px;
+}
+.trace-child {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.trace-kind {
+  color: #2563eb;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.trace-name {
+  min-width: 0;
+  color: #4b5563;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.debug-grid {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px 10px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  font-size: 12px;
+}
+.debug-grid span {
+  color: #6b7280;
+}
+.debug-grid strong {
+  min-width: 0;
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.debug-events {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.4;
 }
 .chat-messages {
   flex: 1;
@@ -848,6 +1256,55 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 300px;
+}
+.plan-panel {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+}
+.plan-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #1f2937;
+  font-size: 13px;
+}
+.plan-header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.plan-steps {
+  display: grid;
+  gap: 6px;
+}
+.plan-step {
+  display: grid;
+  grid-template-columns: 8px 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  color: #4b5563;
+  font-size: 12px;
+}
+.plan-step-marker {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+.plan-step-marker.status-running { background: #2563eb; }
+.plan-step-marker.status-completed { background: #16a34a; }
+.plan-step-marker.status-failed { background: #dc2626; }
+.plan-step-marker.status-skipped { background: #d97706; }
+.plan-step-order,
+.plan-step-status { color: #6b7280; }
+.plan-step-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .thinking-panel {
   background: #fafafa;

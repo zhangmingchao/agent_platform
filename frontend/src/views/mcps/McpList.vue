@@ -16,6 +16,9 @@
       </el-table-column>
       <el-table-column prop="base_url" label="服务器地址" />
       <el-table-column prop="endpoint" label="端点" width="120" />
+      <el-table-column label="操作超时" width="100">
+        <template #default="{ row }">{{ row.timeout_seconds || 30 }} 秒</template>
+      </el-table-column>
       <el-table-column prop="description" label="描述" show-overflow-tooltip />
       <el-table-column prop="created_at" label="创建时间" width="180">
         <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
@@ -39,6 +42,15 @@
         </el-form-item>
         <el-form-item label="端点">
           <el-input v-model="form.endpoint" placeholder="/mcp" />
+        </el-form-item>
+        <el-form-item label="操作超时">
+          <el-input-number
+            v-model="form.timeout_seconds"
+            :min="1"
+            :max="60"
+            controls-position="right"
+          />
+          <span class="timeout-unit">秒</span>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
@@ -142,6 +154,7 @@ const form = reactive({
   name: '',
   base_url: 'http://localhost:18888',
   endpoint: '/mcp',
+  timeout_seconds: 30,
   description: ''
 })
 
@@ -186,6 +199,7 @@ const openCreateDialog = () => {
   form.name = ''
   form.base_url = 'http://localhost:18888'
   form.endpoint = '/mcp'
+  form.timeout_seconds = 30
   form.description = ''
   dialogVisible.value = true
 }
@@ -196,6 +210,7 @@ const openEditDialog = (row) => {
   form.name = row.name
   form.base_url = row.base_url
   form.endpoint = row.endpoint
+  form.timeout_seconds = row.timeout_seconds || 30
   form.description = row.description
   dialogVisible.value = true
 }
@@ -302,6 +317,7 @@ const saveMcpName = async (row, value) => {
       name: value,
       base_url: row.base_url,
       endpoint: row.endpoint,
+      timeout_seconds: row.timeout_seconds || 30,
       description: row.description || ''
     })
     row.name = updated.name
@@ -328,6 +344,10 @@ onMounted(loadMcps)
   padding: 10px 12px;
   border-radius: 6px;
   background: #f5f7fa;
+  color: #606266;
+}
+.timeout-unit {
+  margin-left: 8px;
   color: #606266;
 }
 .debug-result {

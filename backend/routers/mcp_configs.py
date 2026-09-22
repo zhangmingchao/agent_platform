@@ -3,10 +3,12 @@ import logging
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..config import HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS, MCP_CALL_RATE_LIMIT
 from ..mcp_client import McpClient
+from ..models.mcp import McpConfigInput
 from ..rate_limit import RateLimitRule, enforce_rate_limit
 from ..services.mcp_config_service import (
     create_mcp_config,
@@ -25,36 +27,79 @@ MCP_CALL_RULE = RateLimitRule(
 )
 
 
+class McpConfigPayload(BaseModel):
+    """创建或修改 MCP Server 的请求结构。
+
+    Attributes:
+        name: MCP Server 展示名称。
+        base_url: MCP Server 基础地址。
+        endpoint: Streamable HTTP 端点路径。
+        description: MCP Server 用途说明。
+        timeout_seconds: 一次完整 MCP 操作的超时秒数。
+    """
+
+    name: str = Field(default="New MCP", min_length=1, max_length=200)
+    base_url: str = Field(default="http://localhost:18888", min_length=1, max_length=500)
+    endpoint: str = Field(default="/mcp", min_length=1, max_length=100)
+    description: str = Field(default="", max_length=5000)
+    timeout_seconds: int = Field(default=30, ge=1, le=60)
+
+    def to_entity(self) -> McpConfigInput:
+        """转换为业务服务使用的 MCP 输入实体。"""
+        return McpConfigInput(
+            name=self.name.strip(),
+            base_url=self.base_url.strip().rstrip("/"),
+            endpoint=self.endpoint.strip(),
+            description=self.description.strip(),
+            timeout_seconds=self.timeout_seconds,
+        )
+
+
 @router.get("")
-async def api_list_mcp_configs(user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
-    return await list_mcp_configs(user["user_id"])
+async def api_list_mcp_configs(
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+    configs = await list_mcp_configs(user["user_id"])
+    return [config.to_dict() for config in configs]
 
 
 @router.get("/{config_id}")
-async def api_get_mcp_config(config_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+async def api_get_mcp_config(
+    config_id: int,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
     cfg = await get_mcp_config(config_id, user["user_id"])
     if not cfg:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")
-    return cfg
+    return cfg.to_dict()
 
 
 @router.post("")
-async def api_create_mcp(request: Request, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    body = await request.json()
-    return await create_mcp_config(user["user_id"], body)
+async def api_create_mcp(
+    payload: McpConfigPayload,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    config = await create_mcp_config(user["user_id"], payload.to_entity())
+    return config.to_dict()
 
 
 @router.put("/{config_id}")
-async def api_update_mcp(config_id: int, request: Request, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    body = await request.json()
-    cfg = await update_mcp_config(config_id, user["user_id"], body)
+async def api_update_mcp(
+    config_id: int,
+    payload: McpConfigPayload,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    cfg = await update_mcp_config(config_id, user["user_id"], payload.to_entity())
     if not cfg:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")
-    return cfg
+    return cfg.to_dict()
 
 
 @router.delete("/{config_id}")
-async def api_delete_mcp(config_id: int, user: dict = Depends(get_current_user)) -> Dict[str, bool]:
+async def api_delete_mcp(
+    config_id: int,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, bool]:
     success = await delete_mcp_config(config_id, user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")
@@ -62,13 +107,16 @@ async def api_delete_mcp(config_id: int, user: dict = Depends(get_current_user))
 
 
 @router.get("/{config_id}/tools")
-async def api_list_mcp_tools(config_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+async def api_list_mcp_tools(
+    config_id: int,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
     cfg = await get_mcp_config(config_id, user["user_id"])
     if not cfg:
         raise HTTPException(status_code=404, detail="MCP 配置不存在")
 
     try:
-        client = McpClient(cfg["base_url"], cfg["endpoint"])
+        client = McpClient(cfg.base_url, cfg.endpoint, cfg.timeout_seconds)
         tools = await client.list_tools()
         return {"tools": tools}
     except Exception as exc:
@@ -77,7 +125,11 @@ async def api_list_mcp_tools(config_id: int, user: dict = Depends(get_current_us
 
 
 @router.post("/{config_id}/call")
-async def api_call_mcp_tool(config_id: int, request: Request, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+async def api_call_mcp_tool(
+    config_id: int,
+    request: Request,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
     await enforce_rate_limit(MCP_CALL_RULE, str(user["user_id"]))
     cfg = await get_mcp_config(config_id, user["user_id"])
     if not cfg:
@@ -92,7 +144,7 @@ async def api_call_mcp_tool(config_id: int, request: Request, user: dict = Depen
         raise HTTPException(status_code=400, detail="arguments 必须是 JSON 对象")
 
     try:
-        client = McpClient(cfg["base_url"], cfg["endpoint"])
+        client = McpClient(cfg.base_url, cfg.endpoint, cfg.timeout_seconds)
         result = await client.call_tool_raw(tool_name, arguments)
         return {"result": result}
     except Exception as exc:

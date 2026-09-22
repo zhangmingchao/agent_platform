@@ -7,6 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from backend.core.agent_factory import create_agent_instance
 from backend.models.agent import Agent
+from backend.models.task_planning import PlanningMode
 from backend.models.chat import (
     ChatSession,
     PreparedChatRun,
@@ -26,6 +27,7 @@ class ChatModelTests(unittest.TestCase):
             "output_schema": {"type": "object"},
             "model_config_id": 3,
             "iteration_count": 8,
+            "execution_timeout_seconds": 240,
         })
 
         self.assertEqual(session.id, 10)
@@ -33,6 +35,8 @@ class ChatModelTests(unittest.TestCase):
         self.assertEqual(agent.id, 20)
         self.assertEqual(agent.prompt_variables["language"], "zh-CN")
         self.assertEqual(agent.iteration_count, 8)
+        self.assertEqual(agent.execution_timeout_seconds, 240)
+        self.assertIs(agent.planning_mode, PlanningMode.DISABLED)
 
     def test_runtime_file_attachment_does_not_expose_storage_path(self) -> None:
         """文件实体转附件时不能把宿主机存储路径发送给模型。"""

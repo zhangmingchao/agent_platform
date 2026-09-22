@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 from ..auth import get_current_user
 from ..config import LLM_MODEL_OPTIONS
 from ..core.schema_dsl import json_schema_to_python_schema, python_schema_to_json_schema
+from ..models.permission import PermissionPreset
+from ..models.task_planning import PlanningMode
 from ..services.agent_service import create_agent, delete_agent, get_agent, list_agents, update_agent
 
 router = APIRouter(prefix="/api", tags=["Agents"])
@@ -18,6 +20,14 @@ class AgentCreate(BaseModel):
     prompt_variables: Dict[str, Any] = Field(default_factory=dict)
     output_schema: Optional[Dict[str, Any]] = None
     iteration_count: int = Field(default=6, ge=1, le=100)
+    execution_timeout_seconds: int = Field(
+        default=120,
+        ge=10,
+        le=1800,
+        description="Agent 整体执行超时秒数",
+    )
+    planning_mode: PlanningMode = PlanningMode.DISABLED
+    permission_preset: PermissionPreset = PermissionPreset.STANDARD
     model: str = "deepseek-chat"
     model_config_id: Optional[int] = None
     temperature: float = 0.7

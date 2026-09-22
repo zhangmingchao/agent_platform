@@ -552,4 +552,4 @@ def execute_skill(command: str) -> str:
 | `backend/services/chat_service.py` | 聊天编排服务，调用 get_agent_skills 加载 Skill 数据 |
 | `backend/core/streaming.py` | 流式输出处理，监听 tool_start/tool_end 事件 |
 | `backend/core/mcp_tools.py` | MCP 工具构建（与 Skill 工具并行注入） |
-| `backend/runtime/tools.py` | Runtime 工具（ExecutePython / RunSkillScript）构建 |
+| `backend/runtime/tools.py` | Runtime 工具（ExecutePython）构建 |

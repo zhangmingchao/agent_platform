@@ -22,6 +22,15 @@
       <el-table-column prop="model" label="模型" width="160" />
       <el-table-column prop="temperature" label="温度" width="100" />
       <el-table-column prop="iteration_count" label="迭代次数" width="100" />
+      <el-table-column label="执行超时" width="100">
+        <template #default="{ row }">{{ row.execution_timeout_seconds || 120 }} 秒</template>
+      </el-table-column>
+      <el-table-column label="任务规划" width="100">
+        <template #default="{ row }">{{ row.planning_mode === 'explicit' ? '已开启' : '已关闭' }}</template>
+      </el-table-column>
+      <el-table-column label="权限预设" width="110">
+        <template #default="{ row }">{{ permissionPresetLabel(row.permission_preset) }}</template>
+      </el-table-column>
       <el-table-column prop="created_at" label="创建时间" width="180">
         <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
       </el-table-column>
@@ -55,6 +64,12 @@ const loading = ref(false)
 
 // 用于表格“创建时间”列的展示。
 const formatDate = (d) => d ? new Date(d).toLocaleString('zh-CN') : ''
+const permissionPresetLabel = (value) => ({
+  safe: '安全模式',
+  standard: '标准模式',
+  auto: '自动模式',
+  developer: '开发者模式'
+}[value || 'standard'] || '标准模式')
 
 // 从后端读取当前用户拥有的 Agent 列表。
 const loadAgents = async () => {
@@ -90,8 +105,14 @@ const saveAgentField = async (row, field, value) => {
       description: field === 'description' ? value : (detail.description || ''),
       system_prompt: detail.system_prompt || '',
       iteration_count: detail.iteration_count || 6,
+      execution_timeout_seconds: detail.execution_timeout_seconds || 120,
+      planning_mode: detail.planning_mode || 'disabled',
+      permission_preset: detail.permission_preset || 'standard',
       model: detail.model,
+      model_config_id: detail.model_config_id || null,
       temperature: detail.temperature,
+      prompt_variables: detail.prompt_variables || {},
+      output_schema: detail.output_schema || null,
       skill_ids: detail.skills?.map(skill => skill.id) || [],
       mcp_ids: detail.mcps?.map(mcp => mcp.id) || []
     })

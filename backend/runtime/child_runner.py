@@ -96,7 +96,6 @@ def main() -> int:
     input_dir = Path(config["inputDir"]).resolve()
     output_dir = Path(config["outputDir"]).resolve()
     input_files = config.get("inputFiles") or {}
-    arguments = config.get("arguments") or {}
 
     _install_audit_hook(workspace, output_dir)
     os.chdir(workspace)
@@ -106,7 +105,6 @@ def main() -> int:
         "INPUT_DIR": str(input_dir),
         "OUTPUT_DIR": str(output_dir),
         "INPUT_FILES": input_files,
-        "RUNTIME_ARGS": arguments,
     }
     code = source_path.read_text(encoding="utf-8")
     exec(compile(code, str(source_path), "exec"), namespace, namespace)

@@ -34,7 +34,7 @@
 
 ## 2. 工具注册条件
 
-只有同时满足以下条件，`ExecutePython` 和 `RunSkillScript` 才会注册到 Agent：
+只有同时满足以下条件，`ExecutePython` 才会注册到 Agent：
 
 1. `PYTHON_RUNTIME_ENABLED=true`；
 2. 创建 Agent Executor 时传入了 `RuntimeContext`。
@@ -82,8 +82,8 @@ LangChain 会将 `StructuredTool` 转换成当前模型供应商支持的工具�
         "timeout_seconds": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 120,
-          "default": 60,
+          "maximum": 30,
+          "default": 30,
           "description": "执行超时秒数"
         }
       },
@@ -107,7 +107,7 @@ OpenAI-compatible 原始响应示例：
       "type": "function",
       "function": {
         "name": "ExecutePython",
-        "arguments": "{\"code\":\"result = {'answer': 1 + 2}\",\"input_file_ids\":[],\"timeout_seconds\":60}"
+        "arguments": "{\"code\":\"result = {'answer': 1 + 2}\",\"input_file_ids\":[],\"timeout_seconds\":30}"
       }
     }
   ]
@@ -126,7 +126,7 @@ AIMessage(
         "args": {
             "code": "result = {'answer': 1 + 2}",
             "input_file_ids": [],
-            "timeout_seconds": 60,
+            "timeout_seconds": 30,
         },
         "id": "call_abc123",
         "type": "tool_call",
@@ -143,7 +143,6 @@ AIMessage(
 | `INPUT_DIR` | `str` | 本次执行的输入目录 |
 | `OUTPUT_DIR` | `str` | 唯一允许写入生成文件的目录 |
 | `INPUT_FILES` | `dict[str, str]` | Runtime 文件 ID 到实际输入路径的映射 |
-| `RUNTIME_ARGS` | `dict` | `RunSkillScript` 接收的业务参数；动态代码通常为空对象 |
 
 读取上传文件并生成 Excel 的示例：
 
@@ -218,70 +217,7 @@ workbook.save(output_path)
 }
 ```
 
-## 4. RunSkillScript 工具
-
-`RunSkillScript` 只允许执行已经绑定到当前 Agent 的 Skill 包内的 `.py` 文件。
-
-### 4.1 发给大模型的工具定义
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "RunSkillScript",
-    "description": "执行已激活 Skill 包内的 Python 脚本。脚本通过 INPUT_FILES、OUTPUT_DIR 和 RUNTIME_ARGS 获取输入，不允许执行未绑定 Skill 的脚本。",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "skill_name": {
-          "type": "string",
-          "description": "已经激活的 Skill 名称"
-        },
-        "script_path": {
-          "type": "string",
-          "description": "Skill 目录内的 .py 脚本相对路径"
-        },
-        "arguments": {
-          "type": "object",
-          "default": {},
-          "description": "通过 RUNTIME_ARGS 传给脚本的参数"
-        },
-        "input_file_ids": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "description": "脚本需要读取的 Runtime 文件 ID 列表"
-        },
-        "timeout_seconds": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 120,
-          "default": 60,
-          "description": "执行超时秒数"
-        }
-      },
-      "required": ["skill_name", "script_path"]
-    }
-  }
-}
-```
-
-### 4.2 模型调用示例
-
-```json
-{
-  "id": "call_skill_001",
-  "type": "function",
-  "function": {
-    "name": "RunSkillScript",
-    "arguments": "{\"skill_name\":\"Excel分析\",\"script_path\":\"scripts/analyze.py\",\"arguments\":{\"sheet\":\"销售明细\"},\"input_file_ids\":[\"file-id\"],\"timeout_seconds\":60}"
-  }
-}
-```
-
-执行结果与 `ExecutePython` 使用相同结构。
-
-## 5. 工具结果回传模型
+## 4. 工具结果回传模型
 
 执行完成后，结果会关联原始 `tool_call_id`，再作为工具消息交给模型：
 
@@ -302,7 +238,7 @@ workbook.save(output_path)
 }
 ```
 
-## 6. Runtime 文件 HTTP 接口
+## 5. Runtime 文件 HTTP 接口
 
 所有接口都需要：
 
@@ -310,7 +246,7 @@ workbook.save(output_path)
 Authorization: Bearer <token>
 ```
 
-### 6.1 上传输入文件
+### 5.1 上传输入文件
 
 ```http
 POST /api/runtime/files
@@ -336,7 +272,7 @@ Content-Type: multipart/form-data
 }
 ```
 
-### 6.2 携带文件发起聊天
+### 5.2 携带文件发起聊天
 
 ```http
 POST /api/chat/stream
@@ -365,7 +301,7 @@ Content-Type: application/json
 
 响应为 `text/event-stream`。
 
-### 6.3 下载输入文件或生成文件
+### 5.3 下载输入文件或生成文件
 
 ```http
 GET /api/runtime/files/{file_id}
@@ -383,7 +319,7 @@ GET /api/runtime/files/{file_id}
 | `410` | 数据库记录存在，但磁盘文件已经丢失 |
 | `429` | 同一会话已有生成任务正在运行 |
 
-## 7. 前端 SSE 事件
+## 6. 前端 SSE 事件
 
 聊天接口通过 SSE 向前端发送以下事件：
 
@@ -415,7 +351,7 @@ data:{"type":"tool_end","content":"{\"status\":\"completed\",...}"}
 | `error` | 执行或生成失败 |
 | `done` | 本轮流结束 |
 
-## 8. 安全边界
+## 7. 安全边界
 
 当前 Runtime 包含以下限制：
 
@@ -431,10 +367,9 @@ data:{"type":"tool_end","content":"{\"status\":\"completed\",...}"}
 
 这些限制适合本地开发，但不应视为完整的不可信代码安全边界。生产环境建议将 Worker 放入独立容器、gVisor 或虚拟机。
 
-## 9. 当前注意事项
+## 8. 当前注意事项
 
 1. `PYTHON_RUNTIME_ENABLED` 默认是 `true`，但仍必须启动 Redis 和 `backend.runtime_worker`。
 2. 项目 `backend/.venv` 当前使用 Python 3.8，而部分代码使用 `set[str]` 等 Python 3.9+ 语法；应升级到 Python 3.11，或改为兼容写法。
 3. 普通 Runtime 文件保存在消息附件中，但模型消息构建逻辑需要确保将文件 ID 和文件名明确加入上下文，否则模型无法可靠填写 `input_file_ids`。
 4. `tool_start` 和 `tool_end` SSE 是前端展示协议，不是模型供应商的原始 tool-calling 协议。
-

@@ -184,7 +184,11 @@ async def build_all_tools(agent, skills: List[Dict], mcp_configs: List[Dict]) ->
 
     for mcp_cfg in mcp_configs:
         try:
-            client = McpClient(mcp_cfg["base_url"], mcp_cfg["endpoint"])
+            client = McpClient(
+                mcp_cfg["base_url"],
+                mcp_cfg["endpoint"],
+                int(mcp_cfg.get("timeout_seconds") or 30),
+            )
             mcp_tools = await client.list_tools()
             openai_tools = mcp_tools_to_openai_format(mcp_tools)
             tools.extend(openai_tools)

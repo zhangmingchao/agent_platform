@@ -16,6 +16,18 @@
       <el-table-column label="温度" width="80">
         <template #default="{ row }">{{ row.temperature }}</template>
       </el-table-column>
+      <el-table-column label="Token限额" min-width="210">
+        <template #default="{ row }">
+          <template v-if="row.quota_mode === 'daily'">
+            <div>每日 {{ formatTokens(row.daily_token_limit) }}</div>
+            <div class="quota-usage">
+              已用 {{ formatTokens(row.today_usage?.used_tokens || 0) }}，
+              剩余 {{ formatTokens(row.today_usage?.remaining_tokens || 0) }}
+            </div>
+          </template>
+          <el-tag v-else type="info" size="small">不限额</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
@@ -59,7 +71,23 @@
           <el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" style="padding: 10px" />
         </el-form-item>
         <el-form-item label="最大Tokens" prop="max_tokens">
-          <el-input v-model="form.max_tokens" type="number" :min="1" :max="128000" />
+          <el-input-number v-model="form.max_tokens" :min="1" :max="128000" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="Token限额" prop="quota_mode">
+          <el-radio-group v-model="form.quota_mode">
+            <el-radio-button value="unlimited">不限额</el-radio-button>
+            <el-radio-button value="daily">每日限额</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.quota_mode === 'daily'" label="每日额度" prop="daily_token_limit">
+          <el-input-number
+            v-model="form.daily_token_limit"
+            :min="1"
+            :max="10000000000"
+            :step="1000"
+            controls-position="right"
+          />
+          <span class="field-hint">每天 00:00（Asia/Shanghai）进入新的统计周期</span>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.is_active" />
@@ -114,14 +142,28 @@ const form = reactive({
   base_url: '',
   temperature: 0.7,
   max_tokens: 4096,
+  quota_mode: 'unlimited',
+  daily_token_limit: null,
   is_active: true
 })
 
 const rules = {
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   model_id: [{ required: true, message: '请输入模型ID', trigger: 'blur' }],
-  api_key: [{ required: true, message: '请输入API Key', trigger: 'blur' }]
+  api_key: [{ required: true, message: '请输入API Key', trigger: 'blur' }],
+  daily_token_limit: [{
+    validator: (_rule, value, callback) => {
+      if (form.quota_mode === 'daily' && (!value || Number(value) <= 0)) {
+        callback(new Error('请输入大于 0 的每日 Token 限额'))
+        return
+      }
+      callback()
+    },
+    trigger: 'change'
+  }]
 }
+
+const formatTokens = (value) => Number(value || 0).toLocaleString('zh-CN')
 
 const loadModels = async () => {
   loading.value = true
@@ -140,6 +182,8 @@ const resetForm = () => {
   form.base_url = ''
   form.temperature = 0.7
   form.max_tokens = 4096
+  form.quota_mode = 'unlimited'
+  form.daily_token_limit = null
   form.is_active = true
   editId.value = null
 }
@@ -158,6 +202,8 @@ const openEdit = (row) => {
   form.base_url = row.base_url
   form.temperature = row.temperature
   form.max_tokens = row.max_tokens
+  form.quota_mode = row.quota_mode || 'unlimited'
+  form.daily_token_limit = row.daily_token_limit
   form.is_active = !!row.is_active
   editId.value = row.id
   dialogVisible.value = true
@@ -165,6 +211,9 @@ const openEdit = (row) => {
 
 const handleSubmit = async () => {
   await formRef.value.validate()
+  if (form.quota_mode === 'unlimited') {
+    form.daily_token_limit = null
+  }
   saving.value = true
   try {
     if (isEdit.value) {
@@ -229,5 +278,15 @@ onMounted(loadModels)
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+}
+
+.quota-usage,
+.field-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.field-hint {
+  margin-left: 12px;
 }
 </style>

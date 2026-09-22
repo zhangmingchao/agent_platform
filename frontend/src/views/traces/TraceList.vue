@@ -15,6 +15,9 @@
           <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="来源" width="90">
+        <template #default="{ row }">{{ sourceText(row.invocation_source) }}</template>
+      </el-table-column>
       <el-table-column prop="agent_name" label="Agent" width="160" show-overflow-tooltip />
       <el-table-column prop="session_title" label="会话" width="180" show-overflow-tooltip />
       <el-table-column label="工作流" width="220" show-overflow-tooltip>
@@ -50,9 +53,13 @@
                 {{ statusText(currentTrace.status) }}
               </el-tag>
             </el-descriptions-item>
+            <el-descriptions-item label="来源">{{ sourceText(currentTrace.invocation_source) }}</el-descriptions-item>
             <el-descriptions-item label="Agent">{{ currentTrace.agent_name }}</el-descriptions-item>
             <el-descriptions-item label="模型">{{ currentTrace.model }}</el-descriptions-item>
             <el-descriptions-item label="会话">{{ currentTrace.session_title }}</el-descriptions-item>
+            <el-descriptions-item v-if="currentTrace.client_conversation_id" label="客户会话标识">
+              {{ currentTrace.client_conversation_id }}
+            </el-descriptions-item>
             <el-descriptions-item label="工作流">
               <span v-if="currentTrace.workflow_name">
                 {{ currentTrace.workflow_name }} / Run #{{ currentTrace.workflow_run_id }} / Step {{ currentTrace.step_order }}
@@ -66,6 +73,30 @@
           <section class="trace-io">
             <h4>用户输入</h4>
             <pre>{{ currentTrace.input_text }}</pre>
+          </section>
+
+          <section v-if="currentTrace.task_plan" class="task-plan-detail">
+            <div class="task-plan-heading">
+              <h4>显式任务计划</h4>
+              <el-tag :type="planStatusType(currentTrace.task_plan.status)" size="small">
+                {{ planStatusText(currentTrace.task_plan.status) }}
+              </el-tag>
+            </div>
+            <div class="task-plan-goal">{{ currentTrace.task_plan.goal }}</div>
+            <el-steps direction="vertical" :active="currentTrace.task_plan.current_step_order">
+              <el-step
+                v-for="step in currentTrace.task_plan.steps"
+                :key="step.step_key"
+                :title="`${step.order}. ${step.title}`"
+                :status="planStepStatus(step.status)"
+              >
+                <template #description>
+                  <div class="plan-step-description">{{ step.instruction }}</div>
+                  <pre v-if="step.result_summary">{{ step.result_summary }}</pre>
+                  <pre v-if="step.error_text" class="error-content">{{ step.error_text }}</pre>
+                </template>
+              </el-step>
+            </el-steps>
           </section>
 
           <h3 class="chain-title">调用链</h3>
@@ -131,11 +162,21 @@ const detailLoading = ref(false)
 const currentTrace = ref(null)
 
 const statusType = (status) => ({
-  success: 'success', ok: 'success', error: 'danger', cancelled: 'warning', running: 'primary'
+  success: 'success', ok: 'success', error: 'danger', cancelled: 'warning', timeout: 'warning', running: 'primary'
 }[status] || 'info')
 const statusText = (status) => ({
-  success: '成功', ok: '成功', error: '失败', cancelled: '已取消', running: '运行中'
+  success: '成功', ok: '成功', error: '失败', cancelled: '已取消', timeout: '已超时', running: '运行中'
 }[status] || status)
+const sourceText = (source) => ({ platform: '平台', api: 'API', workflow: '工作流' }[source] || source || '-')
+const planStatusText = (status) => ({
+  pending: '待执行', running: '执行中', completed: '已完成', failed: '失败'
+}[status] || status)
+const planStatusType = (status) => ({
+  running: 'primary', completed: 'success', failed: 'danger'
+}[status] || 'info')
+const planStepStatus = (status) => ({
+  pending: 'wait', running: 'process', completed: 'success', failed: 'error', skipped: 'wait'
+}[status] || 'wait')
 const spanTypeText = (type) => ({ llm: 'LLM', tool: '工具', setup: '准备' }[type] || type)
 const formatDuration = (ms = 0) => ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms || 0} ms`
 const formatDate = (date) => date ? new Date(date).toLocaleString('zh-CN') : '-'
@@ -177,6 +218,33 @@ onMounted(async () => {
 .trace-page :deep(.el-table__row) { cursor: pointer; }
 .trace-summary { margin-bottom: 20px; }
 .trace-io { margin: 18px 0; }
+.task-plan-detail {
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+}
+.task-plan-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.task-plan-heading h4 { margin: 0; }
+.task-plan-goal { margin-bottom: 14px; color: #303133; }
+.plan-step-description { margin: 4px 0 8px; color: #606266; }
+.task-plan-detail pre {
+  max-height: 240px;
+  margin: 6px 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #f5f7fa;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
 .trace-io h4, .chain-title { margin: 0 0 10px; }
 .trace-io pre, .json-content, .error-content {
   max-height: 360px;

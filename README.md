@@ -6,6 +6,12 @@
 - 📝 **Skill 管理** - 上传 ZIP 技能包（`SKILL.md` + `references/`），在线编辑与 Markdown 预览
 - 🔌 **MCP 配置** - 配置多个 MCP Server，动态发现、查看和调试工具
 - 💬 **流式对话** - SSE 流式响应，多轮 Tool Call 自动循环
+- ⏱️ **执行控制** - Agent 整体超时、MCP 操作超时与用户主动停止
+- 🧩 **插件化 LLM Adapter** - 通过统一适配器注册表接入 OpenAI、DeepSeek、Qwen 或兼容网关
+- 🛡️ **权限预设** - 按 Agent 配置安全、标准、自动和开发者模式，统一控制工具沙箱边界
+- 🔁 **Agent Loop 生命周期** - 流式执行过程中输出 turn、step、LLM 和 tool 阶段事件
+- 📋 **显式任务规划** - 可选地先生成有限步骤，再按顺序执行并汇总结果
+- 🔑 **外部 Agent API** - 用户 API Key 鉴权，调用方自行维护聊天历史
 - 🔎 **Trace 调用链** - 记录每次对话的 LLM 轮次、工具调用、输入输出、错误与耗时
 - 📱 **Web UI** - Vue 3 + Element Plus 前端
 
@@ -191,6 +197,17 @@ python -m backend.main
 | DELETE | `/api/agents/{id}` | 删除 Agent |
 | GET | `/api/ll_models` | 可用模型列表 |
 
+### 模型配置
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/models/adapters` | 查看后端已注册的 LLM Adapter |
+| GET | `/api/modelsList` | 当前用户的模型配置列表 |
+| POST | `/api/models` | 创建模型配置 |
+| PUT | `/api/models/{id}` | 更新模型配置 |
+| DELETE | `/api/models/{id}` | 删除模型配置 |
+| POST | `/api/models/{id}/test` | 测试已保存模型连接 |
+| POST | `/api/models/test` | 测试未保存模型配置 |
+
 ### Skill
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -214,6 +231,9 @@ python -m backend.main
 | GET | `/api/mcp-configs/{id}/tools` | 发现 MCP 工具 |
 | POST | `/api/mcp-configs/{id}/call` | 调试调用 MCP 工具 |
 
+每个 MCP Server 可以独立设置 `1-60` 秒的操作超时，默认 `30` 秒。该时限覆盖一次
+完整的初始化、工具发现或工具调用，而不是只限制其中某一个 HTTP 请求。
+
 ### 会话 & 对话
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -223,6 +243,136 @@ python -m backend.main
 | DELETE | `/api/sessions/{id}` | 删除会话 |
 | GET | `/api/sessions/{id}/messages` | 历史消息 |
 | POST | `/api/chat/stream` | SSE 流式对话（JSON 请求体） |
+
+### 外部 Agent API
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/api-key` | 查询当前登录用户的脱敏 API Key 状态 |
+| POST | `/api/api-key` | 创建或轮换 API Key，完整密钥只返回一次 |
+| DELETE | `/api/api-key` | 吊销当前用户的 API Key |
+| POST | `/api/v1/agents/{id}/chat/stream` | 使用 `X-API-Key` 和调用方历史进行无状态 SSE 对话 |
+
+外部聊天不接收平台 `session_id`，也不会写入 `chat_sessions` 或 `chat_messages`。
+调用方必须在每次请求中提交完整的 `user/assistant` 消息历史。详细协议见
+[`docs/external-chat-api.md`](docs/external-chat-api.md)。
+
+### 插件化 LLM Adapter
+
+模型调用不再由 Agent 工厂直接绑定 `ChatOpenAI`，而是先根据模型配置中的
+`provider` 从 LLM Adapter 注册表选择适配器，再由适配器构建 LangChain Chat Model。
+当前内置 `openai`、`deepseek`、`qwen` 三个供应商，它们都复用 OpenAI 兼容协议实现。
+
+未知 `provider` 会回退为 OpenAI 兼容网关适配器，因此只要第三方或本地网关提供
+OpenAI 风格的 `base_url`、`api_key` 和模型 ID，就可以先不改核心 Agent Loop 直接接入。
+如果后续要支持非 OpenAI 协议，只需要新增一个实现 `LlmAdapter` 接口的类，并在
+`backend/llm_adapters/registry.py` 注册即可。
+
+每个 Adapter 会声明能力矩阵，包含流式输出、工具调用、视觉输入、JSON Schema、
+Token usage、流式 usage、reasoning 参数、最大上下文长度、默认超时和默认重试次数。
+这些能力可通过 `/api/models/adapters` 查询，后续 Agent 创建、模型测试和 SDK 可以用它
+做兼容性校验。
+
+### 显式任务规划
+
+Agent 的“任务规划”默认关闭。开启后，普通平台聊天和外部 Agent API 会先把本轮目标
+拆成最多 6 个顺序步骤，再让现有 ReAct Agent 逐步执行，最后由模型统一生成一次正式
+回答。规划、步骤状态、结果和错误会关联到本次 Trace 持久化，并在聊天页及 Trace 详情中展示。
+
+规划模型生成的原始 JSON 不会进入聊天正文。客户端断开、模型异常、结构化输出校验失败
+或空响应时，活动计划会自动标记失败，未开始步骤会标记为跳过。多 Agent 工作流已经具备
+显式节点编排，因此不会在工作流节点内部再次嵌套任务规划。
+
+### Agent 执行超时与取消
+
+每个 Agent 可以设置 `10-1800` 秒的整体执行超时，默认 `120` 秒。计时范围从 Agent
+事件流开始到最终结果完成，包含显式规划、全部模型轮次、工具调用和最终汇总。系统不再
+为单次模型调用设置一套独立时限；如果某次模型调用一直没有返回，仍会在 Agent 整体期限
+用尽时被终止。工作流不设置额外的全局期限，只对其中每个 Agent 节点应用该配置。
+
+### Agent 权限预设
+
+每个 Agent 可以配置默认工具权限预设：
+
+| 预设 | 沙箱模式 | 审批策略 | 说明 |
+|---|---|---|---|
+| `safe` | `read_only` | `never` | 安全模式，只允许低风险只读工具，中高风险工具直接拒绝。 |
+| `standard` | `workspace_write` | `ask` | 标准模式，允许工作区内写入；高风险工具需要审批。 |
+| `auto` | `workspace_write` | `never` | 自动模式，适合外部 API 和无人值守任务；高风险工具直接拒绝。 |
+| `developer` | `full_access` | `ask` | 开发者模式，预留更宽执行边界；高风险工具仍需要审批。 |
+
+当前版本已将 `ExecutePython` 接入权限网关。工具返回值会附带 `permission`
+审计信息，包含本次权限预设、风险等级、沙箱模式、审批策略和拒绝原因。
+所有 LangChain 工具会先经过 Tool Execution Pipeline，再进入真实 Skill、Runtime
+或 MCP 执行逻辑；未识别工具默认按低风险处理，高风险关键字工具会默认要求审批。
+
+权限预设内部已展开为细粒度规则快照，包含工具允许/拒绝列表、可读路径、可写路径、
+网络策略、允许域名和阻断命令关键字。当前版本先将这些规则用于权限决策和审计记录；
+路径、网络和命令规则会随后继续下沉到 Runtime 容器与 Shell 类工具的强制执行层。
+
+### Tool Execution Pipeline
+
+所有 LangChain 工具执行前都会经过统一流水线：
+
+| 阶段 | 说明 |
+|---|---|
+| `validate_arguments` | 标准化参数并生成参数摘要。 |
+| `permission_decision` | 根据权限预设、工具风险和细粒度规则生成允许或拒绝决策。 |
+| `before_execute` | 记录沙箱模式等执行前上下文。 |
+| `execute` | 调用真实 Skill、Runtime 或 MCP 工具。 |
+| `after_execute` | 记录耗时、结果类型并合并权限审计信息。 |
+| `on_error` | 将异常标准化为事件，随后继续抛给原有调用链处理。 |
+
+Pipeline 阶段事件会追加写入 `session_events`，不替代现有 Trace Span，而是作为更细的
+执行时间线和调试数据。
+
+### Agent Loop 生命周期
+
+平台聊天流会输出 `agent_loop_event` SSE 事件，用于描述一次 Agent 执行从开始到结束的
+稳定阶段。该事件不进入聊天正文，前端可以选择忽略，也可以用于后续的执行时间线、Trace
+可视化或调试面板。
+
+这些生命周期事件也会追加写入 `session_events`。事件日志采用 append-only 模式，不更新
+历史事件；当前状态由事件序列推导，便于后续做执行回放、Trace 可视化和 Agent 调试面板。
+
+聊天页已内置当前运行态观察面板，包含：
+
+- 执行时间线：按事件到达顺序展示本轮 turn、step、LLM 和 tool 阶段。
+- Trace 可视化：按 `step_id` 将 LLM 与 Tool 事件分组。
+- Agent 调试面板：展示当前 phase、step、tool、turn 和 run 标识。
+
+观察面板只消费当前 SSE 流，不回放历史数据；切换会话、创建新会话或发送新消息时会清空。
+
+当前生命周期阶段包括：
+
+| 阶段 | 说明 |
+|---|---|
+| `turn/start` | 一次用户请求开始。 |
+| `step/start` | 一次模型步骤开始。 |
+| `llm/start` | 模型调用开始。 |
+| `llm/end` | 模型调用结束。 |
+| `tool/start` | 工具调用开始。 |
+| `tool/end` | 工具调用结束。 |
+| `step/end` | 当前模型步骤结束。 |
+| `turn/end` | 本轮用户请求正常完成。 |
+| `turn/error` | 本轮用户请求异常结束。 |
+| `turn/timeout` | 本轮用户请求达到整体超时。 |
+
+事件结构示例：
+
+```json
+{
+  "type": "agent_loop_event",
+  "phase": "tool/start",
+  "turn_id": "session_1_message_2",
+  "step_id": "session_1_message_2:step-1",
+  "step_no": 1,
+  "run_id": "tool-run-id",
+  "name": "ExecutePython"
+}
+```
+
+平台聊天的“停止生成”通过中断当前 HTTP 流取消执行，外部调用方也可以主动关闭 SSE
+连接。用户中断记录为 `cancelled`，系统达到 Agent 整体时限记录为 `timeout`。
 
 ### 多 Agent 工作流
 | 方法 | 路径 | 说明 |
@@ -242,6 +392,7 @@ python -m backend.main
 |---|---|---|
 | GET | `/api/traces` | 当前用户的 Trace 列表 |
 | GET | `/api/traces/{id}` | Trace 详情与 Span 调用链 |
+| GET | `/api/traces/{id}/events` | Trace 关联的 append-only Session 事件 |
 
 ## 使用流程
 
@@ -282,21 +433,26 @@ python -m backend.main
 ```
 users          用户表（id, username, password, created_at）
 models         模型配置表（provider, model_id, api_key, base_url, temperature, max_tokens）
-agents         Agent 表（含 model_config_id、system_prompt、temperature、iteration_count）
+agents         Agent 表（含模型、提示词、iteration_count、execution_timeout_seconds、planning_mode）
 skills         Skill 表（id, user_id, name, description, content）
-mcp_configs    MCP 配置表（id, user_id, name, base_url, endpoint, description）
+mcp_configs    MCP 配置表（含地址、端点、timeout_seconds、描述）
 agent_skills   Agent-Skill 关联表（agent_id, skill_id）
 agent_mcps     Agent-MCP 关联表（agent_id, mcp_id）
 chat_sessions  会话表（id, user_id, agent_id, title）
 chat_messages  消息表（id, session_id, role, content）
+session_events  Session append-only 事件日志（Agent Loop、Pipeline、权限决策）
 trace_runs     对话/工作流 Trace（含 workflow_run_id、workflow_step_id、状态与耗时）
 trace_spans    Trace 节点（run_id、span_type、输入输出、错误、Token 与耗时）
+agent_task_plans       Agent 显式任务计划（目标、状态、当前步骤、Trace 关联）
+agent_task_plan_steps  任务计划步骤（指令、状态、结果与错误）
 multi_agent_workflows  多 Agent 工作流配置（顺序或 DAG）
 multi_agent_runs       多 Agent 工作流运行状态与最终结果
 multi_agent_run_steps  工作流节点执行记录与 Trace 关联
 ```
 
-`agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，默认值为 `6`。后端启动时会自动创建缺失的表，并补充当前版本需要的兼容字段。
+`agents.iteration_count` 表示单次对话允许的最大工具调用迭代次数，取值范围为 `1–100`，
+默认值为 `6`；`agents.execution_timeout_seconds` 表示 Agent 整体执行时限，取值范围为
+`10-1800` 秒，默认值为 `120`。后端启动时会自动创建缺失的表，并补充当前版本需要的兼容字段。
 
 ## Skill 包格式
 
@@ -351,33 +507,24 @@ HTTP Action 工具名需为 1-64 位的字母、数字、下划线或短横线�
 - `llm`：每轮模型输入、输出、状态和耗时。
 - `tool`：Skill、SkillFile 或 MCP 工具的参数、结果、错误和耗时。
 
-Trace 状态包括 `running`、`success`、`error` 和 `cancelled`。Trace 数据按登录用户隔离；仅新产生的对话会被记录，历史对话不会自动补录。数据库表会在后端启动时自动创建。
+Trace 状态包括 `running`、`success`、`error`、`cancelled` 和 `timeout`。Trace 数据按登录
+用户隔离；仅新产生的对话会被记录，历史对话不会自动补录。数据库表会在后端启动时自动创建。
 
 ## 本地 Python Runtime
 
-聊天 Agent 和工作流 Agent 会按运行上下文获得两个结构化工具：
+聊天 Agent 和工作流 Agent 会按运行上下文获得一个结构化工具：
 
 - `ExecutePython`：执行 LLM 生成的 Python 代码。
-- `RunSkillScript`：仅执行当前 Agent 已绑定 Skill 中的 `.py` 脚本。
 
 聊天页可上传 CSV、Excel、Word、PDF、JSON、Markdown 和文本文件。模型仅能看到逻辑 `file_id`，脚本通过下列变量访问输入和输出：
 
 ```python
 from pathlib import Path
 
-input_path = Path(INPUT_FILES[RUNTIME_ARGS["file_id"]])
+input_path = Path(next(iter(INPUT_FILES.values())))
 output_path = Path(OUTPUT_DIR) / "summary.json"
 output_path.write_text('{"ok": true}', encoding="utf-8")
 result = {"message": "处理完成"}
-```
-
-Skill 中的固定脚本建议放在 `scripts/` 下：
-
-```text
-my-skill/
-├── SKILL.md
-└── scripts/
-    └── analyze.py
 ```
 
 Runtime 使用“每用户一个容器”的模型；`workspace_id` 只区分同一用户容器内的目录。
@@ -417,6 +564,9 @@ FastAPI：取得结果并作为 ToolMessage 返回给 LLM
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API 基础地址 |
 | `DEEPSEEK_MODEL` | `deepseek-chat` | 模型名称 |
 | `JWT_SECRET` | `agent-platform-secret-2026` | JWT 密钥 |
+| `EXTERNAL_API_CHAT_RATE_LIMIT` | `60` | 单个 API Key 每分钟允许的外部聊天请求数 |
+| `API_KEY_AUTH_RATE_LIMIT_PER_IP` | `120` | 单个来源 IP 每 5 分钟允许的 API Key 认证次数 |
+| `API_KEY_MANAGEMENT_RATE_LIMIT` | `5` | 单个用户每分钟允许的密钥生成或吊销次数 |
 | `SERVER_PORT` | `20000` | 后端端口 |
 | `DB_HOST` | `127.0.0.1` | MySQL 主机 |
 | `DB_PORT` | `3306` | MySQL 端口 |

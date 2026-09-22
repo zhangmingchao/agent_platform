@@ -3,6 +3,7 @@ import typing
 
 from langchain_core.tools import tool
 from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 
 class WorkflowState(MessagesState):
@@ -174,7 +175,8 @@ def rejected_node(
     }
 
 
-def create_graph():
+def create_graph() -> CompiledStateGraph:
+    """构建并编译用于演示条件路由和审批分支的工作流。"""
     graph = StateGraph(WorkflowState)
 
     # 注册节点
@@ -218,7 +220,7 @@ def create_graph():
 
 
 def run_example(
-    graph,
+    graph: CompiledStateGraph,
     question: str,
     approved: bool = False,
 ) -> None:

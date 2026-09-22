@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from dataclasses import replace
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -20,17 +21,24 @@ from ..models.chat import (
     ChatHistoryMessage,
     ChatSession,
     ChatUser,
-    McpConfig,
     ModelConfig,
     PreparedChatRun,
     RuntimeFile,
     SkillConfig,
 )
+from ..models.api_access import (
+    ApiAuthenticatedUser,
+    ExternalChatRequest,
+    InvocationSource,
+)
+from ..models.mcp import McpConfig
+from ..models.task_planning import PlanningMode
 from ..database import execute, fetch_all, fetch_one
 from .agent_service import get_agent
 from .mcp_config_service import get_agent_mcps
 from .skill_service import get_agent_skills
 from .runtime_service import get_runtime_files
+from .task_plan_service import fail_active_task_plan_by_trace
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +65,115 @@ async def _load_chat_session(session_id: int, user_id: int) -> Optional[ChatSess
     return ChatSession.from_mapping(session_row) if session_row else None
 
 
+async def _prepare_agent_run(
+    current_user: ChatUser,
+    agent: Agent,
+    user_message: str,
+    history_messages: List[ChatHistoryMessage],
+    thread_id: str,
+    runtime_context: RuntimeContext,
+    *,
+    session_id: Optional[int],
+    invocation_source: InvocationSource,
+    runtime_file_ids: Optional[List[str]] = None,
+    template_session_id: str = "",
+    current_node_id: str = "chat",
+    request_id: Optional[str] = None,
+    client_conversation_id: Optional[str] = None,
+) -> PreparedChatRun:
+    """构建平台聊天和外部 API 共用的 Agent 单次运行实体。
+
+    Args:
+        current_user: 已通过平台 JWT 或 API Key 认证的用户实体。
+        agent: 当前用户拥有的 Agent 配置实体。
+        user_message: 本轮最新一条用户消息，用于提示词变量和 Trace。
+        history_messages: 需要发送给模型的完整 user/assistant 历史。
+        thread_id: 本次 LangGraph 执行使用的唯一线程标识。
+        runtime_context: Runtime 工具使用的用户与工作空间上下文。
+        session_id: 平台会话 ID；API 调用固定为 ``None``。
+        invocation_source: 本次执行来源，用于 Trace 区分 platform 或 api。
+        runtime_file_ids: 本次允许 Runtime 工具访问的文件 ID。
+        template_session_id: 渲染系统提示词 ``session_id`` 变量时使用的值。
+        current_node_id: 写入 Agent State 的当前业务节点标识。
+        request_id: 对外暴露的一次请求唯一编号，仅外部 API 调用使用。
+        client_conversation_id: 外部调用方自己的会话关联标识。
+
+    Returns:
+        已装配 Agent、历史、Trace 和业务 State 的强类型运行实体。
+    """
+    skill_rows: List[Dict[str, Any]] = await get_agent_skills(agent.id)
+    mcps: List[McpConfig] = await get_agent_mcps(agent.id)
+    skills = [SkillConfig.from_mapping(item) for item in skill_rows]
+    model_config = await _load_model_config(agent, current_user.user_id)
+    skills_data = [dict(item.raw) for item in skills]
+    mcps_data = [item.to_factory_dict() for item in mcps]
+    model_config_data = model_config.to_factory_dict() if model_config else None
+    runtime_variables = {
+        "user_input": user_message,
+        "username": current_user.username,
+        "user_id": current_user.user_id,
+        "session_id": template_session_id,
+        "current_date": datetime.now().strftime("%Y-%m-%d"),
+    }
+    rendered_prompt = render_prompt_template(
+        agent.system_prompt, agent.prompt_variables, runtime_variables,
+    )
+    log.info("系统提示词模版变量渲染完成: agent_id=%s source=%s", agent.id, invocation_source.value)
+    runtime_agent = agent.with_system_prompt(
+        append_schema_instruction(rendered_prompt, agent.output_schema),
+    )
+
+    trace_ctx = TraceContext(
+        session_id=session_id,
+        user_id=current_user.user_id,
+        agent_id=agent.id,
+        model_name=get_model_name(runtime_agent, model_config_data),
+        invocation_source=invocation_source,
+        request_id=request_id,
+        client_conversation_id=client_conversation_id,
+    )
+    await trace_ctx.start(user_message)
+    runtime_context = replace(
+        runtime_context,
+        agent_id=agent.id,
+        permission_preset=agent.permission_preset,
+        invocation_source=invocation_source.value,
+        trace_ctx=trace_ctx,
+    )
+    try:
+        agent_executor_graph: CompiledStateGraph = await create_agent_instance(
+            runtime_agent,
+            skills_data,
+            mcps_data,
+            model_config_data,
+            runtime_context=runtime_context,
+            trace_ctx=trace_ctx,
+            # 计划步骤不能被最终结构化输出 Schema 约束；Schema 只用于最终汇总。
+            planning_execution_prompt=rendered_prompt,
+        )
+    except Exception as exc:
+        await trace_ctx.error(str(exc))
+        raise
+
+    return PreparedChatRun(
+        agent_executor=agent_executor_graph,
+        history_messages=history_messages,
+        max_tool_rounds=max(1, min(agent.iteration_count, 100)),
+        execution_timeout_seconds=agent.execution_timeout_seconds,
+        thread_id=thread_id,
+        trace_ctx=trace_ctx,
+        output_schema=agent.output_schema,
+        state_context=AgentStateContext(
+            runtime_file_ids=list(runtime_file_ids or []),
+            available_skills=[item.name for item in skills],
+            loaded_skills=[],
+            current_input=user_message,
+            current_node_id=current_node_id,
+            planning_mode=agent.planning_mode,
+        ),
+    )
+
+
 async def prepare_chat_run(
     user: Dict[str, Any],
     message: str,
@@ -65,7 +182,7 @@ async def prepare_chat_run(
     file_ids: Optional[List[str]] = None,
 ) -> PreparedChatRun:
     """加载并组装执行一次聊天请求所需的强类型运行时数据。"""
-    current_user:ChatUser = ChatUser.from_mapping(user)
+    current_user: ChatUser = ChatUser.from_mapping(user)
     session: Optional[ChatSession] = await _load_chat_session(session_id, current_user.user_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在，请重新创建会话")
@@ -80,7 +197,7 @@ async def prepare_chat_run(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    runtime_files = [RuntimeFile.from_mapping(item) for item in runtime_file_rows]
+    runtime_files :list[RuntimeFile] = [RuntimeFile.from_mapping(item) for item in runtime_file_rows]
 
     # 图片保留 base64；普通文件只保存逻辑 ID，不向模型暴露宿主机路径。
     attachments = list(images or [])
@@ -110,96 +227,139 @@ async def prepare_chat_run(
     )
     history_messages = [ChatHistoryMessage.from_mapping(item) for item in history_rows]
 
-    skill_rows: List[Dict[str, Any]] = await get_agent_skills(agent.id)
-    mcp_rows: List[Dict[str, Any]] = await get_agent_mcps(agent.id)
-    skills = [SkillConfig.from_mapping(item) for item in skill_rows]
-    mcps = [McpConfig.from_mapping(item) for item in mcp_rows]
-    model_config = await _load_model_config(agent, current_user.user_id)
-    skills_data = [dict(item.raw) for item in skills]
-    mcps_data = [dict(item.raw) for item in mcps]
-    model_config_data = model_config.to_factory_dict() if model_config else None
-    runtime_variables = {
-        "user_input": message,
-        "username": current_user.username,
-        "user_id": current_user.user_id,
-        "session_id": session_id,
-        "current_date": datetime.now().strftime("%Y-%m-%d"),
-    }
-    # 系统提示词中的模版变量渲染
-    rendered_prompt = render_prompt_template(
-        agent.system_prompt, agent.prompt_variables, runtime_variables,
-    )
-    log.info(f"系统提示词模版变量之后的值：{rendered_prompt}")
-    runtime_agent = agent.with_system_prompt(
-        append_schema_instruction(rendered_prompt, agent.output_schema),
-    )
-    log.info(f"系统提示词 结构化 之后的值：{runtime_agent['system_prompt']}")
-
-    agent_executor_graph: CompiledStateGraph = await create_agent_instance(
-        runtime_agent,
-        skills_data,
-        mcps_data,
-        model_config_data,
+    # 每次请求使用新的 LangGraph thread_id，因为完整历史已经由 MySQL 提供。
+    # 如果这里复用 session_id，同进程内还会叠加 InMemorySaver 里的状态，
+    # 可能导致模型看到重复上下文。
+    thread_id = f"session_{session_id}_message_{user_message_id}"
+    return await _prepare_agent_run(
+        current_user=current_user,
+        agent=agent,
+        user_message=message,
+        history_messages=history_messages,
+        thread_id=thread_id,
         runtime_context=RuntimeContext(
             user_id=current_user.user_id,
             workspace_id=f"session-{session_id}",
             session_id=session_id,
         ),
-    )
-
-    max_tool_rounds = max(1, min(agent.iteration_count, 100))
-    # 每次请求使用新的 LangGraph thread_id，因为完整历史已经由 MySQL 提供。
-    # 如果这里复用 session_id，同进程内还会叠加 InMemorySaver 里的状态，
-    # 可能导致模型看到重复上下文。
-    thread_id = f"session_{session_id}_message_{user_message_id}"
-
-    trace_ctx = TraceContext(
         session_id=session_id,
-        user_id=current_user.user_id,
-        agent_id=agent.id,
-        model_name=get_model_name(runtime_agent, model_config_data),
+        invocation_source=InvocationSource.PLATFORM,
+        runtime_file_ids=[item.id for item in runtime_files],
+        template_session_id=str(session_id),
+        current_node_id="chat",
     )
-    await trace_ctx.start(message)
 
-    return PreparedChatRun(
-        agent_executor=agent_executor_graph,
+
+async def prepare_api_chat_run(
+    user: ApiAuthenticatedUser,
+    agent_id: int,
+    request_id: str,
+    chat_request: ExternalChatRequest,
+) -> PreparedChatRun:
+    """根据 API Key 用户和调用方历史准备无状态 Agent 执行。
+
+    Args:
+        user: 由 API Key 认证得到的当前用户实体。
+        agent_id: 外部调用方希望执行的 Agent ID。
+        request_id: 服务端为本次 API 调用生成的唯一请求 ID。
+        chat_request: 已完成角色、长度和最后一条消息校验的请求实体。
+
+    Returns:
+        不依赖平台会话和消息表的 Agent 运行实体。
+    """
+    agent: Optional[Agent] = await get_agent(agent_id, user.user_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent 不存在")
+    current_user = ChatUser(user_id=user.user_id, username=user.username)
+    history_messages = [
+        ChatHistoryMessage(role=message.role, content=message.content)
+        for message in chat_request.messages
+    ]
+    return await _prepare_agent_run(
+        current_user=current_user,
+        agent=agent,
+        user_message=chat_request.latest_user_message(),
         history_messages=history_messages,
-        max_tool_rounds=max_tool_rounds,
-        thread_id=thread_id,
-        trace_ctx=trace_ctx,
-        output_schema=agent.output_schema,
-        # 文件 ID 和可用 Skill 进入 LangGraph State，文件内容仍由 Runtime 按权限读取。
-        state_context=AgentStateContext(
-            runtime_file_ids=[item.id for item in runtime_files],
-            available_skills=[item.name for item in skills],
-            loaded_skills=[],
-            current_input=message,
+        thread_id=f"api_{request_id}",
+        runtime_context=RuntimeContext(
+            user_id=user.user_id,
+            workspace_id=f"api-{request_id}",
+            node_id="api",
         ),
+        session_id=None,
+        invocation_source=InvocationSource.API,
+        template_session_id=chat_request.client_conversation_id or request_id,
+        current_node_id="api",
+        request_id=request_id,
+        client_conversation_id=chat_request.client_conversation_id,
     )
 
 
-async def stream_chat(
-    user: Dict[str, Any],
-    message: str,
-    session_id: int,
-    images: Optional[List[str]] = None,
-    file_ids: Optional[List[str]] = None,
+async def _fail_task_plan_for_run(
+    run: PreparedChatRun,
+    error_text: str,
+) -> None:
+    """在聊天异常结束时回收当前请求关联的显式任务计划。
+
+    Args:
+        run: 当前聊天运行实体，提供规划模式和 Trace 主键。
+        error_text: 本次运行失败或被取消的原因。
+    """
+    if run.state_context.planning_mode is not PlanningMode.EXPLICIT:
+        return
+    trace_run_id = run.trace_ctx.run_id
+    if trace_run_id is None:
+        return
+    try:
+        await fail_active_task_plan_by_trace(trace_run_id, error_text)
+    except Exception as exc:
+        # 计划回收属于异常路径的补偿操作，失败时记录日志但不覆盖原始错误。
+        log.exception(
+            "[TaskPlan] cleanup failed | trace_run_id=%s | error=%s",
+            trace_run_id,
+            exc,
+        )
+
+
+async def _stream_prepared_chat(
+    run: PreparedChatRun,
+    user_message: str,
+    images: Optional[List[str]],
+    persist_session_id: Optional[int],
+    emit_completion_event: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """运行 Agent 并生成 SSE 数据块，同时持久化助手回复。"""
-    run:PreparedChatRun = await prepare_chat_run(user, message, session_id, images, file_ids)
-    full_response = []
-    reasoning_response = []
+    """执行已准备的 Agent 运行，并按入口策略决定是否持久化消息。
+
+    Args:
+        run: 已装配执行器、历史、Trace 和 State 的运行实体。
+        user_message: 本轮最新用户消息。
+        images: 平台聊天当前轮附带的 Base64 图片；API 入口传 ``None``。
+        persist_session_id: 需要保存助手消息的平台会话 ID；API 入口传 ``None``。
+        emit_completion_event: 是否为外部调用方追加包含完整回答的完成事件。
+
+    Yields:
+        Agent 执行期间产生的 SSE 数据块。
+    """
+    full_response: List[str] = []
+    reasoning_response: List[str] = []
     # Token 先按 LLM 轮次暂存，收到分类事件后再进入正式回答或执行说明。
-    pending_rounds = {}
+    pending_rounds: Dict[str, List[str]] = {}
     stream_failed = False
+    stream_error_text = "Agent stream failed"
+    execution_label = (
+        f"Session#{persist_session_id}"
+        if persist_session_id is not None
+        else f"API#{run.thread_id}"
+    )
 
     try:
         async for chunk in stream_agent_response(
             agent_executor=run.agent_executor,
-            user_message=message,
+            user_message=user_message,
             thread_id=run.thread_id,
             history_messages=run.history_messages,
             max_tool_rounds=run.max_tool_rounds,
+            execution_timeout_seconds=run.execution_timeout_seconds,
             trace_ctx=run.trace_ctx,
             images=images,
             state_context=run.state_context,
@@ -224,6 +384,7 @@ async def stream_chat(
                             reasoning_response.append(round_text)
                     elif event_type == "error":
                         stream_failed = True
+                        stream_error_text = str(event.get("content") or stream_error_text)
                     elif event_type == "done":
                         # 结构化校验完成后再发 done，保证客户端不会提前结束。
                         suppress_chunk = True
@@ -232,13 +393,20 @@ async def stream_chat(
             if not suppress_chunk:
                 yield chunk
     except asyncio.CancelledError:
-        log.info("[Session#%s] client disconnected", session_id)
-        await run.trace_ctx.error("client disconnected")
+        log.info("[%s] client disconnected", execution_label)
+        await _fail_task_plan_for_run(run, "client disconnected")
+        await run.trace_ctx.cancelled("client disconnected")
         return
     except Exception as exc:
-        log.exception("[Session#%s] chat failed", session_id)
+        log.exception("[%s] chat failed", execution_label)
+        await _fail_task_plan_for_run(run, str(exc))
         await run.trace_ctx.error(str(exc))
         yield sse_event("error", str(exc))
+        yield sse_event("done")
+        return
+
+    if stream_failed:
+        await _fail_task_plan_for_run(run, stream_error_text)
         yield sse_event("done")
         return
 
@@ -250,6 +418,7 @@ async def stream_chat(
                 assistant_text, run.output_schema,
             )
         except ValueError as exc:
+            await _fail_task_plan_for_run(run, str(exc))
             await run.trace_ctx.error(str(exc))
             yield sse_event("error", str(exc))
             yield sse_event("done")
@@ -262,19 +431,79 @@ async def stream_chat(
             {"structured_result": structured_content},
         )
     if assistant_text.strip():
-        await execute(
-            "INSERT INTO chat_messages "
-            "(session_id, role, content, reasoning_content, structured_content, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
-            (
-                session_id, "assistant", assistant_text, "".join(reasoning_response) or None,
-                json.dumps(structured_content, ensure_ascii=False) if structured_content is not None else None,
-                _now(),
-            ),
-        )
+        if persist_session_id is not None:
+            await execute(
+                "INSERT INTO chat_messages "
+                "(session_id, role, content, reasoning_content, structured_content, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    persist_session_id,
+                    "assistant",
+                    assistant_text,
+                    "".join(reasoning_response) or None,
+                    json.dumps(structured_content, ensure_ascii=False)
+                    if structured_content is not None else None,
+                    _now(),
+                ),
+            )
         await run.trace_ctx.finish(assistant_text)
+        if emit_completion_event:
+            yield sse_event(
+                "response_completed",
+                assistant_text,
+                reasoning_content="".join(reasoning_response),
+                structured_content=structured_content,
+            )
         if structured_content is not None:
             yield sse_event("structured_result", json.dumps(structured_content, ensure_ascii=False))
     else:
+        await _fail_task_plan_for_run(run, "empty response")
         await run.trace_ctx.error("empty response")
     yield sse_event("done")
+
+
+async def stream_chat(
+    user: Dict[str, Any],
+    message: str,
+    session_id: int,
+    images: Optional[List[str]] = None,
+    file_ids: Optional[List[str]] = None,
+) -> AsyncGenerator[str, None]:
+    """执行平台聊天，历史和本轮回复均由平台会话负责持久化。
+
+    Args:
+        user: 平台 JWT 认证得到的当前用户信息。
+        message: 本轮用户消息。
+        session_id: 平台负责维护的会话 ID。
+        images: 本轮附带的 Base64 图片列表。
+        file_ids: 本轮允许 Runtime 工具读取的文件 ID。
+
+    Yields:
+        Agent 执行期间产生的 SSE 数据块。
+    """
+    run = await prepare_chat_run(user, message, session_id, images, file_ids)
+    async for chunk in _stream_prepared_chat(run, message, images, session_id):
+        yield chunk
+
+
+async def stream_api_chat(
+    run: PreparedChatRun,
+    chat_request: ExternalChatRequest,
+) -> AsyncGenerator[str, None]:
+    """执行外部无状态聊天，不写入平台会话和消息表。
+
+    Args:
+        run: 通过 API Key 用户和调用方历史准备的运行实体。
+        chat_request: 外部调用方提交的完整历史实体。
+
+    Yields:
+        Agent 执行期间产生的 SSE 数据块。
+    """
+    async for chunk in _stream_prepared_chat(
+        run,
+        chat_request.latest_user_message(),
+        images=None,
+        persist_session_id=None,
+        emit_completion_event=True,
+    ):
+        yield chunk
