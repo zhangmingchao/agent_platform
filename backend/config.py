@@ -138,6 +138,16 @@ SKILL_ACTION_ALLOW_PRIVATE_NETWORK = os.getenv(
     "false",
 ).lower() in ("1", "true", "yes", "on")
 
+# --- BI 元数据 CLI ---
+# 第一期只开放固定的只读元数据命令；Token 仅由服务端环境变量持有。
+BI_CLI_ENABLED = os.getenv("BI_CLI_ENABLED", "false").lower() in (
+    "1", "true", "yes", "on",
+)
+BI_DOCKER_BASE_URL = os.getenv("BI_DOCKER_BASE_URL", "").rstrip("/")
+BI_DOCKER_TOKEN = os.getenv("BI_DOCKER_TOKEN", "")
+BI_DOCKER_TIMEOUT_SECONDS = _positive_int_env("BI_DOCKER_TIMEOUT_SECONDS", 30)
+BI_CLI_MAX_OUTPUT_BYTES = _positive_int_env("BI_CLI_MAX_OUTPUT_BYTES", 1024 * 1024)
+
 # --- LangSmith（链路追踪）---
 LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY", "")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "agent-platform-langchain")

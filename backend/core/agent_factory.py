@@ -16,6 +16,7 @@ from ..models.task_planning import PlanningMode
 from ..runtime.models import RuntimeContext
 from ..runtime.tools import build_runtime_tools
 from .agent_state import AgentPlatformState
+from .bi_cli_tool import build_bi_cli_tools
 from .tools import build_skill_tools
 from .mcp_tools import build_mcp_langchain_tools
 from .task_planning import create_task_planning_graph
@@ -77,6 +78,7 @@ async def build_all_tools(
     tools = []
     tools.extend(build_skill_tools(skills))
     tools.extend(build_runtime_tools(runtime_context))
+    tools.extend(build_bi_cli_tools(runtime_context))
     tools.extend(await build_mcp_langchain_tools(mcp_configs))
     tools = wrap_tools_with_execution_pipeline(tools, runtime_context)
     log.info(f"[Tools] loaded {len(tools)} tools total")

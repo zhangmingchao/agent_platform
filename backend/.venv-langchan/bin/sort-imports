@@ -1,0 +1,6 @@
+#!/Users/mbj0018/IdeaProjects/agent_platform/backend/.venv-langchan/bin/python
+import sys
+from scripts import sort_imports
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(sort_imports())

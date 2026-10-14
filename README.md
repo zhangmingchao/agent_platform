@@ -11,6 +11,7 @@
 - 🛡️ **权限预设** - 按 Agent 配置安全、标准、自动和开发者模式，统一控制工具沙箱边界
 - 🔁 **Agent Loop 生命周期** - 流式执行过程中输出 turn、step、LLM 和 tool 阶段事件
 - 📋 **显式任务规划** - 可选地先生成有限步骤，再按顺序执行并汇总结果
+- 📊 **BI 元数据 CLI** - 通过受控只读命令查询分析主体、事件、属性和指标
 - 🔑 **外部 Agent API** - 用户 API Key 鉴权，调用方自行维护聊天历史
 - 🔎 **Trace 调用链** - 记录每次对话的 LLM 轮次、工具调用、输入输出、错误与耗时
 - 📱 **Web UI** - Vue 3 + Element Plus 前端
@@ -107,6 +108,13 @@ export JWT_SECRET="your-secret"
 export MODEL_API_KEY_ENCRYPTION_KEY="请填写32字节随机密钥的URL-safe Base64"
 export SERVER_PORT="20000"
 
+# 启用 BI 元数据 CLI（可选，仅开放预定义只读列表命令）
+export BI_CLI_ENABLED="true"
+export BI_DOCKER_BASE_URL="http://127.0.0.1:8080/portal-api/bi-docker/api"
+export BI_DOCKER_TOKEN="请填写只读 BI 账号 Token"
+export BI_DOCKER_TIMEOUT_SECONDS="30"
+export BI_CLI_MAX_OUTPUT_BYTES="1048576"
+
 # 配置 MySQL 连接（可选，默认值如下）
 export DB_HOST="127.0.0.1"
 export DB_PORT="3306"
@@ -117,6 +125,23 @@ export DB_NAME="agent_platform_langchain"
 # 启动服务（首次启动会自动创建数据库、表结构和必要字段）
 python -m backend.main
 ```
+
+### BI 元数据 CLI
+
+启用后，Agent 会获得一个受控的 `BiCli` 工具。该工具不提供任意 Shell 权限，第一期只支持：
+
+```bash
+python -m backend.bi_cli metadata analysis-bodies list --product-key app_001
+python -m backend.bi_cli metadata events list --product-key app_001 --page-num 1 --page-size 50
+python -m backend.bi_cli metadata user-properties list --product-key app_001 --entity-type users
+python -m backend.bi_cli metadata event-properties list --product-key app_001 --page-num 1 --page-size 50
+python -m backend.bi_cli metadata metrics list --product-key app_001 --page-num 1 --page-size 50
+```
+
+所有命令只输出 JSON。`BI_DOCKER_TOKEN` 只从服务端环境变量读取，不作为 CLI 参数或
+Tool Call 参数暴露给模型。将 `pre-skill/bi-metadata/` 打包上传为 Skill 并绑定到 Agent 后，
+模型可以按其中的业务规则选择和组合命令。`BI_DOCKER_BASE_URL` 需要包含部署环境实际的
+context path；`bi-docker` 的生产配置通常为 `/portal-api/bi-docker/api`。
 
 启用 Python Runtime 时，需要在另一个终端启动独立 Worker：
 
