@@ -32,7 +32,7 @@ class AgentRepositoryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_repository,
                 "fetch_all",
-                AsyncMock(side_effect=[[{"id": 1, "name": "excel"}], [{"id": 3, "name": "weather"}]]),
+                AsyncMock(side_effect=[[{"id": 1, "name": "excel"}], [{"id": 3, "name": "weather"}], [{"plugin_id": "bi-metadata"}]]),
             ),
         ):
             agent = await agent_repository.find_agent_by_id(7, 2)
@@ -42,6 +42,7 @@ class AgentRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.prompt_variables["language"], "zh-CN")
         self.assertEqual(agent.skills[0]["name"], "excel")
         self.assertEqual(agent.mcps[0]["name"], "weather")
+        self.assertEqual(agent.plugin_ids, ["bi-metadata"])
         self.assertEqual(agent.execution_timeout_seconds, 180)
         self.assertEqual(agent.planning_mode.value, "explicit")
 

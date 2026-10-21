@@ -33,6 +33,7 @@ class AgentCreate(BaseModel):
     temperature: float = 0.7
     skill_ids: List[int] = Field(default_factory=list)
     mcp_ids: List[int] = Field(default_factory=list)
+    plugin_ids: Optional[List[str]] = Field(default=None, max_length=20, description="绑定的已配置插件标识；省略时保留已有绑定")
 
 
 class AgentUpdate(AgentCreate):

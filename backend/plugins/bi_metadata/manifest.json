@@ -1,0 +1,22 @@
+{
+  "id": "bi-metadata",
+  "name": "BI 元数据查询",
+  "version": "1.0.0",
+  "description": "查询产品中的分析主体、事件、用户属性、事件属性和指标。",
+  "source": "builtin",
+  "executor": "bi-cli",
+  "capabilities": {"connection_test": true, "environment_import": true, "debug": true},
+  "config_title": "服务配置",
+  "debug_panel": "bi-metadata",
+  "test_fields": [{"key": "product_key", "label": "产品标识", "kind": "string", "required": true, "max_length": 200, "placeholder": "product-key"}],
+  "tools": ["BiCli"],
+  "skill_name": "bi-metadata",
+  "skill_files": ["SKILL.md", "references/commands.md"],
+  "permissions": ["metadata.read", "network.bi", "process.fixed-cli"],
+  "fields": [
+    {"key": "base_url", "label": "BI 服务地址", "kind": "string", "format": "url", "required": true, "max_length": 500, "placeholder": "https://bi.example.com"},
+    {"key": "token", "label": "BI Token", "kind": "secret", "required": true},
+    {"key": "timeout_seconds", "label": "请求超时（秒）", "kind": "integer", "default": 30, "minimum": 1, "maximum": 60},
+    {"key": "max_output_bytes", "label": "最大输出（字节）", "kind": "integer", "default": 1048576, "minimum": 1024, "maximum": 4194304}
+  ]
+}

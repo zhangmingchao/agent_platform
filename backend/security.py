@@ -161,3 +161,31 @@ def decrypt_model_api_key(stored_api_key: str) -> ApiKeyDecryptionResult:
         raise
     except (InvalidTag, ValueError, UnicodeDecodeError, binascii.Error) as exc:
         raise SecretDecryptionError("模型 API Key 解密失败，请检查加密密钥配置") from exc
+
+
+def encrypt_plugin_token(token: str) -> str:
+    """加密 token 插件凭据，使用独立认证上下文，避免与模型密钥混用。"""
+    if not token:
+        return ""
+    nonce = os.urandom(12)
+    payload = AESGCM(_decode_encryption_key()).encrypt(
+        nonce, token.encode("utf-8"), b"agent-platform:plugin-token:v1",
+    )
+    return "plugin:v1:" + base64.urlsafe_b64encode(nonce + payload).decode("ascii")
+
+
+def decrypt_plugin_token(ciphertext: str) -> str:
+    """解密 ciphertext 插件密文，仅供当前调用使用，不兼容明文凭据。"""
+    if not ciphertext:
+        return ""
+    try:
+        if not ciphertext.startswith("plugin:v1:"):
+            raise ValueError("未知密文版本")
+        payload = base64.urlsafe_b64decode(ciphertext[len("plugin:v1:"):])
+        return AESGCM(_decode_encryption_key()).decrypt(
+            payload[:12], payload[12:], b"agent-platform:plugin-token:v1",
+        ).decode("utf-8")
+    except SecurityConfigurationError:
+        raise
+    except (InvalidTag, ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise SecretDecryptionError("插件凭据解密失败，请重新配置 Token 或检查加密主密钥") from exc

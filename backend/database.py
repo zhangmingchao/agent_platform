@@ -461,8 +461,20 @@ async def init_db() -> None:
                 """,
             ]
 
+            from .plugins.schema import PLUGIN_TABLES
+            statements.extend(PLUGIN_TABLES)
             for sql in statements:
                 await cur.execute(sql)
+
+            # 插件配置通用化只新增字段；旧 BI 配置在读取时兼容，保存时升级，启动不解密凭据。
+            for column_name in ("values_json", "secrets_json"):
+                await cur.execute(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='plugin_configs' AND COLUMN_NAME=%s",
+                    (DB_NAME, column_name),
+                )
+                if not await cur.fetchone():
+                    await cur.execute(f"ALTER TABLE plugin_configs ADD COLUMN {column_name} JSON DEFAULT NULL")
 
             # 数据迁移：如果 agents 表缺少 model_config_id 字段则添加
             try:

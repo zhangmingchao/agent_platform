@@ -75,11 +75,22 @@ async def build_all_tools(
     runtime_context: Optional[RuntimeContext] = None,
 ) -> list:
     """从技能和 MCP 配置构建所有 LangChain 工具。"""
+    from ..services.plugin_service import load_runtime_plugins
+    from .plugin_tools import build_plugin_tools
+
+    plugins = await load_runtime_plugins(runtime_context)
     tools = []
-    tools.extend(build_skill_tools(skills))
+    tools.extend(build_skill_tools(skills, plugins.plugin_ids) if plugins.plugin_ids else build_skill_tools(skills))
     tools.extend(build_runtime_tools(runtime_context))
-    tools.extend(build_bi_cli_tools(runtime_context))
+    if runtime_context is not None:
+        tools.extend(build_plugin_tools(runtime_context, plugins.entries))
+    if "bi-cli" not in plugins.managed_executors:
+        tools.extend(build_bi_cli_tools(runtime_context))
     tools.extend(await build_mcp_langchain_tools(mcp_configs))
+    names = [tool.name for tool in tools]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"工具名称冲突，请调整插件或 MCP 配置：{', '.join(duplicates)}")
     tools = wrap_tools_with_execution_pipeline(tools, runtime_context)
     log.info(f"[Tools] loaded {len(tools)} tools total")
     return tools

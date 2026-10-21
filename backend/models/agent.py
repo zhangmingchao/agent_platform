@@ -39,6 +39,7 @@ class Agent:
         permission_preset: Agent 默认工具权限预设。
         skills: 当前 Agent 关联的 Skill 摘要。
         mcps: 当前 Agent 关联的 MCP 配置摘要。
+        plugin_ids: 当前 Agent 绑定的用户插件标识。
         extra: 为兼容接口保留的其他数据库字段。
     """
 
@@ -58,6 +59,7 @@ class Agent:
     permission_preset: PermissionPreset = PermissionPreset.STANDARD
     skills: List[Dict[str, Any]] = field(default_factory=list)
     mcps: List[Dict[str, Any]] = field(default_factory=list)
+    plugin_ids: List[str] = field(default_factory=list)
     # 保留未显式建模的时间字段，确保现有 API 响应兼容。
     extra: Dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -68,13 +70,14 @@ class Agent:
         *,
         skills: Optional[List[Dict[str, Any]]] = None,
         mcps: Optional[List[Dict[str, Any]]] = None,
+        plugin_ids: Optional[List[str]] = None,
     ) -> "Agent":
         """将数据库记录转换为 Agent 实体。"""
         known_fields = {
             "id", "user_id", "name", "description", "system_prompt",
             "prompt_variables", "output_schema", "model", "model_config_id",
             "temperature", "iteration_count", "execution_timeout_seconds",
-            "skills", "mcps", "planning_mode", "permission_preset",
+            "skills", "mcps", "plugin_ids", "planning_mode", "permission_preset",
         }
         return cls(
             id=int(data["id"]),
@@ -93,6 +96,7 @@ class Agent:
             permission_preset=PermissionPreset(str(data.get("permission_preset") or "standard")),
             skills=list(skills if skills is not None else data.get("skills") or []),
             mcps=list(mcps if mcps is not None else data.get("mcps") or []),
+            plugin_ids=list(plugin_ids if plugin_ids is not None else data.get("plugin_ids") or []),
             extra={key: value for key, value in data.items() if key not in known_fields},
         )
 
@@ -116,6 +120,7 @@ class Agent:
             "permission_preset": self.permission_preset.value,
             "skills": list(self.skills),
             "mcps": list(self.mcps),
+            "plugin_ids": list(self.plugin_ids),
         })
         return result
 

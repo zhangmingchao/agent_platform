@@ -80,6 +80,12 @@ const routes = [
         meta: { title: 'Skill 管理' }
       },
       {
+        path: 'plugins',
+        name: 'PluginList',
+        component: () => import('../views/plugins/PluginList.vue'),
+        meta: { title: '插件管理' }
+      },
+      {
         path: 'mcps',
         name: 'McpList',
         component: () => import('../views/mcps/McpList.vue'),

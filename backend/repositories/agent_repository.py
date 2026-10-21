@@ -26,7 +26,10 @@ async def find_agent_by_id(agent_id: int, user_id: int) -> Optional[Agent]:
         "JOIN agent_mcps ao ON m.id=ao.mcp_id WHERE ao.agent_id=%s",
         (agent_id,),
     )
-    return Agent.from_mapping(row, skills=skills, mcps=mcps)
+    bindings = await fetch_all(
+        "SELECT plugin_id FROM agent_plugins WHERE agent_id=%s AND user_id=%s", (agent_id, user_id),
+    )
+    return Agent.from_mapping(row, skills=skills, mcps=mcps, plugin_ids=[item["plugin_id"] for item in bindings])
 
 
 async def find_agents_by_user(user_id: int) -> List[Agent]:

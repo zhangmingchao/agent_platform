@@ -21,9 +21,14 @@ class SkillFileInput(BaseModel):
     path: str = Field(description="技能包内的相对路径")
 
 
-def build_skill_tools(skills: List[Dict]) -> List[StructuredTool]:
-    """从技能定义构建 LangChain StructuredTool。"""
-    if not skills:
+def build_skill_tools(skills: List[Dict], plugin_ids: List[str] | None = None) -> List[StructuredTool]:
+    """构建统一技能入口；skills 为数据库技能，plugin_ids 为当前 Agent 绑定的插件。"""
+    from ..plugins.registry import get_manifest, read_plugin_skill
+
+    plugins_map = {get_manifest(pid).skill_name: pid for pid in (plugin_ids or []) if get_manifest(pid).skill_name}
+    # 绑定插件的同名技能优先，确保说明和工具版本一致，同时避免重复 Skill 工具。
+    skills = [skill for skill in skills if skill["name"] not in plugins_map]
+    if not skills and not plugins_map:
         return []
 
     skills_map = {s["name"]: s for s in skills}
@@ -33,6 +38,8 @@ def build_skill_tools(skills: List[Dict]) -> List[StructuredTool]:
         available.append(
             f'<skill>\n  <name>{s["name"]}</name>\n  <description>{s["description"]}</description>\n</skill>'
         )
+    for name, plugin_id in plugins_map.items():
+        available.append(f'<skill>\n  <name>{name}</name>\n  <description>{get_manifest(plugin_id).description}</description>\n</skill>')
     skills_xml = "\n".join(available)
 
     skill_description = f"""Execute a skill within the main conversation.
@@ -43,6 +50,8 @@ def build_skill_tools(skills: List[Dict]) -> List[StructuredTool]:
 Invoke a skill by its name to get full instructions and context for the task."""
 
     def execute_skill(command: str) -> str:
+        if command in plugins_map:
+            return read_plugin_skill(plugins_map[command]).content
         skill = skills_map.get(command)
         if not skill:
             return f"Unknown skill: {command}"
@@ -51,6 +60,11 @@ Invoke a skill by its name to get full instructions and context for the task."""
         return content
 
     def execute_skill_file(skill_name: str, path: str) -> str:
+        if skill_name in plugins_map:
+            try:
+                return read_plugin_skill(plugins_map[skill_name], path).content
+            except ValueError as exc:
+                return json.dumps({"error": str(exc)}, ensure_ascii=False)
         skill = skills_map.get(skill_name)
         if not skill:
             return f"Unknown skill: {skill_name}"

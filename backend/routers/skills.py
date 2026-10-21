@@ -25,7 +25,7 @@ async def api_list_skills(user: dict = Depends(get_current_user)) -> List[Dict[s
 
 
 @router.get("/{skill_id}/files")
-async def api_list_skill_files(skill_id: int, user: dict = Depends(get_current_user)) -> List[str]:
+async def api_list_skill_files(skill_id: int, user: dict = Depends(get_current_user)) -> List[Dict]:
     if not await get_skill(skill_id, user["user_id"]):
         raise HTTPException(status_code=404, detail="Skill 不存在")
     return list_skill_files(skill_id)

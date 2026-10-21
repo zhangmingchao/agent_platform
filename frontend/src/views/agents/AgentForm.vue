@@ -151,6 +151,18 @@
         </el-select>
       </el-form-item>
 
+      <el-divider content-position="left">关联插件</el-divider>
+      <el-form-item label="插件">
+        <el-select v-model="form.plugin_ids" multiple placeholder="选择已启用插件" style="width: 100%">
+          <el-option v-for="plugin in plugins.filter(p => p.installed)" :key="plugin.manifest.id"
+            :label="plugin.manifest.name" :value="plugin.manifest.id"
+            :disabled="(!plugin.enabled || !['ready', 'not_required'].includes(plugin.config_status)) && !form.plugin_ids.includes(plugin.manifest.id)">
+            {{ plugin.manifest.name }} · {{ plugin.enabled ? '已启用' : '已停用' }}
+          </el-option>
+        </el-select>
+        <el-button link type="primary" @click="$router.push('/plugins')">管理插件</el-button>
+      </el-form-item>
+
       <el-divider content-position="left">关联 MCP</el-divider>
       <el-form-item label="MCP 配置">
         <el-select v-model="form.mcp_ids" multiple placeholder="选择 MCP 配置" style="width: 100%">
@@ -206,7 +218,8 @@ const form = reactive({
   model_config_id: null,
   temperature: 0.7,
   skill_ids: [],
-  mcp_ids: []
+  mcp_ids: [],
+  plugin_ids: []
 })
 
 const rules = {
@@ -220,6 +233,7 @@ const builtinModels = ref([])
 const skills = ref([])
 const moduleList = ref([])
 const mcps = ref([])
+const plugins = ref([])
 const permissionPresetOptions = [
   { value: 'safe', label: '安全模式', description: '只允许低风险只读工具，高风险工具直接拒绝' },
   { value: 'standard', label: '标准模式', description: '允许工作区写入，高风险工具需要审批' },
@@ -293,12 +307,14 @@ const loadBuiltinModels = async () => {
 
 const loadData = async () => {
   try {
-    const [skillsList, mcpsList] = await Promise.all([
+    const [skillsList, mcpsList, pluginsList] = await Promise.all([
       request.get('/api/skills'),
-      request.get('/api/mcp-configs')
+      request.get('/api/mcp-configs'),
+      request.get('/api/plugins')
     ])
     skills.value = skillsList
     mcps.value = mcpsList
+    plugins.value = pluginsList
 
     if (isEdit.value) {
       const agent = await request.get(`/api/agents/${route.params.id}`)
@@ -325,6 +341,7 @@ const loadData = async () => {
       form.temperature = agent.temperature
       form.skill_ids = agent.skills?.map(s => s.id) || []
       form.mcp_ids = agent.mcps?.map(m => m.id) || []
+      form.plugin_ids = agent.plugin_ids || []
 
       if (agent.model_config_id) {
         modelSource.value = 'custom'

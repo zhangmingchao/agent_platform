@@ -33,6 +33,10 @@
           <el-icon><Document /></el-icon>
           <span>Skill 管理</span>
         </el-menu-item>
+        <el-menu-item index="/plugins">
+          <el-icon><Box /></el-icon>
+          <span>插件管理</span>
+        </el-menu-item>
         <el-menu-item index="/mcps">
           <el-icon><Connection /></el-icon>
           <span>MCP 配置</span>
@@ -183,7 +187,7 @@ const loading = ref(false)
 const apiKeyLoading = ref(false)
 const issuedApiKey = ref('')
 const apiKeyStatus = ref({ configured: false })
-const isCollapse = ref(false)
+const isCollapse = ref(window.innerWidth < 768)
 const toggleCollapse = () => {
   isCollapse.value = !isCollapse.value
 }
@@ -325,6 +329,7 @@ const submitPassword = async () => {
 .layout-container {
   height: 100vh;
 }
+.layout-container > .el-container { min-width: 0; }
 .layout-aside {
   background-color: #1f2937;
   display: flex;
@@ -366,6 +371,7 @@ const submitPassword = async () => {
   font-size: 14px;
 }
 .layout-main {
+  min-width: 0;
   background: #f5f7fa;
   padding: 20px;
   overflow-y: auto;
@@ -390,5 +396,10 @@ const submitPassword = async () => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+@media (max-width: 760px) {
+  .layout-main { padding: 12px; }
+  .layout-header { padding: 0 12px; }
+  .username { display: none; }
 }
 </style>

@@ -1,0 +1,12 @@
+{
+  "id": "json-tools",
+  "name": "JSON 格式处理",
+  "version": "1.0.0",
+  "description": "在本地校验、格式化和压缩 JSON 数据。",
+  "source": "builtin",
+  "executor": "local-json",
+  "tools": ["JsonFormat"],
+  "permissions": ["data.transform"],
+  "fields": [],
+  "capabilities": {"debug": true}
+}

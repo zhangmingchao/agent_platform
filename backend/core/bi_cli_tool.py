@@ -8,12 +8,13 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from typing import List, Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ..bi_cli.models import BiCliExitCode, BiCliResult
+from ..bi_cli.models import BiCliExitCode, BiCliResult, BiCliSettings
 from ..config import (
     BI_CLI_ENABLED,
     BI_CLI_MAX_OUTPUT_BYTES,
@@ -92,18 +93,28 @@ def _validate_arguments(arguments: List[str]) -> List[str]:
 async def _execute_bi_cli_process(
     arguments: List[str],
     request_id: str,
+    settings: Optional[BiCliSettings] = None,
 ) -> BiCliProcessResult:
     """使用参数数组启动固定 BI CLI 模块，始终禁用 Shell 解析。
 
     Args:
         arguments: 已完成白名单前置校验的 CLI 参数数组。
         request_id: 当前 Agent Trace 对应的跨系统请求标识。
+        settings: 当前用户插件的配置快照；为空时兼容进程环境变量。
 
     Returns:
         包含退出码和标准输出的强类型进程结果。
     """
     environment = dict(os.environ)
     environment["BI_CLI_REQUEST_ID"] = request_id
+    if settings is not None:
+        # 每个子进程独立注入配置，禁止修改共享 os.environ，避免跨用户串用凭据。
+        environment.update({
+            "BI_DOCKER_BASE_URL": settings.base_url,
+            "BI_DOCKER_TOKEN": settings.access_token,
+            "BI_DOCKER_TIMEOUT_SECONDS": str(settings.timeout_seconds),
+            "BI_CLI_MAX_OUTPUT_BYTES": str(settings.max_output_bytes),
+        })
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -117,8 +128,13 @@ async def _execute_bi_cli_process(
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             process.communicate(),
-            timeout=BI_DOCKER_TIMEOUT_SECONDS + 5,
+            timeout=(settings.timeout_seconds if settings else BI_DOCKER_TIMEOUT_SECONDS) + 5,
         )
+    except asyncio.CancelledError:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        raise
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
@@ -140,18 +156,19 @@ async def _execute_bi_cli_process(
     )
 
 
-def _process_output(result: BiCliProcessResult, request_id: str) -> str:
+def _process_output(result: BiCliProcessResult, request_id: str, max_output_bytes: int = BI_CLI_MAX_OUTPUT_BYTES) -> str:
     """规范化子进程输出，避免超大或非 JSON 内容进入模型上下文。
 
     Args:
         result: CLI 子进程返回的强类型结果。
         request_id: 当前 Agent 请求标识。
+        max_output_bytes: 当前用户插件允许的最大输出字节数。
 
     Returns:
         保证为 JSON 对象字符串的 ToolMessage 内容。
     """
     output_bytes = result.stdout.encode("utf-8")
-    if len(output_bytes) > BI_CLI_MAX_OUTPUT_BYTES:
+    if len(output_bytes) > max_output_bytes:
         return BiCliResult.failure(
             command_name="",
             request_id=request_id,
@@ -176,16 +193,18 @@ def _process_output(result: BiCliProcessResult, request_id: str) -> str:
     ).to_json()
 
 
-def build_bi_cli_tools(context: Optional[RuntimeContext]) -> List[StructuredTool]:
+def build_bi_cli_tools(context: Optional[RuntimeContext], settings: Optional[BiCliSettings] = None, record_activity: bool = True) -> List[StructuredTool]:
     """按配置构建只读 BI CLI 工具。
 
     Args:
         context: 当前 Agent 的用户、会话和 Trace 上下文。
+        settings: 已校验的用户插件配置；传入时不依赖全局启用开关。
+        record_activity: 是否使用旧 BI 审计入口；通用插件包装器接管时传 False。
 
     Returns:
         未启用或缺少运行上下文时返回空列表，否则返回唯一的 `BiCli` 工具。
     """
-    if not BI_CLI_ENABLED or context is None:
+    if context is None or (settings is None and not BI_CLI_ENABLED):
         return []
 
     async def execute_bi_cli(arguments: List[str]) -> str:
@@ -211,8 +230,18 @@ def build_bi_cli_tools(context: Optional[RuntimeContext]) -> List[StructuredTool
         request_id = ""
         if trace_ctx is not None:
             request_id = str(trace_ctx.request_id or f"trace-{trace_ctx.run_id or 'pending'}")
-        result = await _execute_bi_cli_process(validated_arguments, request_id)
-        return _process_output(result, request_id)
+        started = monotonic()
+        if settings is None:
+            result = await _execute_bi_cli_process(validated_arguments, request_id)
+        else:
+            result = await _execute_bi_cli_process(validated_arguments, request_id, settings)
+        output = _process_output(result, request_id, settings.max_output_bytes if settings else BI_CLI_MAX_OUTPUT_BYTES)
+        # 插件路径同时记录调用摘要，完整业务结果仍由既有 Trace 保存。
+        if settings is not None and record_activity:
+            from ..services.plugin_service import record_plugin_call, redact_plugin_output
+            output = redact_plugin_output(output, settings.access_token, settings.base_url)
+            await record_plugin_call(context, output, int((monotonic() - started) * 1000))
+        return output
 
     return [
         StructuredTool.from_function(

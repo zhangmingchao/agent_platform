@@ -10,6 +10,7 @@ from ..models.agent import Agent
 from ..models.permission import PermissionPreset
 from ..models.task_planning import PlanningMode
 from ..repositories.agent_repository import find_agent_by_id, find_agents_by_user
+from ..security import SecretDecryptionError, SecurityConfigurationError
 from fastapi import HTTPException
 
 log = logging.getLogger(__name__)
@@ -96,6 +97,19 @@ async def create_agent(user_id: int, data: Dict) -> Agent:
             [(agent_id, mid) for mid in mcp_ids]
         )
 
+    if data.get("plugin_ids"):
+        from .plugin_service import bind_agent_plugins
+        try:
+            await bind_agent_plugins(agent_id, user_id, data["plugin_ids"])
+        except Exception as exc:
+            # 新建绑定失败时清理本次新建 Agent，避免界面报错却遗留半成品。
+            await execute("DELETE FROM agent_skills WHERE agent_id=%s", (agent_id,))
+            await execute("DELETE FROM agent_mcps WHERE agent_id=%s", (agent_id,))
+            await execute("DELETE FROM agents WHERE id=%s AND user_id=%s", (agent_id, user_id))
+            if isinstance(exc, (ValueError, SecretDecryptionError, SecurityConfigurationError)):
+                raise HTTPException(400, str(exc)) from exc
+            raise
+
     agent = await get_agent(agent_id, user_id)
     if agent is None:
         raise RuntimeError("Agent 创建成功后无法重新加载")
@@ -111,6 +125,13 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Agen
         return None
 
     prompt_variables, output_schema = _validated_agent_options(data)
+
+    if data.get("plugin_ids") is not None:
+        from .plugin_service import bind_agent_plugins
+        try:
+            await bind_agent_plugins(agent_id, user_id, data["plugin_ids"])
+        except (ValueError, SecretDecryptionError, SecurityConfigurationError) as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     now = _now()
     await execute(

@@ -1,15 +1,36 @@
 <template>
-  <div class="chat-page">
-    <div class="chat-sidebar">
+  <div class="chat-page" :class="{ 'has-observer': currentSessionId }">
+    <div class="chat-sidebar" :class="{ 'is-collapsed': sessionPanelCollapsed }">
       <div class="sidebar-header">
-        <h3>{{ agent?.name || '对话' }}</h3>
-        <el-button size="small" @click="$router.push('/agents')">
-          <el-icon><ArrowLeft /></el-icon>
-          返回
-        </el-button>
+        <h3 v-show="!sessionPanelCollapsed" :title="agent?.name || '对话'">{{ agent?.name || '对话' }}</h3>
+        <div class="panel-header-actions">
+          <el-button v-show="!sessionPanelCollapsed" size="small" @click="$router.push('/agents')">
+            <el-icon><ArrowLeft /></el-icon>
+            返回
+          </el-button>
+          <el-tooltip
+            :content="sessionPanelCollapsed ? '展开会话列表' : '收起会话列表'"
+            :trigger="['hover', 'focus']"
+            :trigger-keys="[]"
+            placement="right"
+          >
+            <el-button
+              class="panel-toggle"
+              text
+              :aria-label="sessionPanelCollapsed ? '展开会话列表' : '收起会话列表'"
+              :aria-expanded="!sessionPanelCollapsed"
+              aria-controls="chat-session-list"
+              @click="toggleSessionPanel"
+            >
+              <el-icon><DArrowRight v-if="sessionPanelCollapsed" /><DArrowLeft v-else /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </div>
       </div>
 
-      <div class="session-list">
+      <span v-if="sessionPanelCollapsed" class="collapsed-panel-label" aria-hidden="true">会话</span>
+      <!-- 隐藏面板内容而不销毁节点，保留会话列表及滚动位置。 -->
+      <div id="chat-session-list" v-show="!sessionPanelCollapsed" class="session-list">
         <div class="session-header">
           <span>会话列表</span>
           <el-button type="primary" size="small" @click="createSession">
@@ -236,16 +257,39 @@
       </div>
     </div>
 
-    <aside v-if="currentSessionId" class="observer-panel">
+    <aside v-if="currentSessionId" class="observer-panel" :class="{ 'is-collapsed': observerPanelCollapsed }">
       <div class="observer-header">
-        <div>
+        <div v-show="!observerPanelCollapsed" class="observer-heading">
           <h3>执行观察</h3>
-          <p>{{ loopDebug.statusText }}</p>
+          <p :title="loopDebug.statusText">{{ loopDebug.statusText }}</p>
         </div>
-        <el-tag size="small" :type="loopDebug.tagType">{{ loopDebug.phaseLabel }}</el-tag>
+        <div class="panel-header-actions observer-header-actions">
+          <span v-show="!observerPanelCollapsed">
+            <el-tag size="small" :type="loopDebug.tagType">{{ loopDebug.phaseLabel }}</el-tag>
+          </span>
+          <el-tooltip
+            :content="observerPanelCollapsed ? '展开执行观察' : '收起执行观察'"
+            :trigger="['hover', 'focus']"
+            :trigger-keys="[]"
+            placement="left"
+          >
+            <el-button
+              class="panel-toggle"
+              text
+              :aria-label="observerPanelCollapsed ? '展开执行观察' : '收起执行观察'"
+              :aria-expanded="!observerPanelCollapsed"
+              aria-controls="chat-observer-tabs"
+              @click="toggleObserverPanel"
+            >
+              <el-icon><DArrowLeft v-if="observerPanelCollapsed" /><DArrowRight v-else /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </div>
       </div>
 
-      <el-tabs v-model="observerTab" stretch>
+      <span v-if="observerPanelCollapsed" class="collapsed-panel-label" aria-hidden="true">执行观察</span>
+      <!-- 折叠仅影响展示，后台流式事件仍持续更新当前观察状态。 -->
+      <el-tabs id="chat-observer-tabs" v-show="!observerPanelCollapsed" v-model="observerTab" stretch>
         <el-tab-pane label="时间线" name="timeline">
           <div v-if="loopTimeline.length === 0" class="observer-empty">等待本轮执行事件</div>
           <div v-else class="timeline-list">
@@ -310,7 +354,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPause, ArrowDown, MagicStick } from '@element-plus/icons-vue'
@@ -362,6 +406,38 @@ const renderMessage = (message) => {
 
 const route = useRoute()
 const agentId = computed(() => route.params.id)
+
+// 桌面面板独立开关；窄屏使用覆盖式面板，默认收起以保留聊天空间。
+const compactChatLayout = window.matchMedia('(max-width: 1100px)')
+const sessionPanelCollapsed = ref(compactChatLayout.matches)
+const observerPanelCollapsed = ref(compactChatLayout.matches)
+
+/** 切换会话列表；窄屏展开时收起另一侧，避免两个面板互相遮挡。 */
+const toggleSessionPanel = () => {
+  sessionPanelCollapsed.value = !sessionPanelCollapsed.value
+  if (compactChatLayout.matches && !sessionPanelCollapsed.value) {
+    observerPanelCollapsed.value = true
+  }
+}
+
+/** 切换执行观察；折叠不清空时间线、Trace 或当前选中的标签页。 */
+const toggleObserverPanel = () => {
+  observerPanelCollapsed.value = !observerPanelCollapsed.value
+  if (compactChatLayout.matches && !observerPanelCollapsed.value) {
+    sessionPanelCollapsed.value = true
+  }
+}
+
+/**
+ * 进入窄屏时收起两侧面板，避免调整窗口后覆盖正在阅读的聊天内容。
+ * @param {MediaQueryListEvent} event 当前窗口是否进入窄屏布局的变更事件。
+ */
+const handleChatLayoutChange = (event) => {
+  if (event.matches) {
+    sessionPanelCollapsed.value = true
+    observerPanelCollapsed.value = true
+  }
+}
 
 const agent = ref(null)
 const sessions = ref([])
@@ -876,11 +952,16 @@ const stopGenerate = () => {
 }
 
 onMounted(async () => {
+  compactChatLayout.addEventListener('change', handleChatLayoutChange)
   await loadAgent()
   await loadSessions()
   if (sessions.value.length > 0) {
     selectSession(sessions.value[0])
   }
+})
+
+onUnmounted(() => {
+  compactChatLayout.removeEventListener('change', handleChatLayoutChange)
 })
 </script>
 
@@ -899,10 +980,12 @@ onMounted(async () => {
 .chat-page {
   display: flex;
   height: calc(100vh - 120px);
+  min-width: 0;
   gap: 16px;
 }
 .chat-sidebar {
-  width: 260px;
+  flex: 0 0 260px;
+  min-width: 0;
   background: #fff;
   border-radius: 8px;
   display: flex;
@@ -910,15 +993,58 @@ onMounted(async () => {
   overflow: hidden;
 }
 .sidebar-header {
-  padding: 16px;
+  padding: 16px 12px;
   border-bottom: 1px solid #e5e7eb;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
 .sidebar-header h3 {
   margin: 0;
+  min-width: 0;
+  flex: 1;
   font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel-header-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+.panel-toggle.el-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin-left: 0;
+  flex-shrink: 0;
+  color: #606266;
+}
+.panel-toggle:focus-visible {
+  outline: 2px solid #409eff;
+  outline-offset: -2px;
+}
+.chat-sidebar.is-collapsed,
+.observer-panel.is-collapsed {
+  flex-basis: 44px;
+  width: 44px;
+  min-width: 44px;
+}
+.is-collapsed .sidebar-header,
+.is-collapsed .observer-header {
+  padding: 12px 6px;
+  justify-content: center;
+  border-bottom: none;
+}
+.collapsed-panel-label {
+  margin: 4px auto 0;
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  line-height: 20px;
+  color: #909399;
 }
 .session-list {
   flex: 1;
@@ -980,8 +1106,8 @@ onMounted(async () => {
   overflow: hidden;
 }
 .observer-panel {
-  width: 320px;
-  min-width: 320px;
+  flex: 0 0 320px;
+  min-width: 0;
   background: #fff;
   border-radius: 8px;
   display: flex;
@@ -990,11 +1116,15 @@ onMounted(async () => {
 }
 .observer-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px 10px;
+  gap: 8px;
+  padding: 14px 12px 10px;
   border-bottom: 1px solid #e5e7eb;
+}
+.observer-heading {
+  min-width: 0;
+  flex: 1;
 }
 .observer-header h3 {
   margin: 0;
@@ -1005,6 +1135,9 @@ onMounted(async () => {
   margin: 4px 0 0;
   font-size: 12px;
   color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .observer-panel :deep(.el-tabs) {
   min-height: 0;
@@ -1509,5 +1642,131 @@ onMounted(async () => {
 .session-delete:focus {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* 窄屏为两侧保留固定展开入口，完整面板覆盖聊天区而不挤压输入框。 */
+@media (max-width: 1100px) {
+  .chat-page {
+    position: relative;
+    gap: 8px;
+  }
+  .chat-sidebar,
+  .observer-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 2;
+  }
+  .chat-sidebar {
+    left: 0;
+    width: min(260px, calc(100% - 52px));
+  }
+  .observer-panel {
+    right: 0;
+    width: min(320px, calc(100% - 52px));
+  }
+  .chat-sidebar:not(.is-collapsed),
+  .observer-panel:not(.is-collapsed) {
+    box-shadow: 0 4px 16px #0000001f;
+  }
+  .chat-main {
+    margin-left: 52px;
+  }
+  .has-observer .chat-main {
+    margin-right: 52px;
+  }
+  .chat-messages,
+  .chat-input {
+    padding: 12px;
+  }
+  .message-content {
+    min-width: 0;
+    max-width: 85%;
+  }
+}
+
+/* 手机端将展开入口放在上下两端，让较窄的聊天区域仍能使用完整宽度。 */
+@media (max-width: 600px) {
+  .chat-page {
+    display: flow-root;
+  }
+  .chat-sidebar,
+  .observer-panel,
+  .chat-sidebar.is-collapsed,
+  .observer-panel.is-collapsed {
+    left: 0;
+    right: 0;
+    width: 100%;
+    min-width: 0;
+  }
+  .chat-sidebar {
+    top: 0;
+    bottom: auto;
+  }
+  .observer-panel {
+    top: auto;
+    bottom: 0;
+  }
+  .chat-sidebar:not(.is-collapsed),
+  .observer-panel:not(.is-collapsed) {
+    height: calc(100% - 52px);
+  }
+  .chat-sidebar.is-collapsed,
+  .observer-panel.is-collapsed {
+    height: 44px;
+  }
+  .is-collapsed .sidebar-header,
+  .is-collapsed .observer-header {
+    padding: 6px;
+    justify-content: flex-start;
+  }
+  .collapsed-panel-label {
+    position: absolute;
+    top: 12px;
+    left: 46px;
+    margin: 0;
+    writing-mode: horizontal-tb;
+  }
+  .chat-main {
+    height: calc(100% - 52px);
+    margin: 52px 0 0;
+  }
+  .has-observer .chat-main {
+    height: calc(100% - 104px);
+    margin-right: 0;
+  }
+  .sidebar-header,
+  .session-header,
+  .observer-header,
+  .observer-header-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sidebar-header h3,
+  .observer-heading {
+    flex-basis: 100%;
+  }
+  .chat-messages,
+  .chat-input {
+    padding: 8px;
+  }
+  .message {
+    gap: 6px;
+  }
+  .message-content {
+    max-width: calc(100% - 46px);
+  }
+  .input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .input-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .input-actions .el-button {
+    margin-left: 0;
+  }
 }
 </style>

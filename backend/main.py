@@ -27,6 +27,7 @@ from .routers.chat import router as chat_router
 from .routers.external_chat import router as external_chat_router
 from .routers.mcp_configs import router as mcp_configs_router
 from .routers.models import router as models_router
+from .routers.plugins import router as plugins_router
 from .routers.runtime import router as runtime_router
 from .routers.sessions import router as sessions_router
 from .routers.skills import router as skills_router
@@ -71,6 +72,7 @@ app.include_router(agents_router)
 app.include_router(skills_router)
 app.include_router(mcp_configs_router)
 app.include_router(models_router)
+app.include_router(plugins_router)
 app.include_router(runtime_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
