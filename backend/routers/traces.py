@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/traces", tags=["Traces"])
 @router.get("")
 async def api_list_traces(user: dict = Depends(get_current_user), limit: int = 200) -> List[Dict[str, Any]]:
     traces = await fetch_all(
-        "SELECT t.id, t.request_id, t.status, t.invocation_source, t.client_conversation_id, "
+        "SELECT t.id, t.parent_trace_run_id, t.request_id, t.status, t.invocation_source, t.client_conversation_id, "
         "t.input_text, t.output_text, t.model, "
         "t.workflow_run_id, t.workflow_step_id, wr.workflow_id, ws.step_order, ws.role_name, "
         "t.total_tokens, t.total_duration_ms as duration_ms, t.started_at, "
@@ -61,7 +61,7 @@ async def api_get_trace_events(
 @router.get("/{trace_id}")
 async def api_get_trace(trace_id: int, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     trace = await fetch_one(
-        "SELECT t.id, t.request_id, t.status, t.invocation_source, t.client_conversation_id, "
+        "SELECT t.id, t.parent_trace_run_id, t.request_id, t.status, t.invocation_source, t.client_conversation_id, "
         "t.input_text, t.output_text, t.error_text, t.model, "
         "t.workflow_run_id, t.workflow_step_id, wr.workflow_id, ws.step_order, ws.role_name, "
         "t.total_tokens, t.total_duration_ms as duration_ms, t.started_at, t.created_at, "
@@ -81,6 +81,12 @@ async def api_get_trace(trace_id: int, user: dict = Depends(get_current_user)) -
     spans = await get_trace_spans(trace_id)
     task_plan = await get_task_plan_by_trace(trace_id)
 
+    trace["child_traces"] = await fetch_all(
+        "SELECT t.id, t.status, t.total_tokens, t.model, a.name AS agent_name "
+        "FROM trace_runs t LEFT JOIN agents a ON a.id=t.agent_id "
+        "WHERE t.parent_trace_run_id=%s AND t.user_id=%s ORDER BY t.id",
+        (trace_id, user["user_id"]),
+    )
     trace["spans"] = spans
     trace["task_plan"] = task_plan.to_dict() if task_plan else None
     return trace

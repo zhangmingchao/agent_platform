@@ -1,7 +1,7 @@
 """模型路由 — 用户级 LLM 模型管理。"""
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from ..auth import get_current_user
@@ -9,6 +9,8 @@ from ..config import HIGH_RISK_RATE_LIMIT_WINDOW_SECONDS, MODEL_TEST_RATE_LIMIT
 from ..llm_adapters.registry import list_llm_adapters
 from ..rate_limit import RateLimitRule, enforce_rate_limit
 from ..models.token_quota import ModelTokenQuotaExceededError, TokenQuotaMode
+from ..models.model_catalog import ModelCatalogPage
+from ..services.model_catalog_service import ModelCatalogError, model_catalog_service
 from ..services.model_service import (
     create_model, delete_model, get_model_safe, list_models, test_model_connection, update_model
 )
@@ -60,6 +62,23 @@ async def api_list_models(user: dict = Depends(get_current_user)) -> List[Dict[s
 async def api_list_model_adapters(user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
     """列出当前后端注册的 LLM Adapter。"""
     return [item.to_dict() for item in list_llm_adapters()]
+
+
+@router.get("/models/catalog", response_model=ModelCatalogPage)
+async def api_model_catalog(
+    page_no: int = Query(default=1, ge=1, le=500),
+    page_size: int = Query(default=10, ge=1, le=100),
+    search: str = Query(default="", max_length=100),
+    refresh: bool = Query(default=False),
+    user: dict = Depends(get_current_user),
+) -> ModelCatalogPage:
+    """查询百炼聊天目录：page_no 页码、page_size 页长、search 名称/ID、refresh 刷新、user 登录用户。"""
+    if refresh:
+        await enforce_rate_limit(MODEL_TEST_RULE, str(user["user_id"]))
+    try:
+        return await model_catalog_service.list_models(page_no, page_size, search, refresh)
+    except ModelCatalogError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
 
 @router.get("/models/{model_id}")

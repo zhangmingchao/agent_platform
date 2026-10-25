@@ -89,8 +89,15 @@ async def api_get_messages(session_id: int, user: dict = Depends(get_current_use
     )
     if not session:
         return []
-    return await fetch_all(
-        "SELECT role, content, reasoning_content, structured_content, attachments, created_at FROM chat_messages "
+    messages = await fetch_all(
+        "SELECT role, content, reasoning_content, structured_content, delegation_results, attachments, created_at FROM chat_messages "
         "WHERE session_id=%s ORDER BY id ASC",
         (session_id,),
     )
+
+    # JSON 列可能由驱动返回字符串，统一恢复为界面可直接使用的摘要列表。
+    import json
+    for message in messages:
+        raw = message.pop('delegation_results', None)
+        message['delegations'] = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    return messages

@@ -32,10 +32,12 @@ class TraceContext:
         invocation_source: InvocationSource = InvocationSource.PLATFORM,
         request_id: Optional[str] = None,
         client_conversation_id: Optional[str] = None,
+        parent_trace_run_id: Optional[int] = None,
     ) -> None:
         """初始化一次 Agent 调用链上下文。
 
         Args:
+            parent_trace_run_id: 子 Agent 的父 Trace ID；顶层执行为空。
             session_id: 平台聊天会话 ID；API 和工作流调用可以为空。
             user_id: 本次调用所属的平台用户 ID。
             agent_id: 本次执行使用的 Agent ID。
@@ -46,6 +48,8 @@ class TraceContext:
             request_id: 对外暴露的一次请求唯一编号，仅外部 API 调用使用。
             client_conversation_id: 外部调用方自己的会话关联标识。
         """
+        # 子任务追踪记录关联父 Trace；各自 total_tokens 只计本执行，避免重复汇总。
+        self.parent_trace_run_id = parent_trace_run_id
         self.session_id = session_id
         self.user_id = user_id
         self.agent_id = agent_id
@@ -66,9 +70,9 @@ class TraceContext:
         self.run_id = await execute(
             "INSERT INTO trace_runs "
             "(session_id, user_id, agent_id, invocation_source, request_id, "
-            "client_conversation_id, workflow_run_id, workflow_step_id, "
+            "client_conversation_id, workflow_run_id, workflow_step_id, parent_trace_run_id, "
             "status, input_text, model, started_at, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 self.session_id,
                 self.user_id,
@@ -78,6 +82,7 @@ class TraceContext:
                 self.client_conversation_id,
                 self.workflow_run_id,
                 self.workflow_step_id,
+                self.parent_trace_run_id,
                 "running",
                 input_text[:5000],
                 self.model_name,

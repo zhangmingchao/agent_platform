@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import sys
+import ssl
 from pathlib import Path
 
 
@@ -74,12 +75,18 @@ def _install_audit_hook(workspace: Path, output_dir: Path) -> None:
                 if not any(_is_relative_to(library_path, root) for root in readable_roots):
                     raise PermissionError("Runtime 禁止加载 Python 目录之外的动态库")
 
-        blocked_prefixes = (
-            "socket.", "subprocess.", "os.system", "os.exec", "os.spawn", "pty.",
-        )
+        blocked_prefixes = ("subprocess.", "os.system", "os.exec", "os.spawn", "pty.")
+        # 用户批准共享容器访问网络；关闭部署开关时继续阻止 socket 操作。
+        if os.getenv("SANDBOX_NETWORK_ENABLED", "true").lower() not in ("1", "true", "yes", "on"):
+            blocked_prefixes += ("socket.",)
         if event.startswith(blocked_prefixes):
             raise PermissionError(f"Runtime 禁止操作：{event}")
 
+    # HTTPS 客户端需要读取系统证书；只允许确定的默认 CA 文件。
+    certificate_paths = ssl.get_default_verify_paths()
+    for filename in (certificate_paths.cafile, certificate_paths.openssl_cafile):
+        if filename and Path(filename).is_file():
+            readable_files.add(Path(filename).resolve())
     sys.addaudithook(audit)
 
 

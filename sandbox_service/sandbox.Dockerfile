@@ -11,6 +11,7 @@ RUN groupadd --gid 10001 sandbox \
 
 WORKDIR /opt/sandbox
 COPY backend/runtime/child_runner.py /opt/sandbox/child_runner.py
+COPY sandbox_service/process_runner.py /opt/sandbox/process_runner.py
 RUN chown -R sandbox:sandbox /opt/sandbox
 
 USER 10001:10001

@@ -30,6 +30,8 @@ from docker.errors import DockerException, ImageNotFound, NotFound
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from .plugin_execution import PluginContainerRequest, PluginContainerResult, cancel_plugin, execute_plugin
+
 # ── 配置项（全部通过环境变量注入，生产部署时必须覆盖默认值）──────────────────
 
 SERVICE_TOKEN = os.getenv("SANDBOX_SERVICE_TOKEN", "change-me-in-production")
@@ -53,6 +55,9 @@ IDLE_STOP_SECONDS = int(os.getenv("SANDBOX_IDLE_STOP_SECONDS", "1800"))      # �
 DELETE_AFTER_SECONDS = int(os.getenv("SANDBOX_DELETE_AFTER_SECONDS", "604800"))  # 7 天删除
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("SANDBOX_CLEANUP_INTERVAL_SECONDS", "60"))  # 每 60 秒检查
 # stdout/stderr 最大捕获字节数（1MB），防止恶意代码产生过大日志
+NETWORK_ENABLED = os.getenv("SANDBOX_NETWORK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+CONTAINER_REVISION = "plugin-process-v1"
+
 MAX_CAPTURE_BYTES = int(os.getenv("SANDBOX_MAX_CAPTURE_BYTES", str(1024 * 1024)))
 
 # 安全的正则：executionId 和 workspaceId 只允许字母/数字/下划线/连字符
@@ -212,7 +217,7 @@ def _ensure_user_container(user_id: int):
     - 不存在 → docker run 创建
 
     安全约束：
-    - network_disabled: 无网络（防止数据外传/反向 Shell）
+    - network_disabled: 按部署配置允许网络，Runtime 与插件共享用户容器
     - read_only: 根文件系统只读（只有 /workspaces 和 /tmp 可写）
     - cap_drop ALL + no-new-privileges: 丢弃所有 Linux capabilities
     - mem_limit/pids_limit: 防止资源耗尽
@@ -221,9 +226,14 @@ def _ensure_user_container(user_id: int):
     container = _find_user_container(user_id)
     if container is not None:
         container.reload()  # 刷新容器状态（可能被其他进程停止/启动）
-        if container.status != "running":
+        # 配置在空闲锁内迁移；挂载目录持久化，重建容器不会删除工作文件。
+        if container.labels.get("agent.platform.revision") != CONTAINER_REVISION or bool(container.attrs.get("HostConfig", {}).get("NetworkMode") == "none") == NETWORK_ENABLED:
+            container.remove(force=True)
+            container = None
+        elif container.status != "running":
             container.start()
-        return container
+        if container is not None:
+            return container
 
     # 确保用户工作目录存在
     _user_workspace_root(user_id)
@@ -234,7 +244,7 @@ def _ensure_user_container(user_id: int):
         "name": _container_name(user_id),
         "command": ["sleep", "infinity"],       # 容器启动后睡眠，等 exec_run 来调用
         "detach": True,                        # 后台运行
-        "network_disabled": True,              # ★ 无网络
+        "network_disabled": not NETWORK_ENABLED,              # 用户授权允许网络，默认开启
         "read_only": True,                     # ★ 根文件系统只读
         "user": f"{SANDBOX_UID}:{SANDBOX_GID}",  # ★ 非 root
         "mem_limit": SANDBOX_MEMORY,           # 内存上限 512MB
@@ -246,12 +256,14 @@ def _ensure_user_container(user_id: int):
         "tmpfs": {"/tmp": "rw,noexec,nosuid,nodev,size=128m"},  # /tmp 限制 128MB
         "volumes": {str(workspace_root): {"bind": "/workspaces", "mode": "rw"}},  # 挂载用户数据
         "environment": {
+            "SANDBOX_NETWORK_ENABLED": "true" if NETWORK_ENABLED else "false",
             "PYTHONIOENCODING": "utf-8",       # 强制 UTF-8 输出
             "PYTHONDONTWRITEBYTECODE": "1",    # 不生成 .pyc
             "MPLBACKEND": "Agg",               # matplotlib 无界面模式
         },
         "labels": {
-            "agent.platform.sandbox": "true",  # 标记为沙箱容器
+            "agent.platform.sandbox": "true",
+            "agent.platform.revision": CONTAINER_REVISION,  # 标记为沙箱容器
             "agent.platform.user_id": str(user_id),  # 标记所属用户
         },
     }
@@ -336,7 +348,10 @@ def _cleanup_sync() -> None:
         user_id_raw = container.labels.get("agent.platform.user_id", "")
         if not user_id_raw.isdigit():
             continue
-        activity = _activity_path(int(user_id_raw))
+        user_id = int(user_id_raw)
+        if _user_locks.get(user_id) is not None and _user_locks[user_id].locked():
+            continue  # 不回收正在安装依赖或执行任务的共享容器。
+        activity = _activity_path(user_id)
         last_active = activity.stat().st_mtime if activity.exists() else now
         idle_seconds = now - last_active
         container.reload()  # 刷新状态
@@ -407,3 +422,20 @@ async def execute_code(
             return await asyncio.to_thread(_execute_sync, request)
         except (DockerException, NotFound, OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/v1/plugins/{action}", response_model=PluginContainerResult)
+async def plugin_operation(action: str, request: PluginContainerRequest, _: None = Depends(require_internal_token)) -> PluginContainerResult:
+    """按 action 安装/执行/取消 request 插件，认证参数阻止外部直接操控容器。"""
+    if action == "cancel":
+        return cancel_plugin(_user_workspace_root(request.user_id), request)
+    if action not in ("install", "run"):
+        raise HTTPException(404, "不支持的插件操作")
+    lock = _user_locks.setdefault(request.user_id, asyncio.Lock())
+    async with lock:
+        try:
+            container = await asyncio.to_thread(_ensure_user_container, request.user_id)
+            _touch_activity(request.user_id)
+            return await asyncio.to_thread(execute_plugin, container, _user_workspace_root(request.user_id), request, action, SANDBOX_UID, SANDBOX_GID)
+        except (DockerException, OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(503, "共享容器插件操作失败：" + type(exc).__name__) from exc

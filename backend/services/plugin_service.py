@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Optional
 
 import aiomysql
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 from ..database import fetch_all, fetch_one, get_conn, release_conn
 from ..models.plugin import (
@@ -19,8 +19,9 @@ from ..models.plugin import (
     PluginOperationResult, PluginProbeInput, PluginSettings, PluginView,
 )
 from ..plugins.configuration import settings_complete, validate_fields
-from ..plugins.executors import get_executor
 from ..plugins.registry import get_manifest, list_manifests
+from ..plugins.packages import ProcessManifest
+from ..plugins.storage import installed_package, list_packages
 from ..runtime.models import RuntimeContext
 from ..security import decrypt_plugin_token, encrypt_plugin_token
 
@@ -32,7 +33,7 @@ class StoredPlugin(BaseModel):
 
     user_id/plugin_id 标识所有者和插件；values 为普通配置，encrypted_secrets 为字段密文。
     enabled/revision 为启用状态和并发版本；health_status/health_message 为检测状态和摘要。
-    tested_at/updated_at 为 UTC 检测及配置时间。load_storage 兼容旧 BI 数据，不在启动时解密。
+    tested_at/updated_at 为 UTC 检测及配置时间；只读取通用 JSON 配置列，不恢复历史 BI 字段。
     """
 
     user_id: int
@@ -49,30 +50,24 @@ class StoredPlugin(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def load_storage(cls, data: Any) -> Any:
-        """将 data 数据库行映射为通用配置，旧 BI 列仅用于尚未升级的历史记录。"""
+        """将 data 数据库行映射为通用配置，动态字段仅在持久化边界使用映射。"""
         if not isinstance(data, dict) or "values_json" not in data:
             return data
         result = dict(data)
-        if data.get("values_json") is None and data["plugin_id"] == "bi-metadata":
-            result["values"] = {"base_url": data["base_url"], "timeout_seconds": data["timeout_seconds"],
-                                "max_output_bytes": data["max_output_bytes"]}
-            result["encrypted_secrets"] = {"token": data["encrypted_token"]} if data["encrypted_token"] else {}
-        else:
-            for column, field in (("values_json", "values"), ("secrets_json", "encrypted_secrets")):
-                value = data.get(column)
-                result[field] = json.loads(value) if isinstance(value, str) else (value or {})
+        for column, field in (("values_json", "values"), ("secrets_json", "encrypted_secrets")):
+            value = data.get(column)
+            result[field] = json.loads(value) if isinstance(value, str) else (value or {})
         return result
 
     def presence_settings(self) -> PluginSettings:
         """返回不解密的完整性快照，占位标记表示已有密钥，仅供公开视图和保存校验。"""
         return PluginSettings(values=self.values, secrets={key: "x" for key, value in self.encrypted_secrets.items() if value})
 
-    def settings(self) -> PluginSettings:
+    def settings(self, manifest: PluginManifest | None = None) -> PluginSettings:
         """按插件声明解密和校验执行快照，禁止向日志或接口返回该实体的密钥。"""
-        manifest = _manifest(self.plugin_id)
+        manifest = manifest or get_manifest(self.plugin_id)
         previous = PluginSettings(values=self.values, secrets={key: decrypt_plugin_token(value) for key, value in self.encrypted_secrets.items()})
         settings = validate_fields(manifest.fields, PluginConfigInput(), previous, complete=True)
-        get_executor(manifest.executor).validate(settings)
         return settings
 
 
@@ -81,13 +76,13 @@ class RuntimePlugin(BaseModel):
 
     plugin_id: str
     settings: PluginSettings = Field(repr=False)
+    manifest: SerializeAsAny[PluginManifest] | None = None
 
 
 class RuntimePlugins(BaseModel):
-    """Agent 插件快照；entries 为启用且绑定的插件，managed_executors 控制对应旧环境入口。"""
+    """Agent 插件快照；entries 仅包含已安装、启用且绑定的容器进程插件。"""
 
     entries: list[RuntimePlugin] = Field(default_factory=list)
-    managed_executors: list[str] = Field(default_factory=list)
 
     @property
     def plugin_ids(self) -> list[str]:
@@ -95,12 +90,25 @@ class RuntimePlugins(BaseModel):
         return [entry.plugin_id for entry in self.entries]
 
 
-def _manifest(plugin_id: str) -> PluginManifest:
-    """校验 plugin_id 并返回固定注册表声明，未知插件返回 404。"""
+async def _manifest(user_id: int, plugin_id: str) -> ProcessManifest:
+    """按 user_id/plugin_id 读取用户激活版本，尚未安装的内置包返回目录声明。"""
+    packages = await list_packages(user_id, plugin_id)
+    if packages:
+        return (next((package for package in packages if package.active), packages[0])).manifest
     try:
         return get_manifest(plugin_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+async def require_installed(user_id: int, plugin_id: str) -> None:
+    """确认 user_id 的 plugin_id 已完成容器依赖安装，配置记录不能代替安装状态。"""
+    try:
+        package = await installed_package(user_id, plugin_id)
+    except ValueError as exc:
+        raise HTTPException(409, "请先将插件安装到用户 Runtime 容器") from exc
+    if package.status != "ready":
+        raise HTTPException(409, "请等待插件安装完成")
 
 
 @asynccontextmanager
@@ -120,7 +128,7 @@ async def _transaction() -> AsyncIterator[aiomysql.Cursor]:
 
 async def _stored(user_id: int, plugin_id: str) -> Optional[StoredPlugin]:
     """读取 user_id 的 plugin_id 配置，不存在时返回 None。"""
-    _manifest(plugin_id)
+    await _manifest(user_id, plugin_id)
     row = await fetch_one("SELECT * FROM plugin_configs WHERE user_id=%s AND plugin_id=%s", (user_id, plugin_id))
     return StoredPlugin.model_validate(row) if row else None
 
@@ -146,7 +154,7 @@ async def _persist(
     values_json = json.dumps(settings.values, ensure_ascii=False)
     secrets_json = json.dumps(encrypted_secrets)
     if existing:
-        # 清空旧凭据列，避免新旧配置长期重复保存；未升级记录仍通过兼容路径读取。
+        # 历史专用列只写空值，不再读取或恢复历史配置。
         await cursor.execute(
             "UPDATE plugin_configs SET values_json=%s,secrets_json=%s,base_url='',encrypted_token='',"
             "revision=revision+1,health_status='untested',health_message='',tested_at=NULL,updated_at=UTC_TIMESTAMP() "
@@ -161,7 +169,7 @@ async def _persist(
 
 async def get_plugin(user_id: int, plugin_id: str) -> PluginView:
     """返回 user_id 的 plugin_id 公开视图，仅暴露已配置密钥名称，不解密凭据。"""
-    manifest = _manifest(plugin_id)
+    manifest = await _manifest(user_id, plugin_id)
     stored = await _stored(user_id, plugin_id)
     settings = stored.presence_settings() if stored else PluginSettings()
     normalized = validate_fields(manifest.fields, PluginConfigInput(), settings, complete=False)
@@ -181,21 +189,39 @@ async def get_plugin(user_id: int, plugin_id: str) -> PluginView:
             "WHERE p.user_id=%s AND a.user_id=%s AND p.plugin_id=%s ORDER BY a.id", (user_id, user_id, plugin_id),
         )
         view.agents = [PluginAgentSummary.model_validate(row) for row in rows]
+    packages = await list_packages(user_id, plugin_id)
+    if packages:
+        current = next((package for package in packages if package.active), packages[0])
+        pending = next((package for package in packages if package.version != current.version and package.status in ("queued", "installing")), None)
+        view.installed = True
+        view.package_status = current.status
+        view.pending_version = pending.version if pending else None
+        view.package_error = current.error_message
+    else:
+        view.installed = False
+        view.package_status = "not_installed"
+    if view.package_status != "ready":
+        view.enabled = False
     return view
 
 
 async def list_plugins(user_id: int) -> list[PluginView]:
     """返回 user_id 的完整插件目录，各插件依据自己的声明计算配置状态。"""
-    return [await get_plugin(user_id, manifest.id) for manifest in list_manifests()]
+    identifiers = [manifest.id for manifest in list_manifests()]
+    identifiers.extend(sorted({package.plugin_id for package in await list_packages(user_id)} - set(identifiers)))
+    return [await get_plugin(user_id, plugin_id) for plugin_id in identifiers]
 
 
 async def save_plugin(user_id: int, plugin_id: str, data: PluginConfigInput, action: str = "configure") -> PluginView:
-    """保存 user_id/plugin_id 的 data 通用配置；action 区分保存和显式环境导入。"""
-    manifest = _manifest(plugin_id)
+    """保存 user_id/plugin_id 的 data 通用配置；action 为本次审计操作名称。"""
+    manifest = await _manifest(user_id, plugin_id)
+    await require_installed(user_id, plugin_id)
     async with _transaction() as cursor:
         await cursor.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (user_id,))
         if not await cursor.fetchone():
             raise HTTPException(404, "用户不存在")
+        await require_installed(user_id, plugin_id)
+        manifest = await _manifest(user_id, plugin_id)
         await cursor.execute("SELECT * FROM plugin_configs WHERE user_id=%s AND plugin_id=%s FOR UPDATE", (user_id, plugin_id))
         row = await cursor.fetchone()
         existing = StoredPlugin.model_validate(row) if row else None
@@ -216,11 +242,14 @@ async def save_plugin(user_id: int, plugin_id: str, data: PluginConfigInput, act
 
 async def toggle_plugin(user_id: int, plugin_id: str, enabled: bool, revision: int) -> PluginView:
     """按 revision 为 user_id 启停 plugin_id；无配置项插件允许以版本 0 直接首次启用。"""
-    manifest = _manifest(plugin_id)
+    manifest = await _manifest(user_id, plugin_id)
+    await require_installed(user_id, plugin_id)
     async with _transaction() as cursor:
         await cursor.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (user_id,))
         if not await cursor.fetchone():
             raise HTTPException(404, "用户不存在")
+        await require_installed(user_id, plugin_id)
+        manifest = await _manifest(user_id, plugin_id)
         await cursor.execute("SELECT * FROM plugin_configs WHERE user_id=%s AND plugin_id=%s FOR UPDATE", (user_id, plugin_id))
         row = await cursor.fetchone()
         stored = StoredPlugin.model_validate(row) if row else None
@@ -228,14 +257,13 @@ async def toggle_plugin(user_id: int, plugin_id: str, enabled: bool, revision: i
             raise HTTPException(409, "配置已被修改，请刷新后再操作")
         if stored:
             if enabled:
-                stored.settings()
+                stored.settings(manifest)
             await cursor.execute(
                 "UPDATE plugin_configs SET enabled=%s,revision=revision+1,updated_at=UTC_TIMESTAMP() WHERE user_id=%s AND plugin_id=%s",
                 (enabled, user_id, plugin_id),
             )
         else:
             settings = validate_fields(manifest.fields, PluginConfigInput(), PluginSettings(), complete=True)
-            get_executor(manifest.executor).validate(settings)
             await _persist(cursor, user_id, plugin_id, settings, {}, None, enabled)
         await _audit(cursor, user_id, plugin_id, "enable" if enabled else "disable")
     return await get_plugin(user_id, plugin_id)
@@ -243,7 +271,7 @@ async def toggle_plugin(user_id: int, plugin_id: str, enabled: bool, revision: i
 
 async def remove_plugin(user_id: int, plugin_id: str, revision: int) -> PluginOperationResult:
     """按 revision 删除 user_id 的 plugin_id 配置；有绑定则拒绝。"""
-    _manifest(plugin_id)
+    await _manifest(user_id, plugin_id)
     async with _transaction() as cursor:
         await cursor.execute("SELECT revision FROM plugin_configs WHERE user_id=%s AND plugin_id=%s FOR UPDATE", (user_id, plugin_id))
         row = await cursor.fetchone()
@@ -255,16 +283,6 @@ async def remove_plugin(user_id: int, plugin_id: str, revision: int) -> PluginOp
         await cursor.execute("DELETE FROM plugin_configs WHERE user_id=%s AND plugin_id=%s", (user_id, plugin_id))
         await _audit(cursor, user_id, plugin_id, "remove")
     return PluginOperationResult(ok=True, message="插件已移除")
-
-
-async def import_environment(user_id: int, plugin_id: str, revision: int) -> PluginView:
-    """显式导入 plugin_id 执行器允许的环境配置到 user_id，revision 防止覆盖新值。"""
-    manifest = _manifest(plugin_id)
-    if not manifest.capabilities.environment_import:
-        raise HTTPException(400, "此插件不支持环境配置导入")
-    imported = get_executor(manifest.executor).environment()
-    settings = validate_fields(manifest.fields, PluginConfigInput(), imported, complete=True)
-    return await save_plugin(user_id, plugin_id, PluginConfigInput(values=settings.values, secrets=settings.secrets, revision=revision), action="import_environment")
 
 
 def redact_plugin_output(output: str, token: str = "", base_url: str = "", *, secrets: Optional[list[str]] = None) -> str:
@@ -292,30 +310,35 @@ def redacted_result(output: str, manifest: PluginManifest, settings: PluginSetti
 
 
 async def diagnose_plugin(
-    user_id: int, plugin_id: str, request: PluginDebugInput | PluginProbeInput | list[str], probe: bool = False,
+    user_id: int, plugin_id: str, request: PluginDebugInput | PluginProbeInput, probe: bool = False,
 ) -> PluginOperationResult:
-    """使用 user_id/plugin_id 配置执行 request；probe 控制检测状态，列表形式仅兼容旧内部 BI 调用。"""
-    manifest = _manifest(plugin_id)
+    """按 user_id/plugin_id 配置执行 request；probe 使用声明模板，所有业务执行进入容器队列。"""
+    await require_installed(user_id, plugin_id)
+    manifest = await _manifest(user_id, plugin_id)
     if not (manifest.capabilities.connection_test if probe else manifest.capabilities.debug):
         raise HTTPException(400, "此插件不支持连接检测" if probe else "此插件不支持工具调试")
     stored = await _stored(user_id, plugin_id)
-    if stored:
-        settings = stored.settings()
+    settings = stored.settings(manifest) if stored else validate_fields(manifest.fields, PluginConfigInput(), PluginSettings(), complete=True)
+    if probe:
+        if not isinstance(request, PluginProbeInput) or manifest.probe is None:
+            raise ValueError("连接检测参数无效")
+        parameters = validate_fields(manifest.test_fields, PluginConfigInput(values=request.parameters), PluginSettings(), complete=True)
+        data = manifest.probe.request(parameters)
     else:
-        settings = validate_fields(manifest.fields, PluginConfigInput(), PluginSettings(), complete=True)
-        get_executor(manifest.executor).validate(settings)
-    executor = get_executor(manifest.executor)
+        if not isinstance(request, PluginDebugInput):
+            raise ValueError("工具调试参数无效")
+        data = request
+    from ..core.plugin_tools import build_plugin_tools
+    from ..core.tool_execution_pipeline import wrap_tools_with_execution_pipeline
+    from ..plugins.packages import public_tool_name
+    context = RuntimeContext(user_id=user_id)
+    tools = wrap_tools_with_execution_pipeline(build_plugin_tools(context, [RuntimePlugin(plugin_id=plugin_id, settings=settings, manifest=manifest)]), context)
+    raw_name = data.tool_name or (manifest.tools[0] if len(manifest.tools) == 1 else "")
+    tool = next((item for item in tools if item.name == public_tool_name(plugin_id, raw_name)), None)
+    if tool is None:
+        raise ValueError("插件工具不存在")
     started = monotonic()
-    try:
-        if isinstance(request, PluginProbeInput):
-            parameters = validate_fields(manifest.test_fields, PluginConfigInput(values=request.parameters), PluginSettings(), complete=True)
-            output = await executor.probe(settings, parameters)
-        else:
-            data = PluginDebugInput(input={"arguments": request}) if isinstance(request, list) else request
-            output = await executor.debug(settings, data)
-    except OSError as exc:
-        log.warning("插件执行器启动失败: %s", type(exc).__name__)
-        output = json.dumps({"ok": False, "error": {"code": "EXECUTOR_ERROR"}, "message": "插件执行器启动失败"})
+    output = str(await tool.ainvoke(data.input))
     output = redacted_result(output, manifest, settings)
     result = json.loads(output)
     ok = result.get("ok") is True
@@ -339,7 +362,7 @@ async def diagnose_plugin(
 
 async def list_activity(user_id: int, plugin_id: str, before_id: Optional[int] = None) -> list[PluginActivity]:
     """按 before_id 游标读取 user_id 的 plugin_id 最近 30 条记录。"""
-    _manifest(plugin_id)
+    await _manifest(user_id, plugin_id)
     rows = await fetch_all(
         "SELECT * FROM plugin_activity WHERE user_id=%s AND plugin_id=%s AND (%s IS NULL OR id<%s) ORDER BY id DESC LIMIT 30",
         (user_id, plugin_id, before_id, before_id),
@@ -350,11 +373,14 @@ async def list_activity(user_id: int, plugin_id: str, before_id: Optional[int] =
 async def bind_agent_plugins(agent_id: int, user_id: int, plugin_ids: list[str]) -> None:
     """为 user_id 的 agent_id 原子替换 plugin_ids 绑定；锁定配置防止与移除竞争。"""
     async with _transaction() as cursor:
+        await cursor.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (user_id,))
+        await cursor.fetchone()
         await cursor.execute("SELECT id FROM agents WHERE id=%s AND user_id=%s FOR UPDATE", (agent_id, user_id))
         if not await cursor.fetchone():
             raise HTTPException(404, "Agent 不存在")
         for plugin_id in sorted(set(plugin_ids)):
-            _manifest(plugin_id)
+            manifest = await _manifest(user_id, plugin_id)
+            await require_installed(user_id, plugin_id)
             await cursor.execute("SELECT * FROM plugin_configs WHERE user_id=%s AND plugin_id=%s FOR UPDATE", (user_id, plugin_id))
             row = await cursor.fetchone()
             if not row:
@@ -365,7 +391,7 @@ async def bind_agent_plugins(agent_id: int, user_id: int, plugin_ids: list[str])
                 if not await cursor.fetchone():
                     raise HTTPException(400, "新绑定的插件必须已启用")
             else:
-                stored.settings()
+                stored.settings(manifest)
         await cursor.execute("SELECT plugin_id FROM agent_plugins WHERE agent_id=%s AND user_id=%s", (agent_id, user_id))
         previous = {row["plugin_id"] for row in await cursor.fetchall()}
         await cursor.execute("DELETE FROM agent_plugins WHERE agent_id=%s AND user_id=%s", (agent_id, user_id))
@@ -378,19 +404,23 @@ async def bind_agent_plugins(agent_id: int, user_id: int, plugin_ids: list[str])
 
 
 async def load_runtime_plugins(context: Optional[RuntimeContext]) -> RuntimePlugins:
-    """按 context 所属用户及 Agent 加载所有已绑定插件，独立控制各执行器的旧环境入口。"""
+    """按 context 所属用户及 Agent 读取 ready、启用且绑定的安装版本快照，不加载全局环境工具。"""
     if context is None or context.agent_id is None:
         return RuntimePlugins()
-    rows = await fetch_all("SELECT * FROM plugin_configs WHERE user_id=%s", (context.user_id,))
-    configs = {row["plugin_id"]: StoredPlugin.model_validate(row) for row in rows}
-    bindings = await fetch_all(
-        "SELECT p.plugin_id FROM agent_plugins p JOIN agents a ON a.id=p.agent_id "
-        "WHERE p.user_id=%s AND a.user_id=%s AND p.agent_id=%s", (context.user_id, context.user_id, context.agent_id),
+    rows = await fetch_all(
+        "SELECT c.* FROM plugin_configs c JOIN agent_plugins p ON c.user_id=p.user_id AND c.plugin_id=p.plugin_id "
+        "JOIN agents a ON a.id=p.agent_id WHERE c.user_id=%s AND a.user_id=%s AND p.agent_id=%s AND c.enabled=1",
+        (context.user_id, context.user_id, context.agent_id),
     )
-    managed = sorted({_manifest(plugin_id).executor for plugin_id in configs})
-    entries = [RuntimePlugin(plugin_id=binding["plugin_id"], settings=configs[binding["plugin_id"]].settings())
-               for binding in bindings if binding["plugin_id"] in configs and configs[binding["plugin_id"]].enabled]
-    return RuntimePlugins(entries=entries, managed_executors=managed)
+    entries: list[RuntimePlugin] = []
+    for row in rows:
+        stored = StoredPlugin.model_validate(row)
+        packages = await list_packages(context.user_id, stored.plugin_id)
+        current = next((package for package in packages if package.active and package.status == "ready"), None)
+        if current:
+            manifest = current.manifest
+            entries.append(RuntimePlugin(plugin_id=stored.plugin_id, settings=stored.settings(manifest), manifest=manifest))
+    return RuntimePlugins(entries=entries)
 
 
 async def record_plugin_call(context: RuntimeContext, output: str, duration_ms: int = 0, plugin_id: str = "bi-metadata") -> None:

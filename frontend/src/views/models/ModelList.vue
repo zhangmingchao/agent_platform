@@ -44,7 +44,39 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑模型' : '添加模型'" width="600">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑模型' : '添加模型'" width="min(760px, calc(100vw - 32px))" top="5vh">
+      <template v-if="!isEdit">
+        <el-radio-group v-model="addMode" class="catalog-mode" @change="changeAddMode">
+          <el-radio-button value="bailian">阿里云百炼目录</el-radio-button>
+          <el-radio-button value="custom">自定义添加</el-radio-button>
+        </el-radio-group>
+        <div v-if="addMode === 'bailian'" class="catalog-panel">
+          <div class="catalog-toolbar">
+            <el-input v-model="catalogSearch" placeholder="搜索模型名称或 ID" clearable maxlength="100" />
+            <el-button :loading="catalogLoading" @click="loadCatalog(true)">刷新目录</el-button>
+          </div>
+          <el-alert v-if="catalogError" :title="catalogError" type="error" :closable="false" show-icon />
+          <el-button v-if="catalogError" link type="primary" @click="loadCatalog(true)">重试加载</el-button>
+          <el-table :data="catalogItems" v-loading="catalogLoading" height="230" @row-click="selectCatalogModel" highlight-current-row>
+            <el-table-column label="模型" min-width="210">
+              <template #default="{ row }">
+                <div>{{ row.name }}</div><div class="quota-usage">{{ row.model_id }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="上下文" width="110">
+              <template #default="{ row }">{{ row.context_window ? formatTokens(row.context_window) : '—' }}</template>
+            </el-table-column>
+            <el-table-column label="选择" width="80">
+              <template #default="{ row }">
+                <el-button link type="primary" @click.stop="selectCatalogModel(row)">{{ selectedCatalogId === row.model_id ? '已选择' : '选择' }}</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-pagination v-model:current-page="catalogPage" :page-size="10" :total="catalogTotal" layout="total, prev, pager, next" @current-change="loadCatalog()" />
+          <p class="quota-usage">目录按文字聊天能力筛选，具体权限及接口支持请使用「测试连接」验证。</p>
+          <p v-if="selectedCatalog" class="catalog-description">{{ selectedCatalog.description }}</p>
+        </div>
+      </template>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="如：DeepSeek Chat" />
@@ -59,13 +91,13 @@
           </el-select>
         </el-form-item>
         <el-form-item label="模型ID" prop="model_id">
-          <el-input v-model="form.model_id" placeholder="如：deepseek-chat" />
+          <el-input v-model="form.model_id" :readonly="!isEdit && addMode === 'bailian'" placeholder="选择目录模型或自定义填写 ID" />
         </el-form-item>
         <el-form-item label="API Key" prop="api_key">
-          <el-input v-model="form.api_key" type="password" show-password placeholder="sk-..." />
+          <el-input v-model="form.api_key" type="password" show-password :placeholder="isEdit ? '留空保留原 API Key' : '填写用于推理的 API Key'" />
         </el-form-item>
         <el-form-item label="API地址" prop="base_url">
-          <el-input v-model="form.base_url" placeholder="https://api.deepseek.com" />
+          <el-input v-model="form.base_url" placeholder="如 https://…/compatible-mode/v1，不含 /chat/completions" />
         </el-form-item>
         <el-form-item label="温度" prop="temperature">
           <el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" style="padding: 10px" />
@@ -119,7 +151,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
 
@@ -133,6 +165,76 @@ const isEdit = computed(() => !!editId.value)
 const testingId = ref(null)
 const testingInDialog = ref(false)
 const testResult = ref(null)
+
+// 目录仅包含公开模型信息；目录查询凭据由后端管理。
+const addMode = ref('bailian')
+const catalogItems = ref([])
+const catalogTotal = ref(0)
+const catalogPage = ref(1)
+const catalogSearch = ref('')
+const catalogLoading = ref(false)
+const catalogError = ref('')
+const selectedCatalogId = ref('')
+const selectedCatalog = ref(null)
+let catalogRequestId = 0
+let searchTimer
+
+// refresh 表示主动刷新缓存；请求序号避免旧搜索结果覆盖新页面。
+const loadCatalog = async (refresh = false) => {
+  const requestId = ++catalogRequestId
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const result = await request.get('/api/models/catalog', {
+      params: { page_no: catalogPage.value, page_size: 10, search: catalogSearch.value, refresh }
+    })
+    if (requestId !== catalogRequestId) return
+    catalogItems.value = result.items
+    catalogTotal.value = result.total
+  } catch (error) {
+    if (requestId !== catalogRequestId) return
+    catalogItems.value = []
+    catalogTotal.value = 0
+    catalogError.value = error.response?.data?.detail || '目录加载失败，请重试或使用自定义添加'
+  } finally {
+    if (requestId === catalogRequestId) catalogLoading.value = false
+  }
+}
+
+// model 为公开目录实体，选择后带出兼容调用地址和模型标识。
+const selectCatalogModel = (model) => {
+  selectedCatalogId.value = model.model_id
+  selectedCatalog.value = model
+  form.name = model.name
+  form.model_id = model.model_id
+  form.provider = model.provider
+  form.base_url = model.base_url
+  form.max_tokens = Math.min(4096, model.max_output_tokens || 4096)
+  testResult.value = null
+  formRef.value?.clearValidate()
+}
+
+// mode 为添加方式；切换后清空模型标识，避免把目录 ID 和手动地址混用。
+const changeAddMode = (mode) => {
+  selectedCatalogId.value = ''
+  selectedCatalog.value = null
+  form.name = ''
+  form.model_id = ''
+  form.provider = mode === 'bailian' ? 'qwen' : 'openai'
+  form.base_url = ''
+  testResult.value = null
+  formRef.value?.clearValidate()
+  if (mode === 'bailian') loadCatalog()
+}
+
+watch(catalogSearch, () => {
+  clearTimeout(searchTimer)
+  ++catalogRequestId
+  searchTimer = setTimeout(() => {
+    catalogPage.value = 1
+    if (dialogVisible.value && addMode.value === 'bailian') loadCatalog()
+  }, 300)
+})
 
 const form = reactive({
   name: '',
@@ -150,7 +252,10 @@ const form = reactive({
 const rules = {
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   model_id: [{ required: true, message: '请输入模型ID', trigger: 'blur' }],
-  api_key: [{ required: true, message: '请输入API Key', trigger: 'blur' }],
+  api_key: [{
+    validator: (_rule, value, callback) => callback(!isEdit.value && !value?.trim() ? new Error('请输入 API Key') : undefined),
+    trigger: 'blur'
+  }],
   daily_token_limit: [{
     validator: (_rule, value, callback) => {
       if (form.quota_mode === 'daily' && (!value || Number(value) <= 0)) {
@@ -186,11 +291,20 @@ const resetForm = () => {
   form.daily_token_limit = null
   form.is_active = true
   editId.value = null
+  testResult.value = null
+  formRef.value?.clearValidate()
 }
 
 const openCreate = () => {
   resetForm()
+  addMode.value = 'bailian'
+  catalogPage.value = 1
+  catalogSearch.value = ''
+  selectedCatalogId.value = ''
+  selectedCatalog.value = null
+  form.provider = 'qwen'
   dialogVisible.value = true
+  loadCatalog()
 }
 
 const openEdit = (row) => {
@@ -210,7 +324,8 @@ const openEdit = (row) => {
 }
 
 const handleSubmit = async () => {
-  await formRef.value.validate()
+  // 字段校验失败时停留在弹窗，避免未处理的 Promise 异常。
+  if (!await formRef.value.validate().catch(() => false)) return
   if (form.quota_mode === 'unlimited') {
     form.daily_token_limit = null
   }
@@ -270,9 +385,20 @@ const handleTestInDialog = async () => {
 }
 
 onMounted(loadModels)
+onUnmounted(() => {
+  clearTimeout(searchTimer)
+  ++catalogRequestId
+})
 </script>
 
 <style scoped>
+.catalog-mode { margin-bottom: 16px; }
+:deep(.el-dialog__body) { max-height: calc(85vh - 140px); overflow-y: auto; }
+.catalog-panel { margin-bottom: 20px; }
+.catalog-toolbar { display: flex; gap: 12px; margin-bottom: 12px; }
+.catalog-description { font-size: 12px; line-height: 1.6; max-height: 70px; overflow: auto; }
+.catalog-panel :deep(.el-pagination) { margin-top: 12px; }
+
 .page-header {
   display: flex;
   justify-content: space-between;

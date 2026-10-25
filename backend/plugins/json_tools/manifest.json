@@ -2,11 +2,83 @@
   "id": "json-tools",
   "name": "JSON 格式处理",
   "version": "1.0.0",
-  "description": "在本地校验、格式化和压缩 JSON 数据。",
+  "description": "校验、格式化和压缩 JSON 数据。",
   "source": "builtin",
-  "executor": "local-json",
-  "tools": ["JsonFormat"],
-  "permissions": ["data.transform"],
+  "executor": "python-process",
+  "tools": [
+    "JsonFormat"
+  ],
+  "skill_name": null,
+  "skill_files": [],
+  "permissions": [
+    "data.transform"
+  ],
   "fields": [],
-  "capabilities": {"debug": true}
+  "capabilities": {
+    "connection_test": false,
+    "environment_import": false,
+    "debug": true
+  },
+  "test_fields": [],
+  "config_title": "插件配置",
+  "debug_panel": "generic",
+  "protocol_version": 1,
+  "entrypoint": "executor/main.py",
+  "tool_definitions": [
+    {
+      "name": "JsonFormat",
+      "description": "在本地校验、格式化或压缩 JSON 文本，不访问网络。",
+      "parameters": {
+        "additionalProperties": false,
+        "description": "JSON 工具参数；content 为原文，indent 为缩进空格数（0 表示压缩），sort_keys 控制键排序。",
+        "properties": {
+          "content": {
+            "description": "待校验和格式化的 JSON 文本",
+            "maxLength": 200000,
+            "title": "Content",
+            "type": "string"
+          },
+          "indent": {
+            "default": 2,
+            "description": "缩进空格数，0 表示压缩输出",
+            "maximum": 8,
+            "minimum": 0,
+            "title": "Indent",
+            "type": "integer"
+          },
+          "sort_keys": {
+            "default": false,
+            "description": "是否按键名称排序",
+            "title": "Sort Keys",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "JsonFormatInput",
+        "type": "object"
+      },
+      "example_input": {
+        "content": "{\"name\":\"example\",\"count\":1}",
+        "indent": 2,
+        "sort_keys": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "formatted": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "formatted"
+        ],
+        "additionalProperties": false
+      },
+      "risk_level": "medium"
+    }
+  ],
+  "timeout_seconds": 30,
+  "file_input_parameter": null
 }

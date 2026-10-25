@@ -14,6 +14,8 @@ router = APIRouter(prefix="/api", tags=["Agents"])
 
 
 class AgentCreate(BaseModel):
+    """Agent 创建配置，委托字段通过 Field 描述白名单和预算作用。"""
+
     name: str = "新Agent"
     description: str = ""
     system_prompt: str = ""
@@ -28,6 +30,9 @@ class AgentCreate(BaseModel):
     )
     planning_mode: PlanningMode = PlanningMode.DISABLED
     permission_preset: PermissionPreset = PermissionPreset.STANDARD
+    allow_delegation: bool = Field(default=False, description="允许主模型委托任务给白名单 Agent")
+    delegation_agent_ids: List[int] = Field(default_factory=list, max_length=20, description="当前用户授权的目标 Agent ID")
+    delegation_max_calls: int = Field(default=3, ge=1, le=10, description="每次用户请求最大委托次数")
     model: str = "deepseek-chat"
     model_config_id: Optional[int] = None
     temperature: float = 0.7

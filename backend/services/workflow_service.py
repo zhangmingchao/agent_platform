@@ -114,22 +114,7 @@ async def _invoke_agent_step(
     runtime_agent = agent.with_system_prompt(
         append_schema_instruction(rendered_prompt, agent.output_schema),
     )
-    agent_executor = await create_agent_instance(
-        runtime_agent,
-        skills_data,
-        mcps_data,
-        model_config,
-        runtime_context=RuntimeContext(
-            user_id=user_id,
-            workspace_id=f"workflow-{workflow_id}",
-            workflow_run_id=run_id,
-            workflow_step_id=workflow_step_id,
-            node_id=node_id,
-            agent_id=agent.id,
-            permission_preset=agent.permission_preset,
-            invocation_source=InvocationSource.WORKFLOW.value,
-        ),
-    )
+
 
     prompt_parts = [
         f"你是多 Agent 工作流中的第 {step_order} 个执行者，角色是：{role}。",
@@ -154,6 +139,26 @@ async def _invoke_agent_step(
         "UPDATE multi_agent_run_steps SET trace_run_id=%s WHERE id=%s",
         (trace_run_id, workflow_step_id),
     )
+
+    agent_executor = await create_agent_instance(
+        runtime_agent,
+        skills_data,
+        mcps_data,
+        model_config,
+        runtime_context=RuntimeContext(
+            user_id=user_id,
+            workspace_id=f"workflow-{workflow_id}",
+            workflow_run_id=run_id,
+            workflow_step_id=workflow_step_id,
+            node_id=node_id,
+            agent_id=agent.id,
+            permission_preset=agent.permission_preset,
+            invocation_source=InvocationSource.WORKFLOW.value,
+            trace_ctx=trace_ctx,
+        ),
+    )
+    from ..core.delegation_tools import DelegationBudget, delegation_budget
+    budget_token = delegation_budget.set(DelegationBudget())
 
     config = {
         "configurable": {"thread_id": f"workflow_{workflow_id}_run_{run_id}_step_{step_order}"},
@@ -181,7 +186,12 @@ async def _invoke_agent_step(
             event_stream,
             agent.execution_timeout_seconds,
         ):
+            if 'delegation_child' in event.get('tags', []):
+                continue
             kind = event["event"]
+            if kind == 'on_custom_event' and event.get('name') in ('delegation_started', 'delegation_completed'):
+                await publisher.publish(event['name'], {'node_id': node_id, **event.get('data', {})}, node_id=node_id)
+                continue
             event_run_id = event.get("run_id", "")
 
             if kind == "on_chat_model_start":
@@ -266,6 +276,8 @@ async def _invoke_agent_step(
     except Exception as exc:
         await trace_ctx.error(str(exc))
         raise
+    finally:
+        delegation_budget.reset(budget_token)
 
 
 async def _execute_native_agent_node(

@@ -65,6 +65,21 @@ DEEPSEEK_API_KEY = ""
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
+# 百炼目录凭据仅由后端持有；环境变量优先，本地文件位于已忽略的 data 目录。
+BAILIAN_CATALOG_URL = os.getenv(
+    "BAILIAN_CATALOG_URL",
+    "https://llm-pgd7kx0h5ki7i5ov.cn-beijing.maas.aliyuncs.com/api/v1/models",
+)
+BAILIAN_INFERENCE_BASE_URL = os.getenv(
+    "BAILIAN_INFERENCE_BASE_URL",
+    "https://llm-pgd7kx0h5ki7i5ov.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+).rstrip("/")
+BAILIAN_CATALOG_API_KEY = os.getenv("BAILIAN_CATALOG_API_KEY", "")
+BAILIAN_CATALOG_API_KEY_FILE = os.getenv(
+    "BAILIAN_CATALOG_API_KEY_FILE", os.path.join(DATA_DIR, "bailian_catalog_api_key"),
+)
+BAILIAN_CATALOG_CACHE_SECONDS = _positive_int_env("BAILIAN_CATALOG_CACHE_SECONDS", 300)
+
 LLM_MODEL_OPTIONS = [
     {"value": "deepseek-chat", "label": "deepseek-chat"},
     {"value": "deepseek-reasoner", "label": "deepseek-reasoner"},

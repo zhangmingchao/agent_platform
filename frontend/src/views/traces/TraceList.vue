@@ -29,6 +29,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="input_text" label="用户输入" min-width="260" show-overflow-tooltip />
+      <el-table-column prop="parent_trace_run_id" label="父 Trace" width="90" />
       <el-table-column prop="model" label="模型" width="150" />
       <el-table-column prop="span_count" label="节点" width="80" />
       <el-table-column label="耗时" width="100">
@@ -70,6 +71,14 @@
             <el-descriptions-item label="开始时间">{{ formatDate(currentTrace.started_at) }}</el-descriptions-item>
           </el-descriptions>
 
+          <section v-if="currentTrace.parent_trace_run_id || currentTrace.child_traces?.length">
+            <h4>委托关系</h4>
+            <el-button v-if="currentTrace.parent_trace_run_id" link type="primary" @click="openTrace({id: currentTrace.parent_trace_run_id})">父 Trace #{{ currentTrace.parent_trace_run_id }}</el-button>
+            <div v-for="child in currentTrace.child_traces" :key="child.id">
+              <el-button link type="primary" @click="openTrace(child)">子 Trace #{{ child.id }} · {{ child.agent_name }}</el-button>
+              <span>{{ statusText(child.status) }} · {{ child.total_tokens || 0 }} Tokens</span>
+            </div>
+          </section>
           <section class="trace-io">
             <h4>用户输入</h4>
             <pre>{{ currentTrace.input_text }}</pre>

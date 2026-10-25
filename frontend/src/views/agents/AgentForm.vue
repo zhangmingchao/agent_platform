@@ -96,35 +96,38 @@
         <div class="field-hint">控制工具调用的沙箱边界和高风险操作审批策略。</div>
       </el-form-item>
 
+      <!-- 委托只开放给当前用户的其他 Agent，执行中仍由后端校验白名单。 -->
+      <el-form-item label="允许委托">
+        <el-switch v-model="form.allow_delegation" />
+        <span class="switch-label">允许模型将独立子任务交给指定 Agent</span>
+      </el-form-item>
+      <el-form-item v-if="form.allow_delegation" label="委托目标" prop="delegation_agent_ids">
+        <el-select v-model="form.delegation_agent_ids" multiple filterable placeholder="选择允许委托的 Agent" style="width: 100%">
+          <el-option v-for="item in delegationAgents.filter(a => String(a.id) !== String(route.params.id))" :key="item.id" :value="item.id" :label="item.name" />
+        </el-select>
+        <div class="field-hint">仅同用户、单层、顺序执行；子 Agent 使用自己的模型和工具，权限受父任务限制。</div>
+      </el-form-item>
+      <el-form-item v-if="form.allow_delegation" label="委托次数">
+        <el-input-number v-model="form.delegation_max_calls" :min="1" :max="10" />
+        <span class="switch-label">每次请求的最大委托次数</span>
+      </el-form-item>
+
       <el-form-item label="模型来源">
-        <el-radio-group v-model="modelSource" @change="onModelSourceChange">
-          <el-radio-button label="custom" value="custom" >自定义模型</el-radio-button>
-          <el-radio-button label="builtin" value="builtin">内置模型</el-radio-button>
-        </el-radio-group>
+        <span>自定义模型</span>
       </el-form-item>
 
       <el-row :gutter="20">
         <el-col :span="12">
-          <el-form-item label="模型" prop="model">
-            <el-select v-model="form.model" style="width: 100%" @change="onModelChange">
-              <template v-if="modelSource === 'custom'">
-                <el-option
-                  v-for="m in userModels"
-                  :key="m.id"
-                  :value="m.model_id"
-                  :label="m.name"
-                >
-                  {{ m.name }} <span style="color: #9ca3af; font-size: 12px">- {{ m.model_id }}</span>
-                </el-option>
-              </template>
-              <template v-else>
-                <el-option
-                  v-for="item in builtinModels"
-                  :key="item.value"
-                  :value="item.value"
-                  :label="item.label"
-                />
-              </template>
+          <el-form-item label="模型" prop="model_config_id">
+            <el-select v-model="form.model_config_id" placeholder="选择自定义模型" aria-label="自定义模型" style="width: 100%" @change="onModelChange">
+              <el-option
+                v-for="m in userModels"
+                :key="m.id"
+                :value="m.id"
+                :label="m.name"
+              >
+                {{ m.name }} <span style="color: #9ca3af; font-size: 12px">- {{ m.model_id }}</span>
+              </el-option>
             </el-select>
           </el-form-item>
         </el-col>
@@ -135,7 +138,7 @@
         </el-col>
       </el-row>
 
-      <el-form-item v-if="modelSource === 'custom' && userModels.length === 0">
+      <el-form-item v-if="userModels.length === 0">
         <el-alert type="info" :closable="false" show-icon>
           还没有自定义模型，请先到「模型管理」添加。
           <el-button type="primary" link @click="$router.push('/models')">去添加</el-button>
@@ -156,7 +159,7 @@
         <el-select v-model="form.plugin_ids" multiple placeholder="选择已启用插件" style="width: 100%">
           <el-option v-for="plugin in plugins.filter(p => p.installed)" :key="plugin.manifest.id"
             :label="plugin.manifest.name" :value="plugin.manifest.id"
-            :disabled="(!plugin.enabled || !['ready', 'not_required'].includes(plugin.config_status)) && !form.plugin_ids.includes(plugin.manifest.id)">
+            :disabled="(!plugin.enabled || !['ready', 'not_required'].includes(plugin.config_status) || plugin.package_status !== 'ready') && !form.plugin_ids.includes(plugin.manifest.id)">
             {{ plugin.manifest.name }} · {{ plugin.enabled ? '已启用' : '已停用' }}
           </el-option>
         </el-select>
@@ -214,7 +217,10 @@ const form = reactive({
   execution_timeout_seconds: 120,
   planning_mode: 'disabled',
   permission_preset: 'standard',
-  model: 'deepseek-chat',
+  allow_delegation: false,
+  delegation_agent_ids: [],
+  delegation_max_calls: 3,
+  model: '',
   model_config_id: null,
   temperature: 0.7,
   skill_ids: [],
@@ -222,16 +228,27 @@ const form = reactive({
   plugin_ids: []
 })
 
+const delegationAgents = ref([])
 const rules = {
+  delegation_agent_ids: [{ validator: (_rule, value, callback) => callback(form.allow_delegation && !value?.length ? new Error('请选择委托目标 Agent') : undefined), trigger: 'change' }],
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   iteration_count: [{ required: true, message: '迭代次数必须大于0', trigger: 'blur' }],
+  // 只能提交当前用户模型列表中的配置 ID，模型名称不是唯一标识。
+  model_config_id: [{
+    required: true,
+    validator: (_rule, value, callback) => {
+      if (!userModels.value.some(model => model.id === value)) {
+        callback(new Error('请选择自定义模型'))
+        return
+      }
+      callback()
+    },
+    trigger: 'change'
+  }],
 }
 
-const modelSource = ref('builtin')
 const userModels = ref([])
-const builtinModels = ref([])
 const skills = ref([])
-const moduleList = ref([])
 const mcps = ref([])
 const plugins = ref([])
 const permissionPresetOptions = [
@@ -268,53 +285,29 @@ const switchSchemaEditorMode = async (mode) => {
   }
 }
 
-const onModelSourceChange = () => {
-  if (modelSource.value === 'custom') {
-    form.model_config_id = userModels.value.length > 0 ? userModels.value[0].id: null
-    form.model = userModels.value.length > 0 ? userModels.value[0].model_id : ''
-  } else {
-    form.model_config_id = null
-    form.model = builtinModels.value.length > 0 ? builtinModels.value[0].value : 'deepseek-chat'
-  }
-  debugger
-}
-
-const onModelChange = (val) => {
-  if (modelSource.value === 'custom') {
-    const selected = userModels.value.find(m => m.model_id === val)
-    form.model_config_id = selected ? selected.id : null
-  } else {
-    form.model_config_id = null
-  }
-  debugger
-}
-
-const loadUserModels = async () => {
-  try {
-    userModels.value = await request.get('/api/modelsList')
-  } catch (e) {
-    userModels.value = []
-  }
-}
-
-const loadBuiltinModels = async () => {
-  try {
-    builtinModels.value = await request.get('/api/ll_models')
-  } catch (e) {
-    builtinModels.value = []
-  }
+/**
+ * 按模型配置主键同步供 Agent 列表展示的供应商模型标识。
+ * @param {number | null} modelConfigId 当前用户在模型管理中保存的配置 ID。
+ */
+const onModelChange = (modelConfigId) => {
+  const selected = userModels.value.find(model => model.id === modelConfigId)
+  form.model = selected?.model_id || ''
 }
 
 const loadData = async () => {
   try {
-    const [skillsList, mcpsList, pluginsList] = await Promise.all([
+    const [skillsList, mcpsList, pluginsList, modelsList, agentsList] = await Promise.all([
       request.get('/api/skills'),
       request.get('/api/mcp-configs'),
-      request.get('/api/plugins')
+      request.get('/api/plugins'),
+      request.get('/api/modelsList'),
+      request.get('/api/agentsList')
     ])
     skills.value = skillsList
     mcps.value = mcpsList
     plugins.value = pluginsList
+    userModels.value = modelsList
+    delegationAgents.value = agentsList
 
     if (isEdit.value) {
       const agent = await request.get(`/api/agents/${route.params.id}`)
@@ -336,24 +329,25 @@ const loadData = async () => {
       form.execution_timeout_seconds = agent.execution_timeout_seconds || 120
       form.planning_mode = agent.planning_mode || 'disabled'
       form.permission_preset = agent.permission_preset || 'standard'
-      form.model = agent.model
+      form.allow_delegation = !!agent.allow_delegation
+      form.delegation_agent_ids = agent.delegation_agent_ids || []
+      form.delegation_max_calls = agent.delegation_max_calls || 3
       form.model_config_id = agent.model_config_id
+      onModelChange(form.model_config_id)
       form.temperature = agent.temperature
       form.skill_ids = agent.skills?.map(s => s.id) || []
       form.mcp_ids = agent.mcps?.map(m => m.id) || []
       form.plugin_ids = agent.plugin_ids || []
-
-      if (agent.model_config_id) {
-        modelSource.value = 'custom'
-      } else {
-        modelSource.value = 'builtin'
-      }
     }
   } catch (e) { /* 已处理 */ }
 }
 
 const handleSubmit = async () => {
-  await formRef.value.validate()
+  // 表单校验失败只展示字段提示，避免未选模型时产生未处理的 Promise 异常。
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+  // 提交前以配置 ID 再次同步模型标识，确保同模型 ID 的不同配置不会串用。
+  onModelChange(form.model_config_id)
   try {
     form.prompt_variables = JSON.parse(promptVariablesText.value || '{}')
     if (!form.prompt_variables || Array.isArray(form.prompt_variables) || typeof form.prompt_variables !== 'object') {
@@ -389,9 +383,7 @@ const handleSubmit = async () => {
   }
 }
 
-onMounted(async () => {
-  await Promise.all([loadData(), loadUserModels(), loadBuiltinModels()])
-})
+onMounted(loadData)
 </script>
 
 <style scoped>

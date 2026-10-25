@@ -178,7 +178,7 @@ def wrap_tool_with_execution_pipeline(
         名称、描述和参数结构保持不变的新工具；调用时会先执行权限决策。
     """
     tool_name = tool.name
-    risk_level = classify_tool_risk(tool_name)
+    risk_level = ToolRiskLevel((tool.metadata or {}).get("risk_level")) if (tool.metadata or {}).get("plugin_process") else classify_tool_risk(tool_name)
 
     async def execute_with_pipeline(**kwargs: Any) -> Any:
         """按多阶段流水线执行工具。"""
@@ -281,6 +281,7 @@ def wrap_tool_with_execution_pipeline(
         name=tool.name,
         description=tool.description,
         args_schema=tool.args_schema,
+        metadata=tool.metadata,
     )
 
 

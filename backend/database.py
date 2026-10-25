@@ -153,6 +153,9 @@ async def init_db() -> None:
                     execution_timeout_seconds INT NOT NULL DEFAULT 120 COMMENT 'Agent整体执行超时秒数',
                     planning_mode VARCHAR(20) NOT NULL DEFAULT 'disabled' COMMENT '任务规划模式 disabled/explicit',
                     permission_preset VARCHAR(30) NOT NULL DEFAULT 'standard' COMMENT '工具权限预设 safe/standard/auto/developer',
+                    allow_delegation BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否允许委托',
+                    delegation_agent_ids JSON DEFAULT NULL COMMENT '委托目标Agent白名单',
+                    delegation_max_calls INT NOT NULL DEFAULT 3 COMMENT '每轮最大委托次数',
                     created_at DATETIME NOT NULL COMMENT '创建时间',
                     updated_at DATETIME NOT NULL COMMENT '更新时间',
                     INDEX idx_user (user_id),
@@ -229,6 +232,7 @@ async def init_db() -> None:
                     role VARCHAR(20) NOT NULL COMMENT '角色 user/assistant',
                     content TEXT NOT NULL COMMENT '消息内容',
                     reasoning_content MEDIUMTEXT DEFAULT NULL COMMENT '可折叠的模型执行说明',
+                    delegation_results JSON DEFAULT NULL COMMENT '本轮委托状态与公开结果摘要',
                     structured_content JSON DEFAULT NULL COMMENT '结构化消息内容',
                     attachments JSON DEFAULT NULL COMMENT '附件列表（图片 base64 等）',
                     created_at DATETIME NOT NULL COMMENT '发送时间',
@@ -239,6 +243,7 @@ async def init_db() -> None:
                 """
                 CREATE TABLE IF NOT EXISTS trace_runs (
                     id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'Trace 运行ID',
+                    parent_trace_run_id INT DEFAULT NULL COMMENT '委托父Trace ID',
                     session_id INT COMMENT '聊天会话ID（单聊时）',
                     user_id INT NOT NULL COMMENT '所属用户ID',
                     agent_id INT NOT NULL COMMENT 'Agent ID',
@@ -492,6 +497,11 @@ async def init_db() -> None:
                 pass
 
             migrations = [
+                ("chat_messages", "delegation_results", "ALTER TABLE chat_messages ADD COLUMN delegation_results JSON DEFAULT NULL COMMENT '本轮委托状态与公开结果摘要'"),
+                ("agents", "allow_delegation", "ALTER TABLE agents ADD COLUMN allow_delegation BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否允许委托'"),
+                ("agents", "delegation_agent_ids", "ALTER TABLE agents ADD COLUMN delegation_agent_ids JSON DEFAULT NULL COMMENT '委托目标Agent白名单'"),
+                ("agents", "delegation_max_calls", "ALTER TABLE agents ADD COLUMN delegation_max_calls INT NOT NULL DEFAULT 3 COMMENT '每轮最大委托次数'"),
+                ("trace_runs", "parent_trace_run_id", "ALTER TABLE trace_runs ADD COLUMN parent_trace_run_id INT DEFAULT NULL COMMENT '委托父Trace ID'"),
                 (
                     "chat_messages",
                     "reasoning_content",

@@ -121,6 +121,7 @@ async def stream_agent_response(
     trace_ctx: Optional[TraceContext] = None,
     images: Optional[List[str]] = None,
     state_context: Optional[Union[AgentStateContext, Mapping[str, Any]]] = None,
+    execution_scope: str = "",
 ) -> AsyncGenerator[str, None]:
     """
     以 SSE 事件流式输出智能体响应。
@@ -149,6 +150,7 @@ async def stream_agent_response(
         trace_ctx: 本次执行关联的 Trace 上下文。
         images: 当前消息附带的 Base64 图片。
         state_context: 注入 LangGraph State 的业务上下文。
+        execution_scope: 子执行隔离标签；空字符串表示顶层聊天。
 
     Yields:
         编码后的 SSE 事件字符串。
@@ -225,9 +227,13 @@ async def stream_agent_response(
         if planning_enabled
         else max_tool_rounds * 2 + 5
     )
+    # 顶层每次执行有独立委托预算；子执行继承预算但不注册委托工具。
+    from .delegation_tools import DelegationBudget, delegation_budget
+    budget_token = delegation_budget.set(DelegationBudget()) if not execution_scope else None
     config = {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": recursion_limit,
+        "tags": [execution_scope] if execution_scope else [],
     }
 
     # 每次模型调用都是独立轮次；按 run_id 记录，避免多轮工具调用互相污染状态。
@@ -293,6 +299,9 @@ async def stream_agent_response(
             event_stream,
             execution_timeout_seconds,
         ):
+            # 子模型/工具原始事件只在子 Trace 消费，不能污染父聊天轮次和答案。
+            if not execution_scope and 'delegation_child' in event.get('tags', []):
+                continue
             kind = event["event"]
             run_id = event.get("run_id", "")
 
@@ -457,6 +466,8 @@ async def stream_agent_response(
             elif kind == "on_custom_event":
                 event_name = str(event.get("name") or "")
                 if event_name not in {
+                    "delegation_started",
+                    "delegation_completed",
                     "plan_created",
                     "plan_step_started",
                     "plan_step_completed",
@@ -507,9 +518,14 @@ async def stream_agent_response(
         )
         yield sse_event("done")
     except Exception as exc:
-        log.exception("[Stream] error: %s", exc)
+        # 子运行 SDK 错误不直接存储或返回上游原文，避免请求信息进入委托结果。
+        error_text = "子 Agent 执行失败，请检查模型或工具配置" if execution_scope else str(exc)
+        if execution_scope:
+            log.warning("[Stream] child execution failed | type=%s", type(exc).__name__)
+        else:
+            log.exception("[Stream] error: %s", exc)
         if trace_ctx:
-            await trace_ctx.error(str(exc))
+            await trace_ctx.error(error_text)
         error_step_end = end_step("error")
         if error_step_end:
             yield await emit_loop_event(error_step_end)
@@ -517,8 +533,12 @@ async def stream_agent_response(
             AgentLoopEvent(
                 phase=AgentLoopPhase.TURN_ERROR,
                 turn_id=turn_id,
-                metadata={"status": "error", "error": str(exc)},
+                metadata={"status": "error", "error": error_text},
             )
         )
-        yield sse_event("error", str(exc))
+        yield sse_event("error", error_text)
         yield sse_event("done")
+
+    finally:
+        if budget_token is not None:
+            delegation_budget.reset(budget_token)

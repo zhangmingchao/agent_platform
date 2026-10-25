@@ -23,6 +23,7 @@ agent_platform/
 ├── backend/
 │   ├── main.py              # FastAPI 入口
 │   ├── runtime_worker.py    # 独立 Python Runtime Worker 入口
+│   ├── plugin_worker.py     # Python 插件安装与执行 Worker 入口
 │   ├── routers/             # HTTP 接口路由
 │   │   ├── auth.py
 │   │   ├── agents.py
@@ -108,13 +109,6 @@ export JWT_SECRET="your-secret"
 export MODEL_API_KEY_ENCRYPTION_KEY="请填写32字节随机密钥的URL-safe Base64"
 export SERVER_PORT="20000"
 
-# 启用 BI 元数据 CLI（可选，仅开放预定义只读列表命令）
-export BI_CLI_ENABLED="true"
-export BI_DOCKER_BASE_URL="http://127.0.0.1:8080/portal-api/bi-docker/api"
-export BI_DOCKER_TOKEN="请填写只读 BI 账号 Token"
-export BI_DOCKER_TIMEOUT_SECONDS="30"
-export BI_CLI_MAX_OUTPUT_BYTES="1048576"
-
 # 配置 MySQL 连接（可选，默认值如下）
 export DB_HOST="127.0.0.1"
 export DB_PORT="3306"
@@ -126,22 +120,11 @@ export DB_NAME="agent_platform_langchain"
 python -m backend.main
 ```
 
-### BI 元数据 CLI
+### BI、JSON 与 Python 进程插件
 
-启用后，Agent 会获得一个受控的 `BiCli` 工具。该工具不提供任意 Shell 权限，第一期只支持：
+两个内置插件均需要安装到当前用户的 Runtime Docker 容器：在「插件管理」点击安装，等待已就绪，然后配置、启用并绑定 Agent。JSON 无需配置；BI 需填写容器可达的服务地址和 Token，配套 Skill 随安装版本加载。
 
-```bash
-python -m backend.bi_cli metadata analysis-bodies list --product-key app_001
-python -m backend.bi_cli metadata events list --product-key app_001 --page-num 1 --page-size 50
-python -m backend.bi_cli metadata user-properties list --product-key app_001 --entity-type users
-python -m backend.bi_cli metadata event-properties list --product-key app_001 --page-num 1 --page-size 50
-python -m backend.bi_cli metadata metrics list --product-key app_001 --page-num 1 --page-size 50
-```
-
-所有命令只输出 JSON。`BI_DOCKER_TOKEN` 只从服务端环境变量读取，不作为 CLI 参数或
-Tool Call 参数暴露给模型。将 `pre-skill/bi-metadata/` 打包上传为 Skill 并绑定到 Agent 后，
-模型可以按其中的业务规则选择和组合命令。`BI_DOCKER_BASE_URL` 需要包含部署环境实际的
-context path；`bi-docker` 的生产配置通常为 `/portal-api/bi-docker/api`。
+工具名分别为 `plugin__bi_metadata__BiCli` 和 `plugin__json_tools__JsonFormat`。Agent 不再通过全局 `BI_CLI_ENABLED` 环境配置自动获得 BI 工具。`backend.bi_cli` 保留为可手动使用的只读 CLI 库，其环境配置不用于 Agent 插件执行。
 
 启用 Python Runtime 时，需要在另一个终端启动独立 Worker：
 
@@ -157,12 +140,21 @@ curl -H "Authorization: Bearer $SANDBOX_SERVICE_TOKEN" http://127.0.0.1:20002/he
 
 # 启动 Redis 队列消费者
 python -m backend.runtime_worker
+
+# 使用内置或上传 Python 插件时，另外启动插件任务消费者（单独终端）
+python -m backend.plugin_worker
 ```
 
 API 进程只负责准备任务并写入 Redis 队列；`runtime_worker` 负责启动受限 Python
 代码任务，独立 `sandbox-service` 负责在用户私有 Docker 容器中执行代码、收集日志
 和登记生成文件。未启动 Worker 或 Sandbox Service 时，`ExecutePython` 会在等待超时后
 返回明确错误。单个 Worker 同时执行一个任务，可以启动多个 Worker 进程增加本机并发度。
+
+插件上传、导出、版本切换和 Agent 绑定见 [插件文档](docs/plugins.md)。内置和上传代码均通过
+`plugin_worker` 在用户现有 Runtime 容器中安装依赖、按次启动进程；插件队列直接存储
+在 MySQL，Runtime 继续使用 Redis 队列。API、两个 Worker 必须使用相同的数据库、
+数据目录、加密主密钥、`SANDBOX_SERVICE_URL` 和内部 Token。IDE 启动请选择模块
+`backend.plugin_worker` / `backend.runtime_worker`，工作目录设为项目根目录。
 
 后端启动后：
 - API 地址: `http://127.0.0.1:20000`
@@ -553,10 +545,13 @@ result = {"message": "处理完成"}
 ```
 
 Runtime 使用“每用户一个容器”的模型；`workspace_id` 只区分同一用户容器内的目录。
-容器默认无网络、非 root、只读根文件系统，并限制为 1 CPU、512MB 内存、128 个进程，
+Runtime 与进程插件复用这个容器，默认允许网络、非 root、只读根文件系统，并限制为 1 CPU、512MB 内存、128 个进程，
 单次执行最多 30 秒。空闲 30 分钟停止，7 天未使用删除容器但保留用户目录。
 生产环境应把 Sandbox Service 放到独立 Linux 节点，并安装 gVisor 后设置
 `SANDBOX_CONTAINER_RUNTIME=runsc`。
+同一用户的 Runtime、依赖安装和插件调用串行执行，共享 `/workspaces`；插件的版本依赖
+目录相互独立，同用户代码之间不提供文件或凭据隔离。旧容器在下一次空闲执行时按新版
+配置重建，已有挂载文件保留。每个 Docker 节点运行一个 Sandbox Manager。
 
 Runtime Worker 的调用链：
 
@@ -615,6 +610,7 @@ FastAPI：取得结果并作为 ToolMessage 返回给 LLM
 | `SANDBOX_SERVICE_TOKEN` | `change-me-in-production` | API/Worker 与 Sandbox Service 的内部认证密钥 |
 | `SANDBOX_CONTAINER_RUNTIME` | 空 | 生产 Linux 上可设置为 `runsc` 启用 gVisor |
 | `SANDBOX_HOST_DATA_ROOT` | 自动识别 | 远程 Docker daemon 可见的 Runtime 数据根目录 |
+| `SANDBOX_NETWORK_ENABLED` | `true` | Sandbox Manager 的用户容器网络开关；本次 Compose 固定开启 |
 | `RUNTIME_WORKER_QUEUE_WAIT_SECONDS` | `30` | API 允许任务排队等待 Worker 的最长时间 |
 | `RUNTIME_WORKER_RESULT_TTL_SECONDS` | `3600` | Worker 执行结果在 Redis 中的保留秒数 |
 

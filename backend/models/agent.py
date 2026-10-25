@@ -37,6 +37,9 @@ class Agent:
         execution_timeout_seconds: 单次 Agent 整体执行时限，单位为秒。
         planning_mode: 是否启用显式任务规划。
         permission_preset: Agent 默认工具权限预设。
+        allow_delegation: 是否允许模型调用委托工具。
+        delegation_agent_ids: 当前用户允许委托的目标 Agent ID 列表。
+        delegation_max_calls: 每次父请求最大委托次数。
         skills: 当前 Agent 关联的 Skill 摘要。
         mcps: 当前 Agent 关联的 MCP 配置摘要。
         plugin_ids: 当前 Agent 绑定的用户插件标识。
@@ -57,6 +60,10 @@ class Agent:
     execution_timeout_seconds: int = 120
     planning_mode: PlanningMode = PlanningMode.DISABLED
     permission_preset: PermissionPreset = PermissionPreset.STANDARD
+    # 委托开关、同用户目标白名单及每次用户请求的委托次数上限。
+    allow_delegation: bool = False
+    delegation_agent_ids: List[int] = field(default_factory=list)
+    delegation_max_calls: int = 3
     skills: List[Dict[str, Any]] = field(default_factory=list)
     mcps: List[Dict[str, Any]] = field(default_factory=list)
     plugin_ids: List[str] = field(default_factory=list)
@@ -78,6 +85,7 @@ class Agent:
             "prompt_variables", "output_schema", "model", "model_config_id",
             "temperature", "iteration_count", "execution_timeout_seconds",
             "skills", "mcps", "plugin_ids", "planning_mode", "permission_preset",
+            "allow_delegation", "delegation_agent_ids", "delegation_max_calls",
         }
         return cls(
             id=int(data["id"]),
@@ -94,6 +102,9 @@ class Agent:
             execution_timeout_seconds=int(data.get("execution_timeout_seconds") or 120),
             planning_mode=PlanningMode(str(data.get("planning_mode") or "disabled")),
             permission_preset=PermissionPreset(str(data.get("permission_preset") or "standard")),
+            allow_delegation=bool(data.get("allow_delegation", False)),
+            delegation_agent_ids=json.loads(data["delegation_agent_ids"]) if isinstance(data.get("delegation_agent_ids"), str) else list(data.get("delegation_agent_ids") or []),
+            delegation_max_calls=int(data.get("delegation_max_calls") or 3),
             skills=list(skills if skills is not None else data.get("skills") or []),
             mcps=list(mcps if mcps is not None else data.get("mcps") or []),
             plugin_ids=list(plugin_ids if plugin_ids is not None else data.get("plugin_ids") or []),
@@ -118,6 +129,9 @@ class Agent:
             "execution_timeout_seconds": self.execution_timeout_seconds,
             "planning_mode": self.planning_mode.value,
             "permission_preset": self.permission_preset.value,
+            "allow_delegation": self.allow_delegation,
+            "delegation_agent_ids": list(self.delegation_agent_ids),
+            "delegation_max_calls": self.delegation_max_calls,
             "skills": list(self.skills),
             "mcps": list(self.mcps),
             "plugin_ids": list(self.plugin_ids),
@@ -146,6 +160,9 @@ class Agent:
             "execution_timeout_seconds": self.execution_timeout_seconds,
             "planning_mode": self.planning_mode.value,
             "permission_preset": self.permission_preset.value,
+            "allow_delegation": self.allow_delegation,
+            "delegation_agent_ids": list(self.delegation_agent_ids),
+            "delegation_max_calls": self.delegation_max_calls,
             "created_at": self.extra.get("created_at"),
             "updated_at": self.extra.get("updated_at"),
         }

@@ -93,6 +93,12 @@
                 </div>
               </div>
             </div>
+            <div v-if="msg.delegations?.length" class="tool-calls-panel">
+              <div v-for="item in msg.delegations" :key="item.delegation_id">
+                <strong>委托：{{ item.agent_name }} · {{ delegationStatus(item.status) }}</strong>
+                <p>{{ (item.result || item.error || item.task || '').slice(0, 500) }}</p>
+              </div>
+            </div>
             <!-- 执行说明与正式回答分开存储，历史消息中默认折叠。 -->
             <div v-if="msg.role === 'assistant' && msg.reasoning_content" class="thinking-panel completed">
               <div class="panel-header" @click="msg.reasoningExpanded = !msg.reasoningExpanded">
@@ -168,6 +174,15 @@
                 <el-icon class="toggle-icon" :class="{ expanded: showThinking }"><ArrowDown /></el-icon>
               </div>
               <div v-show="showThinking" class="thinking-content markdown-body" v-html="renderMarkdown(thinkingText + pendingText)"></div>
+            </div>
+            <!-- 委托展示只包含任务、状态与结果摘要，不混入子模型的流式答案。 -->
+            <div v-if="delegations.length" class="tool-calls-panel">
+              <div v-for="item in delegations" :key="item.delegation_id" class="delegation-item">
+                <strong>委托：{{ item.agent_name }}</strong>
+                <el-tag size="small" :type="item.status === 'completed' ? 'success' : item.status === 'running' ? 'info' : 'danger'">{{ delegationStatus(item.status) }}</el-tag>
+                <p>{{ item.task }}</p>
+                <p v-if="item.result || item.error">{{ (item.result || item.error).slice(0, 500) }}</p>
+              </div>
             </div>
             <!-- 工具调用面板 -->
             <div v-if="toolCalls.length > 0" class="tool-calls-panel">
@@ -454,6 +469,8 @@ const pendingRounds = ref({})
 const pendingText = computed(() => Object.values(pendingRounds.value).join(''))
 const showThinking = ref(true)
 const toolCalls = ref([])
+const delegations = ref([])
+const delegationStatus = (status) => ({ running: '运行中', completed: '已完成', failed: '失败', timed_out: '超时', rejected: '拒绝', cancelled: '已取消' }[status] || status)
 const messagesContainer = ref(null)
 const pendingImages = ref([])
 const pendingFiles = ref([])
@@ -821,6 +838,7 @@ const sendMessage = async () => {
   pendingRounds.value = {}
   showThinking.value = true
   toolCalls.value = []
+  delegations.value = []
   abortController.value = new AbortController()
 
   try {
@@ -887,6 +905,12 @@ const sendMessage = async () => {
               taskPlan.value = event.plan || taskPlan.value
             } else if (event.type === 'agent_loop_event') {
               appendLoopEvent(event)
+            } else if (event.type === 'delegation_started') {
+              delegations.value.push(event)
+              scrollToBottom()
+            } else if (event.type === 'delegation_completed') {
+              const item = delegations.value.find(d => d.delegation_id === event.delegation_id)
+              if (item) Object.assign(item, event)
             } else if (event.type === 'tool_started') {
               toolCalls.value.push({ id: event.tool_run_id, name: event.name, input: event.input || '', status: 'running' })
               scrollToBottom()
@@ -906,13 +930,13 @@ const sendMessage = async () => {
     }
 
     if (streamingText.value) {
-      messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, structured_content: structuredResult.value, task_plan: taskPlan.value })
+      messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, structured_content: structuredResult.value, task_plan: taskPlan.value, delegations: delegations.value.map(item => ({...item, status: item.status === 'running' ? 'cancelled' : item.status})) })
     }
   } catch (e) {
     if (e.name === 'AbortError') {
       // 用户主动停止，保留已生成的内容
       if (streamingText.value) {
-        messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, task_plan: taskPlan.value })
+        messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, task_plan: taskPlan.value, delegations: delegations.value.map(item => ({...item, status: item.status === 'running' ? 'cancelled' : item.status})) })
       }
     } else {
       ElMessage.error(e.message || '对话请求失败')
@@ -925,6 +949,7 @@ const sendMessage = async () => {
     thinkingText.value = ''
     pendingRounds.value = {}
     toolCalls.value = []
+    delegations.value = []
     abortController.value = null
     loadSessions()
   }
@@ -936,7 +961,7 @@ const stopGenerate = () => {
   }
   streaming.value = false
   if (streamingText.value) {
-    messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, task_plan: taskPlan.value })
+    messages.value.push({ role: 'assistant', content: streamingText.value, reasoning_content: thinkingText.value || null, reasoningExpanded: false, task_plan: taskPlan.value, delegations: delegations.value.map(item => ({...item, status: item.status === 'running' ? 'cancelled' : item.status})) })
   }
   streamingText.value = ''
   taskPlan.value = null

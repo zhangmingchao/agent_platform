@@ -11,7 +11,7 @@ from typing import Iterable
 ALLOWED_IMPORT_ROOTS = {
     "collections", "csv", "datetime", "decimal", "docx", "fractions",
     "functools", "itertools", "json", "math", "matplotlib", "numpy",
-    "openpyxl", "pandas", "pathlib", "pypdf", "random", "re", "statistics",
+    "httpx", "requests", "urllib", "socket", "ssl", "openpyxl", "pandas", "pathlib", "pypdf", "random", "re", "statistics",
 }
 
 DENIED_CALL_NAMES = {

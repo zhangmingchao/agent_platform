@@ -2,7 +2,8 @@
   <div class="plugins-page" v-loading="loading">
     <div class="page-heading">
       <div><h2>插件管理</h2><span class="muted">工作空间 / 集成配置</span></div>
-      <el-tooltip content="刷新插件"><el-button :icon="Refresh" circle aria-label="刷新插件" @click="loadPlugins" /></el-tooltip>
+      <div class="package-actions"><el-button :icon="Plus" :disabled="busy" @click="uploadInput.click()">上传插件</el-button><input ref="uploadInput" type="file" accept=".zip" hidden @change="uploadPackage" />
+      <el-tooltip content="刷新插件"><el-button :icon="Refresh" circle aria-label="刷新插件" @click="loadPlugins" /></el-tooltip></div>
     </div>
 
     <div class="status-band">
@@ -35,18 +36,20 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="来源" width="90"><template #default><el-tag type="info" effect="plain">内置</el-tag></template></el-table-column>
+      <el-table-column label="来源" width="90"><template #default="{ row }"><el-tag type="info" effect="plain">{{ row.manifest.source === 'builtin' ? '内置' : '上传' }}</el-tag></template></el-table-column>
+      <el-table-column label="安装" width="120"><template #default="{ row }"><el-tag :type="row.package_status === 'failed' ? 'danger' : 'info'">{{ packageLabel(row.package_status) }}</el-tag></template></el-table-column>
       <el-table-column label="配置" width="110"><template #default="{ row }"><el-tag :type="row.config_status === 'ready' ? 'success' : 'info'" effect="plain">{{ configLabel(row) }}</el-tag></template></el-table-column>
       <el-table-column label="启用" width="85"><template #default="{ row }"><el-switch :model-value="row.enabled" :disabled="busy || !ready(row)" :aria-label="`启用${row.manifest.name}`" @change="value => toggle(row, value)" /></template></el-table-column>
       <el-table-column label="连接状态" width="120"><template #default="{ row }"><span class="health"><i :class="row.health_status" />{{ healthLabel(row) }}</span></template></el-table-column>
       <el-table-column label="最近测试" min-width="165"><template #default="{ row }">{{ formatDate(row.tested_at) }}</template></el-table-column>
       <el-table-column label="Agent" width="80"><template #default="{ row }"><el-button link @click="openPlugin(row, 'agents')">{{ row.agents.length }}</el-button></template></el-table-column>
-      <el-table-column label="操作" width="130" fixed="right"><template #default="{ row }">
+      <el-table-column label="操作" width="165" fixed="right"><template #default="{ row }">
+        <el-button v-if="canInstall(row)" link type="primary" :disabled="busy" @click="installBuiltin(row)">{{ row.package_status === 'failed' ? '重试' : '安装' }}</el-button>
         <el-tooltip :content="row.manifest.fields.length ? '编辑配置' : '管理插件'"><el-button :icon="Setting" text circle :aria-label="row.manifest.fields.length ? '编辑配置' : '管理插件'" @click="openPlugin(row, 'config')" /></el-tooltip>
         <el-tooltip v-if="row.manifest.capabilities.debug" content="调试工具"><el-button :icon="VideoPlay" text circle aria-label="调试工具" :disabled="!ready(row)" @click="openPlugin(row, 'debug')" /></el-tooltip>
       </template></el-table-column>
     </el-table>
-    <div class="list-footer"><span>{{ filteredPlugins.length }} 个插件</span><span>内置目录 · 当前用户独立配置</span></div>
+    <div class="list-footer"><span>{{ filteredPlugins.length }} 个插件</span><span>内置及上传插件 · 当前用户独立配置</span></div>
 
     <el-drawer v-model="drawer" :size="'min(940px, 100vw)'" :before-close="beforeClose" destroy-on-close class="plugin-drawer">
       <template #header>
@@ -60,7 +63,7 @@
           <el-tab-pane label="概览" name="overview">
             <p class="description">{{ selected.manifest.description }}</p>
             <el-descriptions :column="1" border>
-              <el-descriptions-item label="插件来源">内置插件</el-descriptions-item>
+              <el-descriptions-item label="插件来源">{{ selected.manifest.source === 'builtin' ? '内置插件' : '上传插件' }}</el-descriptions-item>
               <el-descriptions-item label="执行器"><code>{{ selected.manifest.executor }}</code></el-descriptions-item>
               <el-descriptions-item label="配置状态">{{ configLabel(selected) }}</el-descriptions-item>
               <el-descriptions-item label="连接状态"><span class="health"><i :class="selected.health_status" />{{ healthLabel(selected) }}</span></el-descriptions-item>
@@ -75,17 +78,28 @@
             <el-alert v-if="probeResult" :title="probeResult.message" :type="probeResult.ok ? 'success' : 'error'" :description="`耗时 ${probeResult.duration_ms} ms`" show-icon :closable="false" class="result-alert" />
           </el-tab-pane>
 
+          <el-tab-pane label="安装与版本" name="package">
+            <el-alert v-if="tabError" :title="tabError" type="error" :closable="false" />
+            <el-alert v-if="selected.package_error" :title="selected.package_error" type="error" :closable="false" />
+            <p>安装状态：{{ packageLabel(selected.package_status) }}</p>
+            <el-button v-if="canInstall(selected)" type="primary" :loading="mutating" :disabled="busy" @click="installBuiltin(selected)">{{ selected.package_status === 'failed' ? '重新安装' : '安装到 Runtime 容器' }}</el-button>
+            <el-button :icon="Download" @click="exportPackage(selected)">导出插件包</el-button>
+            <el-button v-if="selected.installed" type="danger" plain :disabled="busy || selected.agents.length > 0 || ['queued', 'installing'].includes(selected.package_status)" @click="uninstallPackage">卸载安装包</el-button>
+            <p v-if="!selected.installed" class="muted">内置表示平台提供插件包；安装、依赖和执行仍使用当前用户的 Runtime Docker 容器。</p>
+            <p class="muted">上传新版本后，准备完成再选择切换；正在执行的任务继续使用原版本。</p>
+            <el-table :data="versions"><el-table-column prop="version" label="版本" /><el-table-column label="状态"><template #default="{ row }">{{ packageLabel(row.status) }} {{ row.error_message }}</template></el-table-column><el-table-column label="使用"><template #default="{ row }"><el-tag v-if="row.active">当前版本</el-tag><el-button v-else :disabled="row.status !== 'ready' || busy" @click="activateVersion(row.version)">切换</el-button></template></el-table-column></el-table>
+          </el-tab-pane>
+
           <el-tab-pane :label="selected.manifest.fields.length ? '配置' : '管理'" name="config">
             <template v-if="selected.manifest.fields.length">
               <div class="section-heading"><h4>{{ selected.manifest.config_title }}</h4><el-tag type="info" effect="plain">版本 {{ selected.revision || '草稿' }}</el-tag></div>
-              <PluginFields :fields="selected.manifest.fields" :model="form" :configured-secrets="selected.configured_secrets" :disabled="busy" />
+              <PluginFields :fields="selected.manifest.fields" :model="form" :configured-secrets="selected.configured_secrets" :disabled="busy || selected.package_status !== 'ready'" />
             </template>
             <el-alert v-if="configError" :title="configError" type="error" :closable="false" show-icon />
-            <div class="config-actions" v-if="selected.manifest.fields.length || selected.manifest.capabilities.environment_import"><el-button v-if="selected.manifest.fields.length" type="primary" :icon="Check" :loading="saving" :disabled="busy && !saving" @click="saveConfig">保存配置</el-button>
-              <el-button v-if="selected.manifest.capabilities.environment_import" :icon="Download" :disabled="busy" @click="importEnvironment">导入环境配置</el-button></div>
+            <div class="config-actions" v-if="selected.manifest.fields.length"><el-button type="primary" :icon="Check" :loading="saving" :disabled="busy && !saving || selected.package_status !== 'ready'" @click="saveConfig">保存配置</el-button></div>
             <div class="section-heading lifecycle"><h4>插件状态</h4><el-switch :model-value="selected.enabled" :disabled="busy || dirty || !ready(selected)" active-text="启用" inactive-text="停用" @change="value => toggle(selected, value)" /></div>
             <div class="remove-row"><span class="muted">关联 Agent：{{ selected.agents.length }}</span>
-              <el-button type="danger" plain :icon="Delete" :disabled="busy || !selected.installed || selected.agents.length > 0" @click="removeConfig">移除插件</el-button></div>
+              <el-button type="danger" plain :icon="Delete" :disabled="busy || !selected.revision || selected.agents.length > 0" @click="removeConfig">移除配置</el-button></div>
           </el-tab-pane>
 
           <el-tab-pane label="工具与 Skill" name="tools">
@@ -134,7 +148,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Connection, CopyDocument, DataAnalysis, Delete, Download, Edit, Plus, Refresh, Search, Setting, VideoPlay } from '@element-plus/icons-vue'
@@ -142,6 +156,12 @@ import request from '../../utils/request'
 import PluginFields from './PluginFields.vue'
 import BiPluginDebug from './BiPluginDebug.vue'
 
+const uploadInput = ref(null)
+const versions = ref([])
+let installTimer
+let pageActive = true
+const packageLabel = status => ({ not_installed: '未安装', queued: '等待安装', installing: '准备依赖', ready: '已就绪', failed: '安装失败' }[status] || status)
+const canInstall = plugin => plugin.manifest.source === 'builtin' && ['not_installed', 'failed'].includes(plugin.package_status)
 const router = useRouter()
 const plugins = ref([])
 const loading = ref(false)
@@ -177,7 +197,7 @@ const rawArguments = ref('{}')
 const debugResult = ref(null)
 const debugError = ref('')
 const probeResult = ref(null)
-const actionLabels = { configure: '保存配置', import_environment: '导入配置', enable: '启用', disable: '停用', remove: '移除配置', test: '连接测试', debug: '调试查询', call: 'Agent 调用', bind: '绑定 Agent', unbind: '解除绑定' }
+const actionLabels = { upload: '上传包', install: '安装', activate: '切换版本', uninstall: '卸载', configure: '保存配置', enable: '启用', disable: '停用', remove: '移除配置', test: '连接测试', debug: '调试查询', call: 'Agent 调用', bind: '绑定 Agent', unbind: '解除绑定' }
 const installedCount = computed(() => plugins.value.filter(p => p.installed).length)
 const enabledCount = computed(() => plugins.value.filter(p => p.enabled).length)
 const errorCount = computed(() => plugins.value.filter(p => p.health_status === 'error').length)
@@ -189,7 +209,7 @@ const prettyResult = computed(() => {
   try { return pretty(JSON.parse(debugResult.value?.result || '{}')) } catch { return debugResult.value?.result || '' }
 })
 const formatDate = value => value ? new Date(value.endsWith('Z') ? value : `${value}Z`).toLocaleString('zh-CN', { hour12: false }) : '—'
-const ready = plugin => ['ready', 'not_required'].includes(plugin.config_status)
+const ready = plugin => ['ready', 'not_required'].includes(plugin.config_status) && plugin.package_status === 'ready'
 const configLabel = p => ({ ready: '已配置', not_required: '无需配置', incomplete: '待完善', unconfigured: '未配置' }[p.config_status] || p.config_status)
 const healthLabel = p => p.manifest.capabilities.connection_test ? ({ healthy: '连接正常', error: '连接异常', untested: '未测试' }[p.health_status] || p.health_status) : '不适用'
 const errorMessage = error => typeof error.response?.data?.detail === 'string' ? error.response.data.detail : (error.message || '请求失败')
@@ -202,10 +222,64 @@ const applyPlugin = plugin => {
   Object.assign(form, { values: { ...plugin.config_values }, secrets: Object.fromEntries(plugin.manifest.fields.filter(f => f.kind === 'secret').map(f => [f.key, ''])), clear_secrets: [], revision: plugin.revision })
   baseline.value = JSON.stringify(form)
 }
+// 安装或查看版本时刷新；保留正在编辑的草稿，避免后台刷新清空密钥输入。
+const scheduleInstallRefresh = () => {
+  clearTimeout(installTimer)
+  if (!pageActive) return
+  if (plugins.value.some(p => ['queued', 'installing'].includes(p.package_status) || p.pending_version) || drawer.value && activeTab.value === 'package') installTimer = setTimeout(async () => {
+    try {
+      plugins.value = await request.get('/api/plugins')
+      if (drawer.value && selected.value && !busy.value) {
+        const id = selected.value.manifest.id
+        const fresh = plugins.value.find(p => p.manifest.id === id)
+        if (fresh) { if (dirty.value) selected.value = fresh; else applyPlugin(fresh) }
+        if (activeTab.value === 'package') versions.value = await request.get(`/api/plugins/${id}/versions`)
+      }
+    } catch (error) { loadError.value = errorMessage(error) }
+    finally { scheduleInstallRefresh() }
+  }, 2500)
+}
+const uploadPackage = async event => {
+  const file = event.target.files?.[0]
+  if (!file) return
+  mutating.value = true
+  try {
+    const data = new FormData(); data.append('file', file)
+    const plugin = await request.post('/api/plugins/packages/upload', data, { timeout: 60000 })
+    await loadPlugins(); await openPlugin(plugin, 'package'); versions.value = await request.get(`/api/plugins/${plugin.manifest.id}/versions`)
+    ElMessage.success('插件已上传，等待 Worker 准备依赖')
+  } catch (error) { ElMessage.error(errorMessage(error)) } finally { mutating.value = false; event.target.value = '' }
+}
+// 内置包与上传包复用后台安装队列，首次安装不自动启用或绑定 Agent。
+const installBuiltin = async plugin => {
+  mutating.value = true
+  try {
+    const installed = await request.post(`/api/plugins/${plugin.manifest.id}/install`, null, { timeout: 60000 })
+    await loadPlugins(); await openPlugin(installed, 'package')
+    ElMessage.success('已提交安装，等待 Worker 准备容器依赖')
+  } catch (error) { ElMessage.error(errorMessage(error)) } finally { mutating.value = false }
+}
+const exportPackage = async plugin => {
+  try {
+    const data = await request.get(`/api/plugins/${plugin.manifest.id}/export`, { responseType: 'blob' })
+    const url = URL.createObjectURL(data); const link = document.createElement('a'); link.href = url; link.download = `${plugin.manifest.id}.zip`; link.click(); URL.revokeObjectURL(url)
+  } catch (error) { ElMessage.error(errorMessage(error)) }
+}
+const activateVersion = async version => {
+  mutating.value = true
+  try { await request.post(`/api/plugins/${selected.value.manifest.id}/versions/${version}/activate`); applyPlugin(await request.get(`/api/plugins/${selected.value.manifest.id}`)); versions.value = await request.get(`/api/plugins/${selected.value.manifest.id}/versions`); await loadPlugins() }
+  catch (error) { tabError.value = errorMessage(error) } finally { mutating.value = false }
+}
+const uninstallPackage = async () => {
+  if (!await confirm('卸载此插件包及配置？请先解除所有 Agent 绑定。', '卸载插件')) return
+  mutating.value = true
+  try { await request.delete(`/api/plugins/${selected.value.manifest.id}/package`); drawer.value = false; await loadPlugins() }
+  catch (error) { tabError.value = errorMessage(error) } finally { mutating.value = false }
+}
 const loadPlugins = async () => {
   loading.value = true
   loadError.value = ''
-  try { plugins.value = await request.get('/api/plugins') } catch (error) { loadError.value = errorMessage(error) } finally { loading.value = false }
+  try { plugins.value = await request.get('/api/plugins'); scheduleInstallRefresh() } catch (error) { loadError.value = errorMessage(error) } finally { loading.value = false }
 }
 const openPlugin = async (plugin, tab = 'overview') => {
   applyPlugin(plugin)
@@ -218,6 +292,7 @@ const openPlugin = async (plugin, tab = 'overview') => {
   probeForm.values = Object.fromEntries(plugin.manifest.test_fields.map(field => [field.key, field.default ?? (field.kind === 'boolean' ? false : '')]))
   drawer.value = true
   await loadTab(tab)
+  scheduleInstallRefresh()
 }
 const confirm = async (message, title = '确认操作') => {
   try { await ElMessageBox.confirm(message, title, { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' }); return true } catch { return false }
@@ -248,12 +323,6 @@ const toggle = async (plugin, enabled) => {
     ElMessage.success(enabled ? '插件已启用' : '插件已停用')
   } catch { /* 统一请求层展示错误。 */ } finally { mutating.value = false }
 }
-const importEnvironment = async () => {
-  if (!await confirm(`将服务器中「${selected.value.manifest.name}」的环境配置复制到你的插件配置，覆盖已保存字段。确认导入？`, '导入环境配置')) return
-  mutating.value = true
-  try { applyPlugin(await request.post(`/api/plugins/${selected.value.manifest.id}/import-environment`, null, { params: { revision: selected.value.revision } })); probeResult.value = null; ElMessage.success('环境配置已导入') }
-  catch (error) { configError.value = errorMessage(error) } finally { mutating.value = false }
-}
 const removeConfig = async () => {
   if (!await confirm('将移除此插件的用户配置、凭据和启用状态，操作记录保留。确认移除？', '移除插件')) return
   mutating.value = true
@@ -280,7 +349,7 @@ const debugTool = async () => {
     if (!input || Array.isArray(input) || typeof input !== 'object') throw new Error('工具输入必须是 JSON 对象')
   } catch (error) { debugError.value = error.message; return }
   debugging.value = true
-  try { debugResult.value = await request.post(`/api/plugins/${selected.value.manifest.id}/debug`, { tool_name: toolName.value, input }, { timeout: 75000 }) }
+  try { debugResult.value = await request.post(`/api/plugins/${selected.value.manifest.id}/debug`, { tool_name: toolName.value, input }, { timeout: selected.value.manifest.executor === 'python-process' ? 240000 : 75000 }) }
   catch (error) { debugError.value = errorMessage(error) } finally { debugging.value = false }
 }
 const loadSkill = async () => {
@@ -299,6 +368,11 @@ const loadActivity = async (more = false) => {
 }
 const loadTab = async tab => {
   tabError.value = ''
+  if (tab === 'package') {
+    try { versions.value = await request.get(`/api/plugins/${selected.value.manifest.id}/versions`) }
+    catch (error) { tabError.value = errorMessage(error) }
+    scheduleInstallRefresh()
+  }
   if (tab === 'tools' || tab === 'debug') {
     try {
       tools.value = await request.get(`/api/plugins/${selected.value.manifest.id}/tools`)
@@ -321,6 +395,7 @@ const resetToolInput = () => {
 }
 watch(debugMode, mode => { if (mode === 'json' && selected.value?.manifest.debug_panel === 'bi-metadata') rawArguments.value = pretty(toolInput.value) })
 onMounted(loadPlugins)
+onUnmounted(() => { pageActive = false; clearTimeout(installTimer) })
 </script>
 
 <style scoped>

@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS agents (
     execution_timeout_seconds INT NOT NULL DEFAULT 120,
     planning_mode VARCHAR(20) NOT NULL DEFAULT 'disabled',
     permission_preset VARCHAR(30) NOT NULL DEFAULT 'standard',
+    allow_delegation BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否允许委托',
+    delegation_agent_ids JSON DEFAULT NULL COMMENT '委托目标Agent白名单',
+    delegation_max_calls INT NOT NULL DEFAULT 3 COMMENT '每轮最大委托次数',
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     INDEX idx_agents_user (user_id),
@@ -154,6 +157,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role VARCHAR(20) NOT NULL,
     content TEXT NOT NULL,
     reasoning_content MEDIUMTEXT DEFAULT NULL,
+    delegation_results JSON DEFAULT NULL COMMENT '本轮委托状态与公开结果摘要',
     structured_content JSON DEFAULT NULL,
     attachments JSON DEFAULT NULL,
     created_at DATETIME NOT NULL,
@@ -206,6 +210,7 @@ CREATE TABLE IF NOT EXISTS code_executions (
 
 CREATE TABLE IF NOT EXISTS trace_runs (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    parent_trace_run_id INT DEFAULT NULL COMMENT '委托父Trace ID',
     session_id INT DEFAULT NULL,
     user_id INT NOT NULL,
     agent_id INT NOT NULL,
@@ -413,3 +418,34 @@ CREATE TABLE IF NOT EXISTS plugin_activity (
     INDEX idx_plugin_activity_user (user_id, plugin_id, id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='插件脱敏操作与调用记录';
+
+-- 可安装插件版本与持久化执行队列。
+CREATE TABLE IF NOT EXISTS plugin_packages (
+        user_id INT NOT NULL,
+        plugin_id VARCHAR(100) NOT NULL,
+        version VARCHAR(100) NOT NULL,
+        digest CHAR(64) NOT NULL,
+        manifest_json JSON NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'queued',
+        active TINYINT NOT NULL DEFAULT 0,
+        error_message VARCHAR(500) NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        PRIMARY KEY (user_id,plugin_id,version),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户私有插件安装包版本';
+
+CREATE TABLE IF NOT EXISTS plugin_executions (
+        id CHAR(32) PRIMARY KEY,
+        user_id INT NOT NULL,
+        plugin_id VARCHAR(100) NOT NULL,
+        version VARCHAR(100) NOT NULL,
+        encrypted_request MEDIUMTEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'queued',
+        result_json MEDIUMTEXT DEFAULT NULL,
+        cancel_requested TINYINT NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_plugin_execution_owner (user_id,plugin_id,status),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='插件执行与加密配置快照';

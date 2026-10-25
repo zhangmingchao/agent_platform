@@ -4,19 +4,137 @@
   "version": "1.0.0",
   "description": "查询产品中的分析主体、事件、用户属性、事件属性和指标。",
   "source": "builtin",
-  "executor": "bi-cli",
-  "capabilities": {"connection_test": true, "environment_import": true, "debug": true},
+  "executor": "python-process",
+  "tools": [
+    "BiCli"
+  ],
+  "skill_name": "bi-metadata",
+  "skill_files": [
+    "SKILL.md",
+    "references/commands.md"
+  ],
+  "permissions": [
+    "metadata.read",
+    "network.bi",
+    "process.fixed-cli"
+  ],
+  "fields": [
+    {
+      "key": "base_url",
+      "label": "BI 服务地址",
+      "kind": "string",
+      "required": true,
+      "default": null,
+      "minimum": null,
+      "maximum": null,
+      "max_length": 500,
+      "format": "url",
+      "placeholder": "https://bi.example.com",
+      "options": []
+    },
+    {
+      "key": "token",
+      "label": "BI Token",
+      "kind": "secret",
+      "required": true,
+      "default": null,
+      "minimum": null,
+      "maximum": null,
+      "max_length": 4096,
+      "format": null,
+      "placeholder": "",
+      "options": []
+    },
+    {
+      "key": "timeout_seconds",
+      "label": "请求超时（秒）",
+      "kind": "integer",
+      "required": false,
+      "default": 30,
+      "minimum": 1,
+      "maximum": 60,
+      "max_length": 4096,
+      "format": null,
+      "placeholder": "",
+      "options": []
+    },
+    {
+      "key": "max_output_bytes",
+      "label": "最大输出（字节）",
+      "kind": "integer",
+      "required": false,
+      "default": 1048576,
+      "minimum": 1024,
+      "maximum": 4194304,
+      "max_length": 4096,
+      "format": null,
+      "placeholder": "",
+      "options": []
+    }
+  ],
+  "capabilities": {
+    "connection_test": true,
+    "debug": true
+  },
+  "test_fields": [
+    {
+      "key": "product_key",
+      "label": "产品标识",
+      "kind": "string",
+      "required": true,
+      "max_length": 200,
+      "placeholder": "product-key"
+    }
+  ],
   "config_title": "服务配置",
   "debug_panel": "bi-metadata",
-  "test_fields": [{"key": "product_key", "label": "产品标识", "kind": "string", "required": true, "max_length": 200, "placeholder": "product-key"}],
-  "tools": ["BiCli"],
-  "skill_name": "bi-metadata",
-  "skill_files": ["SKILL.md", "references/commands.md"],
-  "permissions": ["metadata.read", "network.bi", "process.fixed-cli"],
-  "fields": [
-    {"key": "base_url", "label": "BI 服务地址", "kind": "string", "format": "url", "required": true, "max_length": 500, "placeholder": "https://bi.example.com"},
-    {"key": "token", "label": "BI Token", "kind": "secret", "required": true},
-    {"key": "timeout_seconds", "label": "请求超时（秒）", "kind": "integer", "default": 30, "minimum": 1, "maximum": 60},
-    {"key": "max_output_bytes", "label": "最大输出（字节）", "kind": "integer", "default": 1048576, "minimum": 1024, "maximum": 4194304}
-  ]
+  "protocol_version": 1,
+  "entrypoint": "executor/main.py",
+  "tool_definitions": [
+    {
+      "name": "BiCli",
+      "description": "通过受控 BI CLI 查询分析主体、事件、用户属性、事件属性和指标列表。仅支持只读 metadata 命令，参数必须以字符串数组传入；使用前应先读取 BI 元数据 Skill。",
+      "parameters": {
+        "description": "Agent 调用受控 BI CLI 时使用的参数实体。\n\nAttributes:\n    arguments: 不包含 `bi` 程序名的参数数组，例如\n        `[\"metadata\", \"events\", \"list\", \"--product-key\", \"app_001\"]`。",
+        "properties": {
+          "arguments": {
+            "description": "BI CLI 参数数组，不包含可执行文件名。只支持 metadata 下的 analysis-bodies、events、user-properties、event-properties、metrics 列表命令",
+            "items": {
+              "type": "string"
+            },
+            "title": "Arguments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "arguments"
+        ],
+        "title": "BiCliInput",
+        "type": "object"
+      },
+      "example_input": null,
+      "output_schema": {
+        "type": "object"
+      },
+      "risk_level": "medium"
+    }
+  ],
+  "timeout_seconds": 90,
+  "file_input_parameter": null,
+  "probe": {
+    "tool_name": "BiCli",
+    "arguments_template": {
+      "arguments": [
+        "metadata",
+        "events",
+        "list",
+        "--product-key",
+        "{{product_key}}",
+        "--page-num",
+        "1",
+        "--page-size",
+        "1"
+      ]
+    }
+  }
 }

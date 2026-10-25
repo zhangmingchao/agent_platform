@@ -1,78 +1,42 @@
-"""受控 BiCli LangChain 工具测试。"""
+"""BI 工具统一通过插件安装版本和容器任务执行，禁止回到宿主子进程入口。"""
 
 import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from backend.core.agent_factory import build_all_tools
-from backend.core.bi_cli_tool import BiCliProcessResult, build_bi_cli_tools
+from backend.core.plugin_tools import build_plugin_tools
+from backend.models.plugin import PluginSettings
+from backend.plugins.registry import get_manifest
+from backend.plugins.packages import public_tool_name
 from backend.runtime.models import RuntimeContext
+from backend.services.plugin_service import RuntimePlugin, RuntimePlugins
 
 
 class BiCliToolTests(unittest.IsolatedAsyncioTestCase):
-    """验证工具注册、参数隔离和结构化输出。"""
+    """验证绑定才能注册、参数 Schema 与共享容器执行适配。"""
 
-    def test_returns_empty_when_disabled(self) -> None:
-        with patch("backend.core.bi_cli_tool.BI_CLI_ENABLED", False):
-            tools = build_bi_cli_tools(RuntimeContext(user_id=7))
-
-        self.assertEqual(tools, [])
-
-    async def test_registers_bi_cli_in_agent_tool_collection(self) -> None:
-        """启用 BI CLI 后，应进入 Agent 的统一工具权限与审计流水线。"""
-        with patch("backend.core.bi_cli_tool.BI_CLI_ENABLED", True):
+    async def test_environment_never_registers_unbound_bi_tool(self) -> None:
+        """即使旧 BI 环境开关存在，未绑定 Agent 不应获得全局宿主工具。"""
+        with patch("backend.services.plugin_service.load_runtime_plugins", AsyncMock(return_value=RuntimePlugins())), patch.dict("os.environ", {"BI_CLI_ENABLED": "true"}):
             tools = await build_all_tools([], [], RuntimeContext(user_id=7))
+        self.assertNotIn("BiCli", [tool.name for tool in tools])
+        self.assertNotIn(public_tool_name("bi-metadata", "BiCli"), [tool.name for tool in tools])
 
-        self.assertIn("BiCli", [tool.name for tool in tools])
-
-    async def test_executes_fixed_cli_with_argument_array(self) -> None:
-        process_result = BiCliProcessResult(
-            exit_code=0,
-            stdout=json.dumps(
-                {"ok": True, "command": "metadata.events.list", "data": [{"id": 1}]},
-                ensure_ascii=False,
-            ),
-        )
-        with (
-            patch("backend.core.bi_cli_tool.BI_CLI_ENABLED", True),
-            patch(
-                "backend.core.bi_cli_tool._execute_bi_cli_process",
-                new=AsyncMock(return_value=process_result),
-            ) as execute,
-        ):
-            tool = build_bi_cli_tools(RuntimeContext(user_id=7))[0]
-            output = await tool.ainvoke(
-                {
-                    "arguments": [
-                        "metadata", "events", "list", "--product-key", "app-1",
-                    ]
-                }
-            )
-
-        parsed = json.loads(output)
-        self.assertTrue(parsed["ok"])
-        execute.assert_awaited_once_with(
-            ["metadata", "events", "list", "--product-key", "app-1"],
-            "",
-        )
-
-    async def test_rejects_shell_control_characters_before_process(self) -> None:
-        with (
-            patch("backend.core.bi_cli_tool.BI_CLI_ENABLED", True),
-            patch(
-                "backend.core.bi_cli_tool._execute_bi_cli_process",
-                new=AsyncMock(),
-            ) as execute,
-        ):
-            tool = build_bi_cli_tools(RuntimeContext(user_id=7))[0]
-            output = await tool.ainvoke(
-                {"arguments": ["metadata", "events", "list", "; rm -rf /"]}
-            )
-
-        parsed = json.loads(output)
-        self.assertFalse(parsed["ok"])
-        self.assertEqual(parsed["error"]["code"], "INVALID_ARGUMENTS")
-        execute.assert_not_awaited()
+    async def test_builtin_bi_uses_process_task_and_user_snapshot(self) -> None:
+        """内置 BI 和上传插件使用同一进程适配器，Token 仅注入当前执行快照。"""
+        context = RuntimeContext(user_id=7)
+        manifest = get_manifest("bi-metadata")
+        settings = PluginSettings(values={"base_url": "https://example.test"}, secrets={"token": "fixture-token"})
+        with patch("backend.services.plugin_package_service.execute_process_plugin", AsyncMock(return_value='{"ok":true,"data":{},"error":null}')) as execute, patch("backend.core.plugin_tools.record_plugin_call", AsyncMock()):
+            tool = build_plugin_tools(context, [RuntimePlugin(plugin_id=manifest.id, manifest=manifest, settings=settings)])[0]
+            result = await tool.ainvoke({"arguments": ["metadata", "events", "list", "--product-key", "fixture"]})
+        self.assertTrue(json.loads(result)["ok"])
+        self.assertEqual(tool.name, "plugin__bi_metadata__BiCli")
+        self.assertTrue(tool.metadata["plugin_process"])
+        self.assertEqual(execute.await_args.args[0].user_id, 7)
+        self.assertEqual(execute.await_args.args[-1], {"token": "fixture-token"})
+        self.assertEqual(execute.await_args.args[1].executor, "python-process")
 
 
 if __name__ == "__main__":

@@ -39,3 +39,5 @@ class RuntimeContext:
     permission_preset: PermissionPreset = PermissionPreset.STANDARD
     invocation_source: str = "platform"
     trace_ctx: Optional["TraceContext"] = None
+    # 0 为顶层 Agent，1 为子任务；服务端禁止子任务继续委托。
+    delegation_depth: int = 0

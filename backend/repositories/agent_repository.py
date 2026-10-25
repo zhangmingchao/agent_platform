@@ -37,7 +37,7 @@ async def find_agents_by_user(user_id: int) -> List[Agent]:
     rows: List[Dict[str, Any]] = await fetch_all(
         "SELECT id, user_id, name, description, system_prompt, prompt_variables, output_schema, "
         "model, model_config_id, temperature, iteration_count, execution_timeout_seconds, "
-        "planning_mode, permission_preset, created_at, updated_at "
+        "planning_mode, permission_preset, allow_delegation, delegation_agent_ids, delegation_max_calls, created_at, updated_at "
         "FROM agents WHERE user_id=%s ORDER BY updated_at DESC",
         (user_id,),
     )

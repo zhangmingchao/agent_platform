@@ -56,14 +56,27 @@ def _now() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
+async def _validate_delegation_targets(user_id: int, data: Dict, agent_id: Optional[int] = None) -> None:
+    """user_id 为所属用户，data 为接口配置，agent_id 为编辑中的自身 ID；保存前检查白名单。"""
+    targets = data.get("delegation_agent_ids") or []
+    if len(targets) != len(set(targets)):
+        raise HTTPException(400, "委托目标不能重复")
+    if data.get("allow_delegation") and not targets:
+        raise HTTPException(400, "开启委托后请选择目标 Agent")
+    for target_id in targets:
+        if target_id == agent_id or not await get_agent(target_id, user_id):
+            raise HTTPException(400, "委托目标不存在、非当前用户或指向自身")
+
+
 async def create_agent(user_id: int, data: Dict) -> Agent:
+    await _validate_delegation_targets(user_id, data)
     prompt_variables, output_schema = _validated_agent_options(data)
     now = _now()
     agent_id = await execute(
         "INSERT INTO agents (user_id, name, description, system_prompt, prompt_variables, output_schema, model, model_config_id, "
         "temperature, iteration_count, execution_timeout_seconds, planning_mode, permission_preset, "
-        "created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "allow_delegation, delegation_agent_ids, delegation_max_calls, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             user_id,
             data.get("name", "新Agent"),
@@ -78,6 +91,9 @@ async def create_agent(user_id: int, data: Dict) -> Agent:
             data.get("execution_timeout_seconds", 120),
             _planning_mode_value(data.get("planning_mode", PlanningMode.DISABLED)),
             _permission_preset_value(data.get("permission_preset", PermissionPreset.STANDARD)),
+            bool(data.get("allow_delegation", False)),
+            json.dumps(data.get("delegation_agent_ids") or []),
+            int(data.get("delegation_max_calls") or 3),
             now,
             now,
         )
@@ -124,6 +140,7 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Agen
     if not existing:
         return None
 
+    await _validate_delegation_targets(user_id, data, agent_id)
     prompt_variables, output_schema = _validated_agent_options(data)
 
     if data.get("plugin_ids") is not None:
@@ -137,7 +154,7 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Agen
     await execute(
         "UPDATE agents SET name=%s, description=%s, system_prompt=%s, prompt_variables=%s, output_schema=%s, model=%s, "
         "model_config_id=%s, temperature=%s, iteration_count=%s, execution_timeout_seconds=%s, "
-        "planning_mode=%s, permission_preset=%s, updated_at=%s "
+        "planning_mode=%s, permission_preset=%s, allow_delegation=%s, delegation_agent_ids=%s, delegation_max_calls=%s, updated_at=%s "
         "WHERE id=%s",
         (
             data.get("name", "新Agent"),
@@ -152,6 +169,9 @@ async def update_agent(agent_id: int, user_id: int, data: Dict) -> Optional[Agen
             data.get("execution_timeout_seconds", 120),
             _planning_mode_value(data.get("planning_mode", PlanningMode.DISABLED)),
             _permission_preset_value(data.get("permission_preset", PermissionPreset.STANDARD)),
+            bool(data.get("allow_delegation", False)),
+            json.dumps(data.get("delegation_agent_ids") or []),
+            int(data.get("delegation_max_calls") or 3),
             now,
             agent_id,
         )

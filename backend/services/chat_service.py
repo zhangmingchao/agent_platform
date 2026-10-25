@@ -340,6 +340,7 @@ async def _stream_prepared_chat(
     Yields:
         Agent 执行期间产生的 SSE 数据块。
     """
+    delegation_results: Dict[str, Dict[str, Any]] = {}
     full_response: List[str] = []
     reasoning_response: List[str] = []
     # Token 先按 LLM 轮次暂存，收到分类事件后再进入正式回答或执行说明。
@@ -372,6 +373,10 @@ async def _stream_prepared_chat(
                 try:
                     event = json.loads(payload)
                     event_type = event.get("type")
+                    if event_type in ('delegation_started', 'delegation_completed'):
+                        key = event.get('delegation_id', '')
+                        previous = delegation_results.get(key, {})
+                        delegation_results[key] = {**previous, **event, 'result': str(event.get('result') or '')[:500]}
                     if event_type == "pending_text_delta":
                         round_id = event.get("round_id", "")
                         pending_rounds.setdefault(round_id, []).append(event.get("content", ""))
@@ -434,8 +439,8 @@ async def _stream_prepared_chat(
         if persist_session_id is not None:
             await execute(
                 "INSERT INTO chat_messages "
-                "(session_id, role, content, reasoning_content, structured_content, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
+                "(session_id, role, content, reasoning_content, structured_content, delegation_results, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (
                     persist_session_id,
                     "assistant",
@@ -443,6 +448,7 @@ async def _stream_prepared_chat(
                     "".join(reasoning_response) or None,
                     json.dumps(structured_content, ensure_ascii=False)
                     if structured_content is not None else None,
+                    json.dumps(list(delegation_results.values()), ensure_ascii=False) if delegation_results else None,
                     _now(),
                 ),
             )

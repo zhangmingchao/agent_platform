@@ -20,6 +20,8 @@ services:
       SANDBOX_DATA_ROOT: /runtime-data
       # 如果使用远程 Docker daemon，请显式设置为 daemon 主机可见的数据目录。
       SANDBOX_HOST_DATA_ROOT: ${SANDBOX_HOST_DATA_ROOT:-}
+      # Runtime 与插件共用用户容器，用户明确允许网络访问。
+      SANDBOX_NETWORK_ENABLED: "true"
       SANDBOX_MEMORY: 512m
       SANDBOX_CPUS: "1"
       SANDBOX_PIDS_LIMIT: "128"

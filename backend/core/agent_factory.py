@@ -16,7 +16,6 @@ from ..models.task_planning import PlanningMode
 from ..runtime.models import RuntimeContext
 from ..runtime.tools import build_runtime_tools
 from .agent_state import AgentPlatformState
-from .bi_cli_tool import build_bi_cli_tools
 from .tools import build_skill_tools
 from .mcp_tools import build_mcp_langchain_tools
 from .task_planning import create_task_planning_graph
@@ -78,14 +77,13 @@ async def build_all_tools(
     from ..services.plugin_service import load_runtime_plugins
     from .plugin_tools import build_plugin_tools
 
+    from ..plugins.registry import get_manifest
     plugins = await load_runtime_plugins(runtime_context)
     tools = []
-    tools.extend(build_skill_tools(skills, plugins.plugin_ids) if plugins.plugin_ids else build_skill_tools(skills))
+    tools.extend(build_skill_tools(skills, plugins.plugin_ids, {entry.plugin_id: entry.manifest or get_manifest(entry.plugin_id) for entry in plugins.entries}, runtime_context.user_id if runtime_context else None) if plugins.plugin_ids else build_skill_tools(skills))
     tools.extend(build_runtime_tools(runtime_context))
     if runtime_context is not None:
         tools.extend(build_plugin_tools(runtime_context, plugins.entries))
-    if "bi-cli" not in plugins.managed_executors:
-        tools.extend(build_bi_cli_tools(runtime_context))
     tools.extend(await build_mcp_langchain_tools(mcp_configs))
     names = [tool.name for tool in tools]
     duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -131,6 +129,11 @@ async def create_agent_instance(
     system_prompt = agent.get("system_prompt", "")
 
     tools = await build_all_tools(skills, mcp_configs, runtime_context)
+    from .delegation_tools import build_delegation_tools
+    delegation_tools = await build_delegation_tools(agent, runtime_context)
+    if any(tool.name == 'DelegateTask' for tool in tools) and delegation_tools:
+        raise ValueError('DelegateTask 为平台委托工具保留名称')
+    tools.extend(wrap_tools_with_execution_pipeline(delegation_tools, runtime_context))
     callbacks: List[BaseCallbackHandler] = []
     if model_config and runtime_context:
         tool_schemas: List[Dict[str, Any]] = [convert_to_openai_tool(tool) for tool in tools]
@@ -148,7 +151,7 @@ async def create_agent_instance(
     )
 
     planning_mode = PlanningMode(str(agent.get("planning_mode") or "disabled"))
-    react_checkpointer = None if planning_mode is PlanningMode.EXPLICIT and trace_ctx else _checkpointer
+    react_checkpointer = None if runtime_context and runtime_context.delegation_depth else (None if planning_mode is PlanningMode.EXPLICIT and trace_ctx else _checkpointer)
     react_prompt = (
         planning_execution_prompt
         if planning_mode is PlanningMode.EXPLICIT and planning_execution_prompt is not None
@@ -180,7 +183,7 @@ async def create_agent_instance(
             react_graph=react_graph,
             tools=tools,
             final_system_prompt=system_prompt,
-            checkpointer=_checkpointer,
+            checkpointer=None if runtime_context.delegation_depth else _checkpointer,
             trace_ctx=trace_ctx,
             user_id=runtime_context.user_id,
             agent_id=int(agent["id"]),
