@@ -19,7 +19,7 @@
 
 启用后，在 Agent 编辑页「关联插件」选择并保存。后续对话、外部 API 和工作流按绑定加载工具。连接测试与调试直接执行容器工具，无需请求大模型。
 
-BI 地址要使用**容器可达**的地址：Docker Desktop 访问宿主机服务通常使用 `host.docker.internal`，容器中的 `127.0.0.1` 指向容器自己。基础地址应包含 BI 实际 context path，例如 `/portal-api/bi-docker/api`。BI 支持分析主体、事件、用户属性、事件属性和指标五类只读列表查询。
+BI 地址要使用**容器可达**的地址：Docker Desktop 访问宿主机服务通常使用 `host.docker.internal`，容器中的 `127.0.0.1` 指向容器自己。基础地址应包含 BI 实际 context path，例如 `/portal-api/bi-docker/api`。`bi-metadata@2.0.0` 已扩展为 SolarEngine BI 分析与 AB 测试：保留五类列表查询，新增完整接口目录、业务查询和受配置与平台权限控制的修改工具。配置、接口覆盖和使用说明见 [SolarEngine BI / Rule 插件](solarengine-bi-rule-plugin.md)。
 
 草稿可保存未完成配置，启用和执行前校验必填项。保存后的密钥不回显，留空保留原值，勾选「清除」显式删除。配置变更重置连接状态；测试失败不会自动停用。停用保留 Agent 绑定，后续请求不再加载工具及配套 Skill。移除配置或卸载前先解除绑定。
 

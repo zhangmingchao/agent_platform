@@ -1,0 +1,87 @@
+# bi.post.noLogin_audience_uploadAudienceEntityData.4fe159b7
+
+创建分群
+
+- 服务：bi；后端相对路径：`/noLogin/audience/uploadAudienceEntityData`；方法：POST。
+- 前端路径：未发现前端调用。
+- 状态：backend_only；操作：internal；Schema：partial。
+- 说明：测试、维护、认证或服务间调用 Controller，非 Agent 业务入口
+- 后端源码：bi-docker/da-web/src/main/java/com/reyun/da/web/controller/usertag/NoLoginCdpAudienceConfigController.java:47。
+
+请求参数（query / body / path）：
+
+```json
+{
+  "query_schema": {
+    "type": "object",
+    "properties": {
+      "appKey": {
+        "type": "string"
+      },
+      "tagId": {
+        "type": "string",
+        "description": ""
+      },
+      "tagName": {
+        "type": "string",
+        "description": ""
+      },
+      "remark": {
+        "type": "string",
+        "description": ""
+      },
+      "tagValueType": {
+        "type": "integer",
+        "description": ""
+      },
+      "updateType": {
+        "type": "integer",
+        "description": ""
+      },
+      "tagValue": {
+        "type": "string",
+        "description": ""
+      },
+      "entityType": {
+        "type": "string",
+        "description": ""
+      },
+      "audienceModule": {
+        "type": "integer",
+        "description": ""
+      },
+      "userId": {
+        "type": "integer",
+        "description": ""
+      },
+      "file": {
+        "x-source-type": "MultipartFile",
+        "x-unresolved": "类型未解析或递归；按源码位置查完整定义"
+      }
+    },
+    "required": [
+      "file"
+    ],
+    "additionalProperties": false
+  },
+  "body_schema": null,
+  "path_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}
+```
+
+返回声明：
+
+```json
+{
+  "backend_type": "ResultModel<Object>",
+  "backend_schema": {
+    "x-source-type": "ResultModel<Object>",
+    "x-unresolved": "泛型包装，查看返回结构说明"
+  },
+  "frontend_schemas": []
+}
+```

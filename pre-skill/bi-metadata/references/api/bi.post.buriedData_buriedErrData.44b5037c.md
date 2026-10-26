@@ -1,0 +1,168 @@
+# bi.post.buriedData_buriedErrData.44b5037c
+
+埋点数据 错误/失败 接口下钻
+
+- 服务：bi；后端相对路径：`/buriedData/buriedErrData`；方法：POST。
+- 前端路径：/bi-docker/api/buriedData/buriedErrData。
+- 状态：matched；操作：write；Schema：declared。
+- 说明：源码未明确证明只读，使用修改入口；需核实业务意图
+- 后端源码：bi-docker/da-web/src/main/java/com/reyun/da/web/controller/datamanage/BuriedDataController.java:129。
+- 前端源码：solar-engine-fe/src/api/modules/dataManage/index.ts:179；方法 dataBuriedFailed；参数类型 `any`。
+
+请求参数（query / body / path）：
+
+```json
+{
+  "query_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "body_schema": {
+    "type": "object",
+    "properties": {
+      "productKey": {
+        "type": "string"
+      },
+      "appKeyList": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "startDate": {
+        "type": "string"
+      },
+      "endDate": {
+        "type": "string"
+      },
+      "pageNum": {
+        "type": "integer"
+      },
+      "pageSize": {
+        "type": "integer"
+      },
+      "eventTitle": {
+        "type": "string"
+      },
+      "errType": {
+        "type": "integer"
+      },
+      "errTitle": {
+        "type": "integer"
+      },
+      "ignoreCodeList": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "titleList": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "eventNameList": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "offsetPre": {
+        "type": "integer"
+      },
+      "offsetAft": {
+        "type": "integer"
+      },
+      "timeZone": {
+        "type": "string"
+      },
+      "dt": {
+        "type": "string"
+      },
+      "blackList": {
+        "type": "string"
+      },
+      "failCode": {
+        "type": "string"
+      },
+      "otherCode": {
+        "type": "string"
+      },
+      "errCode": {
+        "type": "string"
+      },
+      "sortFieldName": {
+        "type": "string"
+      },
+      "sortType": {
+        "type": "integer"
+      },
+      "moduleType": {
+        "type": "integer",
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      },
+      "tableType": {
+        "type": "integer",
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      },
+      "inDbTable": {
+        "type": "string",
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      },
+      "errorTable": {
+        "type": "string",
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      },
+      "total": {
+        "type": "integer",
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      },
+      "isAllApp": {
+        "type": "boolean",
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      },
+      "eventClassify": {
+        "type": "integer",
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      },
+      "blackEventNameList": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "3, \"分析\" 1,”系统\" 4, \"归因\" 必穿 /"
+      }
+    },
+    "x-source-type": "BuriedDataDto",
+    "x-source": {
+      "project": "bi-docker",
+      "file": "da-dao/src/main/java/com/reyun/da/dao/dto/buried/BuriedDataDto.java",
+      "line": 1
+    }
+  },
+  "path_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}
+```
+
+返回声明：
+
+```json
+{
+  "backend_type": "ResultModel<Object>",
+  "backend_schema": {
+    "x-source-type": "ResultModel<Object>",
+    "x-unresolved": "泛型包装，查看返回结构说明"
+  },
+  "frontend_schemas": [
+    {
+      "x-unresolved": "未声明前端返回泛型"
+    }
+  ]
+}
+```

@@ -1,21 +1,415 @@
 {
   "id": "bi-metadata",
-  "name": "BI 元数据查询",
-  "version": "1.0.0",
-  "description": "查询产品中的分析主体、事件、用户属性、事件属性和指标。",
+  "name": "SolarEngine BI 分析与 AB 测试",
+  "version": "2.0.1",
+  "description": "查询 BI 元数据、行为分析、报表看板、分群标签，以及 Rule AB 实验、报告与配置下发；提供可追溯接口目录和受控业务调用。",
   "source": "builtin",
   "executor": "python-process",
   "tools": [
-    "BiCli"
+    "BiCli",
+    "SolarEventCount",
+    "SolarCatalog",
+    "SolarQuery",
+    "SolarMutate"
   ],
   "skill_name": "bi-metadata",
   "skill_files": [
     "SKILL.md",
-    "references/commands.md"
+    "references/ab-testing-api.md",
+    "references/analysis-api.md",
+    "references/api/bi.any.export_download_downUplGroupTmp.836e1899.md",
+    "references/api/bi.get..62430933.md",
+    "references/api/bi.get.aa.4ffa82cb.md",
+    "references/api/bi.get.account_reportAssignList.f36385b9.md",
+    "references/api/bi.get.analysisBody_bodyList.38b1ff99.md",
+    "references/api/bi.get.analysisBody_delete.e5011670.md",
+    "references/api/bi.get.analysisBody_deleteAllReportAndUserTag.8561a028.md",
+    "references/api/bi.get.analysisBody_detail.74d90094.md",
+    "references/api/bi.get.analysisBody_getAllReportAndUserTag.52335f9b.md",
+    "references/api/bi.get.analysisBody_refReport.f4222dde.md",
+    "references/api/bi.get.analysisBody_refreshProduct.4a4e433f.md",
+    "references/api/bi.get.analysisBody_updateDefaultBody.fffa14fc.md",
+    "references/api/bi.get.arith_findListByType.8fe9b4e3.md",
+    "references/api/bi.get.base_getCurrencyTypeList.067d58df.md",
+    "references/api/bi.get.boardCollaborator_detail.29f9423a.md",
+    "references/api/bi.get.boardConfig_getByBoardId.9b0b6ce8.md",
+    "references/api/bi.get.boardConfig_refresh.5378b8e0.md",
+    "references/api/bi.get.boardFiltrate_delete.478b42b5.md",
+    "references/api/bi.get.boardFiltrate_detail.2b002e2b.md",
+    "references/api/bi.get.boardFiltrate_list.3cf36573.md",
+    "references/api/bi.get.boardFiltrate_setDefault.8715535a.md",
+    "references/api/bi.get.boardFiltrate_updateNameById.590c603c.md",
+    "references/api/bi.get.boardLog_list.b6e9ef19.md",
+    "references/api/bi.get.boardMenu_createFolder.164ed95a.md",
+    "references/api/bi.get.boardMenu_findBoardReportContentById.0a65cf26.md",
+    "references/api/bi.get.boardMenu_getBoardInfoById.2338436b.md",
+    "references/api/bi.get.boardMenu_getCopyBoardName.222f58d6.md",
+    "references/api/bi.get.boardMenu_handleBoardMenuData.97407799.md",
+    "references/api/bi.get.boardMenu_menuList.bd89cfb2.md",
+    "references/api/bi.get.boardMenu_recycleBinMenu.fb4e60f3.md",
+    "references/api/bi.get.boardMenu_saveLog.dee0330d.md",
+    "references/api/bi.get.boardMenu_templateBoardList.ace6d644.md",
+    "references/api/bi.get.boardMenu_updMenuName.941c187c.md",
+    "references/api/bi.get.boardMenu_updMenuStatusById.1e9a68bf.md",
+    "references/api/bi.get.boardMenu_updateDefault.1f1fd4c2.md",
+    "references/api/bi.get.boardMenu_verifyName.fa0b582f.md",
+    "references/api/bi.get.buriedData_deleteErrorConfig.a23ce394.md",
+    "references/api/bi.get.buriedData_findRuleEventApp.c61f833f.md",
+    "references/api/bi.get.buriedData_listErrorConfig.fb26cae4.md",
+    "references/api/bi.get.buriedData_logStream.883e6627.md",
+    "references/api/bi.get.debug_deviceList.11087475.md",
+    "references/api/bi.get.debug_findDebugDataList.b4a4bfbc.md",
+    "references/api/bi.get.dimension_value_clear.5faeeddb.md",
+    "references/api/bi.get.eventConfig_checkEventName.7f98a0d0.md",
+    "references/api/bi.get.eventConfig_copyEvent.29f1ff66.md",
+    "references/api/bi.get.eventConfig_delete.9e8487b2.md",
+    "references/api/bi.get.eventConfig_detail.1026ad58.md",
+    "references/api/bi.get.eventConfig_findByProductKey.44438962.md",
+    "references/api/bi.get.eventConfig_findEventList.dc2e9309.md",
+    "references/api/bi.get.eventConfig_findProfileTypeByEvent.3230d60c.md",
+    "references/api/bi.get.eventConfig_setShow.a4fde79b.md",
+    "references/api/bi.get.eventConfig_updateName.699ebd60.md",
+    "references/api/bi.get.eventConfig_v2_setShow.f896d2f5.md",
+    "references/api/bi.get.eventConfig_v2_updateName.8953cbe7.md",
+    "references/api/bi.get.eventGroup_detail.0b6bf4f6.md",
+    "references/api/bi.get.eventMetric_checkReport.d8911f5a.md",
+    "references/api/bi.get.eventMetric_delete.88619fb9.md",
+    "references/api/bi.get.eventMetric_detail.42f248c9.md",
+    "references/api/bi.get.eventMetric_metricList.b3542ce6.md",
+    "references/api/bi.get.eventMetric_updateNameById.42b51632.md",
+    "references/api/bi.get.eventMetric_updateRemarkById.4b65e1a3.md",
+    "references/api/bi.get.export_callOfflineDataExport.e83a913d.md",
+    "references/api/bi.get.export_download_testResultHandler.494d47a3.md",
+    "references/api/bi.get.external_getVisitorLog.004845e0.md",
+    "references/api/bi.get.groupTemplateRelation_checkRelationBoardUpdate.2a47c1fe.md",
+    "references/api/bi.get.groupTemplate_checkTemplateUpdate.df1c8bf5.md",
+    "references/api/bi.get.groupTemplate_detail.57c67b8b.md",
+    "references/api/bi.get.groupTemplate_ignoreRelationBoard.247a7523.md",
+    "references/api/bi.get.groupTemplate_list.30b56b1d.md",
+    "references/api/bi.get.groupTemplate_listPage.cc808649.md",
+    "references/api/bi.get.groupTemplate_notifySourceBoardUpdateByTenantId.a928173c.md",
+    "references/api/bi.get.groupTemplate_updRelationBoard.f31be1be.md",
+    "references/api/bi.get.health_baseBoard.48e57109.md",
+    "references/api/bi.get.health_check.ba70495e.md",
+    "references/api/bi.get.health_deleteFile.bfbb65a0.md",
+    "references/api/bi.get.health_getDownloadUrl.9cc7f8f2.md",
+    "references/api/bi.get.health_getOfflineDownloadUrl.bae8cb68.md",
+    "references/api/bi.get.health_getReturnSqlTag.6b4f4cad.md",
+    "references/api/bi.get.health_getTestErr.005173c3.md",
+    "references/api/bi.get.health_getVisitorLog.2f63cda4.md",
+    "references/api/bi.get.health_i18n.7b9945f6.md",
+    "references/api/bi.get.health_i18nModel.a6f8e5da.md",
+    "references/api/bi.get.health_i18nParam.88e1e2bf.md",
+    "references/api/bi.get.health_industryJob.8106df08.md",
+    "references/api/bi.get.health_initForexRate.d78ee2ce.md",
+    "references/api/bi.get.health_initProp.c243d4f3.md",
+    "references/api/bi.get.health_saveFile.6286c515.md",
+    "references/api/bi.get.health_setReturnSql.4fcd20f5.md",
+    "references/api/bi.get.health_testBB.68c80d68.md",
+    "references/api/bi.get.health_testDb.9e41d751.md",
+    "references/api/bi.get.health_testProfile.fce6cab3.md",
+    "references/api/bi.get.health_testReport.012362b3.md",
+    "references/api/bi.get.health_testTag.bd62be05.md",
+    "references/api/bi.get.health_testWebServer.247433f7.md",
+    "references/api/bi.get.health_testWebServer1.447f0d12.md",
+    "references/api/bi.get.hotProfile_getHotSelectSwitch.f33fff40.md",
+    "references/api/bi.get.hotProfile_hotProfileList.9ab90440.md",
+    "references/api/bi.get.hotProfile_updateSelectSwitch.0428ba7f.md",
+    "references/api/bi.get.maxAgent_cancelQuestion.6152610a.md",
+    "references/api/bi.get.maxAgent_messageList.3449a27d.md",
+    "references/api/bi.get.maxAgent_sesssionList.684dff4f.md",
+    "references/api/bi.get.maxAgent_updateSessionName.b63fbae7.md",
+    "references/api/bi.get.profileType_checkProfileName.466e4827.md",
+    "references/api/bi.get.profileType_copyEventProfile.06fc77ba.md",
+    "references/api/bi.get.profileType_copyProfile.df317a05.md",
+    "references/api/bi.get.profileType_delete.ce540084.md",
+    "references/api/bi.get.profileType_detail.535ea427.md",
+    "references/api/bi.get.profileType_findAllEventProfList.9735f841.md",
+    "references/api/bi.get.profileType_findDimension.2760aa3c.md",
+    "references/api/bi.get.profileType_findEventConfigByEvent.3b6a9b9d.md",
+    "references/api/bi.get.profileType_setShow.bd58ba86.md",
+    "references/api/bi.get.profileType_updateName.ec175e3e.md",
+    "references/api/bi.get.profileType_v2_setShow.8a1d0255.md",
+    "references/api/bi.get.profileType_v2_updateName.d53729ba.md",
+    "references/api/bi.get.profileUser_checkProfileName.1883568d.md",
+    "references/api/bi.get.profileUser_delete.5a5f9b4b.md",
+    "references/api/bi.get.profileUser_detail.204f7556.md",
+    "references/api/bi.get.profileUser_findAllMeta.47042e98.md",
+    "references/api/bi.get.profileUser_findAllUserProfList.830220de.md",
+    "references/api/bi.get.profileUser_findByProductKey.80d69ddd.md",
+    "references/api/bi.get.profileUser_setShow.a0c578e3.md",
+    "references/api/bi.get.profileUser_updateName.f5a35c95.md",
+    "references/api/bi.get.refreshData_eventAndProfileClassify.8c4911e8.md",
+    "references/api/bi.get.refreshData_groupEventProfClassify.d16654c4.md",
+    "references/api/bi.get.refreshData_refUserAnaBody.a1654642.md",
+    "references/api/bi.get.refreshData_refreshAnalysisTimeType.ba588518.md",
+    "references/api/bi.get.refreshData_refreshTemplate.c4520700.md",
+    "references/api/bi.get.reportForm_batchDelByIds.6e61e35e.md",
+    "references/api/bi.get.reportForm_deleteReportFormsByAnalysisBodyId.39e84339.md",
+    "references/api/bi.get.reportForm_getCopyReportName.69c7681c.md",
+    "references/api/bi.get.reportForm_getReportInfoById.b5c7459c.md",
+    "references/api/bi.get.reportForm_getReportListByAnalysisBodyId.4c27da4c.md",
+    "references/api/bi.get.reportForm_verifyName.853da7ae.md",
+    "references/api/bi.get.report_checkAnalysisBody.18696097.md",
+    "references/api/bi.get.report_findIndex.99eced35.md",
+    "references/api/bi.get.report_findUserProfileIndex.cd897b95.md",
+    "references/api/bi.get.report_userDetail.c01360b7.md",
+    "references/api/bi.get.timeZone_getCurrentTimeZoneDetail.58f8e802.md",
+    "references/api/bi.get.timeZone_getTimeZoneHour.f40f8b24.md",
+    "references/api/bi.get.timeZone_getTimeZoneList.26eae09d.md",
+    "references/api/bi.get.userGroup_callBackGroupExecute.cb0f13f6.md",
+    "references/api/bi.get.userGroup_delGroupById.93257ca3.md",
+    "references/api/bi.get.userGroup_delVerify.69719007.md",
+    "references/api/bi.get.userGroup_detail.462d469c.md",
+    "references/api/bi.get.userGroup_getGroupProfileList.a627f7b7.md",
+    "references/api/bi.get.userGroup_getGroupTag.b92ad768.md",
+    "references/api/bi.get.userGroup_getGroupUserList.040f21f0.md",
+    "references/api/bi.get.userGroup_list.3a33380c.md",
+    "references/api/bi.get.userGroup_refresh.0142ccb1.md",
+    "references/api/bi.get.userGroup_refreshConditionGroup.11359153.md",
+    "references/api/bi.get.userGroup_updGroupNameOrRemark.b3396862.md",
+    "references/api/bi.get.userTag_callBackTagExecute.499162fe.md",
+    "references/api/bi.get.userTag_delById.8cea6c71.md",
+    "references/api/bi.get.userTag_delVerify.14cb93e0.md",
+    "references/api/bi.get.userTag_detail.92c16574.md",
+    "references/api/bi.get.userTag_entity.37a8d205.md",
+    "references/api/bi.get.userTag_findPresetTemplate.8410eec6.md",
+    "references/api/bi.get.userTag_getProfileList.5694be32.md",
+    "references/api/bi.get.userTag_getTagResultDetailList.7242dade.md",
+    "references/api/bi.get.userTag_industryTag.3e6b33ee.md",
+    "references/api/bi.get.userTag_refresh.829eb3e3.md",
+    "references/api/bi.get.userTag_tagResult.cb24c665.md",
+    "references/api/bi.get.userTag_transConditionTag.f88a422c.md",
+    "references/api/bi.get.userTag_updateTagNameById.c67497d6.md",
+    "references/api/bi.get.userTag_updateTagRemarkById.0f3c7c69.md",
+    "references/api/bi.get.userTag_userTagList.285be0d2.md",
+    "references/api/bi.get.util_count.d0b474c9.md",
+    "references/api/bi.get.util_getAnalysisLimit.f781dee0.md",
+    "references/api/bi.get.util_getAnalysisTimeOut.7b8b679d.md",
+    "references/api/bi.get.util_getDownloadLimit.749d3f29.md",
+    "references/api/bi.get.util_refresh0607.e467e18c.md",
+    "references/api/bi.get.util_refreshIsNew.1978a87b.md",
+    "references/api/bi.get.util_refreshSource.04889f8f.md",
+    "references/api/bi.get.util_setAnalysisLimit.56848c6e.md",
+    "references/api/bi.get.util_setAnalysisTimeOut.fc0f6f2b.md",
+    "references/api/bi.get.util_setDownloadLimit.37795294.md",
+    "references/api/bi.get.util_setReturnSql.3ac52ec3.md",
+    "references/api/bi.get.util_testDing.b3a57366.md",
+    "references/api/bi.post.ab_report_ciSql.5b4934ee.md",
+    "references/api/bi.post.ab_report_getAudCond.0429b367.md",
+    "references/api/bi.post.ab_report_indDaySql.5e8f0cf3.md",
+    "references/api/bi.post.ab_report_indSumSql.1445b919.md",
+    "references/api/bi.post.ab_report_retentionSql.5d5bfff9.md",
+    "references/api/bi.post.ab_report_sampleComputer.67908632.md",
+    "references/api/bi.post.analysisBody_add.e1f3afc5.md",
+    "references/api/bi.post.analysisBody_update.a15adf07.md",
+    "references/api/bi.post.boardCollaborator_save.9443a96d.md",
+    "references/api/bi.post.boardConfig_save.0fbf67b8.md",
+    "references/api/bi.post.boardFiltrate_add.e71ca093.md",
+    "references/api/bi.post.boardMenu_batchDelByIds.9613bac2.md",
+    "references/api/bi.post.boardMenu_batchOrder.9ed8e5cb.md",
+    "references/api/bi.post.boardMenu_copyBoard.fef70be8.md",
+    "references/api/bi.post.boardMenu_createBoard.63fae0ec.md",
+    "references/api/bi.post.boardMenu_findPermList.6ab6ec88.md",
+    "references/api/bi.post.boardMenu_findSearchContentByReportIds.15926c5e.md",
+    "references/api/bi.post.boardMenu_transferReport.c0366697.md",
+    "references/api/bi.post.boardMenu_updBoardContent.c57124e3.md",
+    "references/api/bi.post.boardMenu_updReportInfoById.c00829e9.md",
+    "references/api/bi.post.boardReport_delReport.b5c78991.md",
+    "references/api/bi.post.buriedData_addErrorConfig.7bfbcab5.md",
+    "references/api/bi.post.buriedData_buriedDataList.cfe46a5d.md",
+    "references/api/bi.post.buriedData_buriedDataListV.fb3c536e.md",
+    "references/api/bi.post.buriedData_buriedErrData.44b5037c.md",
+    "references/api/bi.post.buriedData_errDataVals.b36c9a5d.md",
+    "references/api/bi.post.buriedData_errorDataInfo.6edbd919.md",
+    "references/api/bi.post.buriedData_errorDataTenSummary.b37ba5d4.md",
+    "references/api/bi.post.buriedData_getEventStartPerm.c15178a7.md",
+    "references/api/bi.post.buriedData_setEnableStatusV.ebfbf56d.md",
+    "references/api/bi.post.collect_add.b6d6fa90.md",
+    "references/api/bi.post.collect_delete.050da9a9.md",
+    "references/api/bi.post.debug_addDevice.ca85946a.md",
+    "references/api/bi.post.debug_delById.75602b06.md",
+    "references/api/bi.post.debug_updDevice.33e919ca.md",
+    "references/api/bi.post.dimension_value_create.d22f76aa.md",
+    "references/api/bi.post.dimension_value_createByFile.b24ec74e.md",
+    "references/api/bi.post.dimension_value_delete.17a47eca.md",
+    "references/api/bi.post.dimension_value_download.e47f99c9.md",
+    "references/api/bi.post.dimension_value_list.2e8fb747.md",
+    "references/api/bi.post.dimension_value_update.eb7c0236.md",
+    "references/api/bi.post.eventConfig_add.4b8fa87c.md",
+    "references/api/bi.post.eventConfig_edit.6b7a43d5.md",
+    "references/api/bi.post.eventConfig_findAllEventList.8b032473.md",
+    "references/api/bi.post.eventConfig_v2_findAllEventList.eecda189.md",
+    "references/api/bi.post.eventGroup_save.a8c36d4d.md",
+    "references/api/bi.post.eventMetric_add.bb23a6d0.md",
+    "references/api/bi.post.export_download_4.192fcab1.md",
+    "references/api/bi.post.export_download_analyseType.482614c5.md",
+    "references/api/bi.post.export_download_createOfflineExportBatch.b7ead93a.md",
+    "references/api/bi.post.export_download_createOfflineExportRecord.c56c74eb.md",
+    "references/api/bi.post.export_download_downGroupUserList.4a1531d7.md",
+    "references/api/bi.post.export_download_downTagUserList.84606a51.md",
+    "references/api/bi.post.export_download_userList.00a69e34.md",
+    "references/api/bi.post.external_getVisitorToken.21388d5a.md",
+    "references/api/bi.post.external_report_detail.6e58c0c1.md",
+    "references/api/bi.post.external_report_findPermList.2cadb6e8.md",
+    "references/api/bi.post.groupTemplateRelation_list.f711ee1b.md",
+    "references/api/bi.post.groupTemplate_add.c8425ae0.md",
+    "references/api/bi.post.groupTemplate_delete.bb4fb3bc.md",
+    "references/api/bi.post.groupTemplate_editInfo.c5f9b8e7.md",
+    "references/api/bi.post.groupTemplate_newVersion_ignore.94a8ead8.md",
+    "references/api/bi.post.groupTemplate_newVersion_sync.f111c46e.md",
+    "references/api/bi.post.groupTemplate_templateCreateBoard.b91b9453.md",
+    "references/api/bi.post.groupTemplate_templateCreateBoardBatch.7b56608e.md",
+    "references/api/bi.post.groupTemplate_verifyBatch.04f6675f.md",
+    "references/api/bi.post.groupTemplate_verifyTemp.c26a1b00.md",
+    "references/api/bi.post.health_invokeParent.f0b5fe60.md",
+    "references/api/bi.post.health_postTestErr.a3488a12.md",
+    "references/api/bi.post.hotProfile_addHotProfile.2c777e12.md",
+    "references/api/bi.post.hotProfile_removeHotProfile.d1356964.md",
+    "references/api/bi.post.maxAgent_question.d73ad470.md",
+    "references/api/bi.post.noLogin_audience_createAudienceBaseInfo.b92945af.md",
+    "references/api/bi.post.noLogin_audience_uploadAudienceEntityData.4fe159b7.md",
+    "references/api/bi.post.profileRecort_saveRecord.f93c464d.md",
+    "references/api/bi.post.profileType_add.48901867.md",
+    "references/api/bi.post.profileType_addDimension.b1d1be76.md",
+    "references/api/bi.post.profileType_addForexRate.04ad89b2.md",
+    "references/api/bi.post.profileType_checkExpression.af4caf67.md",
+    "references/api/bi.post.profileType_edit.135c9110.md",
+    "references/api/bi.post.profileType_editForexRate.b7c4a2e3.md",
+    "references/api/bi.post.profileType_findByEvent.1cc5f948.md",
+    "references/api/bi.post.profileType_findByProductKey.eec68c38.md",
+    "references/api/bi.post.profileType_findProfileArithListByEvent.f17b1acc.md",
+    "references/api/bi.post.profileType_v2_findProfileArithListByEvent.bdb685a1.md",
+    "references/api/bi.post.profileUser_add.115fd38c.md",
+    "references/api/bi.post.profileUser_checkExpression.9d5a01e3.md",
+    "references/api/bi.post.profileUser_edit.71fcd9ca.md",
+    "references/api/bi.post.profileUser_findUserProfileArithList.504b8f9a.md",
+    "references/api/bi.post.reportForm_copyReport.c3d1d808.md",
+    "references/api/bi.post.reportForm_delById.67a943a1.md",
+    "references/api/bi.post.reportForm_findList.f46424f3.md",
+    "references/api/bi.post.reportForm_findPermList.44b80eeb.md",
+    "references/api/bi.post.reportForm_getReportInfoById.db9f04f8.md",
+    "references/api/bi.post.reportForm_refreshRbac.c057dcc0.md",
+    "references/api/bi.post.reportForm_saveReportForm.5611165f.md",
+    "references/api/bi.post.reportForm_transferReport.3fda2bcf.md",
+    "references/api/bi.post.reportForm_updMenuName.99f17820.md",
+    "references/api/bi.post.report_analysisUserEventList.8f2136a9.md",
+    "references/api/bi.post.report_analysisUserInfoSummary.ba89644e.md",
+    "references/api/bi.post.report_analysisUserList.0bece0ea.md",
+    "references/api/bi.post.report_eventAnalysis.e914f96e.md",
+    "references/api/bi.post.report_findAnalysisEventList.684ec0b4.md",
+    "references/api/bi.post.report_findAnalysisUser.7e4496a4.md",
+    "references/api/bi.post.report_findEventsAndProfiles.7b84403b.md",
+    "references/api/bi.post.report_findProfVal.74b90b75.md",
+    "references/api/bi.post.report_findProfilesByBoard.79216f01.md",
+    "references/api/bi.post.report_funnelAnalysis.741b386a.md",
+    "references/api/bi.post.report_retentionAnalysis.b88a0e54.md",
+    "references/api/bi.post.report_scatterAnalysis.a5cda4e7.md",
+    "references/api/bi.post.report_traceAnalysis.c1d50a0f.md",
+    "references/api/bi.post.report_userPropertyAnalysis.8fad057a.md",
+    "references/api/bi.post.report_v2_findProfilesByEvents.9e8ce207.md",
+    "references/api/bi.post.report_v3_findProfilesByEvents.b5904bd7.md",
+    "references/api/bi.post.userGroup_conditionGroup.56acad2e.md",
+    "references/api/bi.post.userGroup_createUploadGroup.140a6ff1.md",
+    "references/api/bi.post.userGroup_getGroupUserList.c9455a99.md",
+    "references/api/bi.post.userGroup_notify.6da68355.md",
+    "references/api/bi.post.userTag_createConditionTag.ab1142fd.md",
+    "references/api/bi.post.userTag_createFeatureTag.7bd6e449.md",
+    "references/api/bi.post.userTag_createIndicatorTag.03364505.md",
+    "references/api/bi.post.userTag_createPresetTag.80ba757b.md",
+    "references/api/bi.post.userTag_createResultTag.ac140bfa.md",
+    "references/api/bi.post.userTag_createUploadTag.a82d740f.md",
+    "references/api/bi.post.userTag_notify.9735484b.md",
+    "references/api/bi.post.userTag_updateTag.7af3d826.md",
+    "references/api/rule.get.api_health_portalDataHandlerCheck.0b19be01.md",
+    "references/api/rule.get.i18nGet.d5b4dc07.md",
+    "references/api/rule.get.metrics.b886a86e.md",
+    "references/api/rule.get.portal_configDistributionRule_configDistributionGroup_conflictGroup.1619d472.md",
+    "references/api/rule.get.portal_configDistributionRule_conflictRule.2158c347.md",
+    "references/api/rule.get.portal_configDistributionRule_deleteRule.4cef650d.md",
+    "references/api/rule.get.portal_configDistributionRule_detail.89893944.md",
+    "references/api/rule.get.portal_configDistributionRule_findPofilesByEvents.45adaecf.md",
+    "references/api/rule.get.portal_configDistributionRule_getRuleStatusInfo.e2768ae8.md",
+    "references/api/rule.get.portal_configDistributionRule_list.1a3afd6c.md",
+    "references/api/rule.get.portal_configDistributionRule_offline.7159b3da.md",
+    "references/api/rule.get.portal_configDistributionRule_online.17cb0f01.md",
+    "references/api/rule.get.portal_configDistributionRule_ruleGroup_getFileUploadTemplate.d889f35d.md",
+    "references/api/rule.get.portal_configDistributionRule_ruleGroup_initRuleGroupId.3da50144.md",
+    "references/api/rule.get.portal_configDistributionRule_ruleGroup_setAudienceTaskDone.adb47220.md",
+    "references/api/rule.get.portal_configDistributionRule_ruleNameCheck.68dcd2fb.md",
+    "references/api/rule.get.portal_experiment_checkInputDebugDevice.629f07e0.md",
+    "references/api/rule.get.portal_experiment_checkName.8fdeb554.md",
+    "references/api/rule.get.portal_experiment_checkSelectedParam.f4446652.md",
+    "references/api/rule.get.portal_experiment_del.3d9d18f1.md",
+    "references/api/rule.get.portal_experiment_detail.fd792f7e.md",
+    "references/api/rule.get.portal_experiment_experimentLayer_checkExperiment.714c4bfe.md",
+    "references/api/rule.get.portal_experiment_experimentLayer_checkName.2769c0c7.md",
+    "references/api/rule.get.portal_experiment_experimentLayer_detail.ebbbae25.md",
+    "references/api/rule.get.portal_experiment_experimentLayer_getValidFlowValue.377f2a1a.md",
+    "references/api/rule.get.portal_experiment_experimentLayer_list.0e6d5acd.md",
+    "references/api/rule.get.portal_experiment_experimentLayer_listAvailable.37f2fa9a.md",
+    "references/api/rule.get.portal_experiment_getExperimentGroupList.284e288e.md",
+    "references/api/rule.get.portal_experiment_list.09374427.md",
+    "references/api/rule.get.portal_experiment_report_basicInfo.77abcfa5.md",
+    "references/api/rule.get.portal_experiment_setOnline.820548b1.md",
+    "references/api/rule.get.portal_experiment_urlVerify.2e1ce4a6.md",
+    "references/api/rule.get.portal_params_abRefList.79050d88.md",
+    "references/api/rule.get.portal_params_detail.e6e1cd7c.md",
+    "references/api/rule.get.portal_params_list.e3a27a83.md",
+    "references/api/rule.get.portal_params_ruleRefList.70871504.md",
+    "references/api/rule.get.portal_params_selectParamList.cfb6b7d8.md",
+    "references/api/rule.get.portal_params_selectValueList.da4bf25a.md",
+    "references/api/rule.get.portal_params_verifyParamName.2468a04b.md",
+    "references/api/rule.post.config_get.ff340c00.md",
+    "references/api/rule.post.config_global_disableRecordLog.7a4dc435.md",
+    "references/api/rule.post.config_global_info.ca1d81b4.md",
+    "references/api/rule.post.config_multilink_get.08edb844.md",
+    "references/api/rule.post.config_multilink_v1_get.c7edcef6.md",
+    "references/api/rule.post.config_openEngineLog.523f1102.md",
+    "references/api/rule.post.config_v1_get.f59de1d5.md",
+    "references/api/rule.post.portal_api_audienceDeleteNotify.84dbc8ca.md",
+    "references/api/rule.post.portal_app_offline.a60310b9.md",
+    "references/api/rule.post.portal_configDistributionRule_configDistributionGroup_saveConflictGroup.266d8998.md",
+    "references/api/rule.post.portal_configDistributionRule_modify.fc9c80d0.md",
+    "references/api/rule.post.portal_configDistributionRule_ruleGroup_notifyUpsAudienceTaskStatus.cc1cb8ce.md",
+    "references/api/rule.post.portal_configDistributionRule_save.9862189b.md",
+    "references/api/rule.post.portal_configDistributionRule_saveCheck.a5a065c3.md",
+    "references/api/rule.post.portal_experiment_add.72503f7b.md",
+    "references/api/rule.post.portal_experiment_experimentLayer_add.38ed5576.md",
+    "references/api/rule.post.portal_experiment_experimentLayer_delete.55034072.md",
+    "references/api/rule.post.portal_experiment_experimentLayer_modify.abceb9f9.md",
+    "references/api/rule.post.portal_experiment_modify.fc44991b.md",
+    "references/api/rule.post.portal_experiment_pushOut.315c354f.md",
+    "references/api/rule.post.portal_experiment_pushOutCheck.f5fbf0ba.md",
+    "references/api/rule.post.portal_experiment_report_enterGroupSql.7deef10f.md",
+    "references/api/rule.post.portal_experiment_report_indDetailByDay.76567f9e.md",
+    "references/api/rule.post.portal_experiment_report_indSummary.189819d3.md",
+    "references/api/rule.post.portal_experiment_report_retention.9f12e611.md",
+    "references/api/rule.post.portal_experiment_report_sampleComputer.9e560d83.md",
+    "references/api/rule.post.portal_experiment_setOffline.8245ee25.md",
+    "references/api/rule.post.portal_experiment_setOfflineCheck.143ba917.md",
+    "references/api/rule.post.portal_experiment_tempSave.37eb5391.md",
+    "references/api/rule.post.portal_params_add.712db55b.md",
+    "references/api/rule.post.portal_params_delete.6746b846.md",
+    "references/api/rule.post.portal_params_update.767cbc4f.md",
+    "references/audiences-tags-api.md",
+    "references/commands.md",
+    "references/coverage.md",
+    "references/event-count.md",
+    "references/metadata-api.md",
+    "references/protocol.md",
+    "references/reports-boards-api.md",
+    "references/rule-config-api.md",
+    "references/utilities-internal-api.md",
+    "references/workflows.md"
   ],
   "permissions": [
     "metadata.read",
+    "analysis.read",
+    "rule.read",
+    "business.write.optional",
     "network.bi",
+    "network.portal",
     "process.fixed-cli"
   ],
   "fields": [
@@ -29,7 +423,7 @@
       "maximum": null,
       "max_length": 500,
       "format": "url",
-      "placeholder": "https://bi.example.com",
+      "placeholder": "https://your-domain/portal-api/bi-docker/api",
       "options": []
     },
     {
@@ -70,6 +464,30 @@
       "format": null,
       "placeholder": "",
       "options": []
+    },
+    {
+      "key": "portal_base_url",
+      "label": "Portal 网关地址（Rule / AB 测试）",
+      "kind": "string",
+      "required": false,
+      "default": "",
+      "format": "url",
+      "max_length": 500,
+      "placeholder": "https://your-domain/portal-api"
+    },
+    {
+      "key": "rule_token",
+      "label": "Rule 登录 Token（留空复用 BI Token）",
+      "kind": "secret",
+      "required": false,
+      "max_length": 4096
+    },
+    {
+      "key": "allow_mutations",
+      "label": "允许业务修改（仍受 Agent 权限控制）",
+      "kind": "boolean",
+      "required": false,
+      "default": false
     }
   ],
   "capabilities": {
@@ -86,8 +504,8 @@
       "placeholder": "product-key"
     }
   ],
-  "config_title": "服务配置",
-  "debug_panel": "bi-metadata",
+  "config_title": "BI 与 Portal 服务配置",
+  "debug_panel": "generic",
   "protocol_version": 1,
   "entrypoint": "executor/main.py",
   "tool_definitions": [
@@ -112,11 +530,355 @@
         "title": "BiCliInput",
         "type": "object"
       },
-      "example_input": null,
+      "example_input": {
+        "arguments": [
+          "metadata",
+          "events",
+          "list",
+          "--product-key",
+          "<product_key>",
+          "--page-num",
+          "1",
+          "--page-size",
+          "50"
+        ]
+      },
       "output_schema": {
         "type": "object"
       },
       "risk_level": "medium"
+    },
+    {
+      "name": "SolarEventCount",
+      "description": "查询指定产品事件今天、昨天或日期范围内的总次数（条数），例如 _appEnd 今天多少条。一次调用自动获取产品时区、事件和总次数元数据，并组装报表参数；无需先搜索接口或读取大型契约。失败时返回 count=null、失败阶段及请求编号，停止本轮重复查询。未指定应用表示产品全部应用；time_type 默认服务端时间。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "product_key",
+          "event_name"
+        ],
+        "properties": {
+          "product_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "已确认的产品业务键，沿用当前会话明确产品"
+          },
+          "event_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "事件原始标识，如 _appEnd，不能填写显示名"
+          },
+          "date": {
+            "type": "string",
+            "default": "today",
+            "description": "today、yesterday 或 YYYY-MM-DD，按产品时区解析自然日"
+          },
+          "end_date": {
+            "type": "string",
+            "description": "可选包含在内的末日；省略查询单日，最多31天"
+          },
+          "time_zone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "可选 IANA 时区，例如 Asia/Shanghai；省略自动读取产品时区"
+          },
+          "app_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "可选实际应用数字ID；省略表示产品全部应用"
+          },
+          "time_type": {
+            "enum": [
+              "server",
+              "client"
+            ],
+            "default": "server",
+            "description": "server 服务端时间，client 客户端时间"
+          }
+        }
+      },
+      "example_input": {
+        "product_key": "<product_key>",
+        "event_name": "_appEnd",
+        "date": "today"
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "risk_level": "medium"
+    },
+    {
+      "name": "SolarCatalog",
+      "description": "搜索 BI/Rule 接口目录或读取单个接口的完整契约、前后端源码与可用性；本工具不访问线上服务。先 search 再 describe，未知/内部接口不能假设可调用。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "search",
+              "describe"
+            ],
+            "default": "search"
+          },
+          "endpoint_id": {
+            "type": "string"
+          },
+          "search": {
+            "type": "string",
+            "default": ""
+          },
+          "service": {
+            "enum": [
+              "all",
+              "bi",
+              "rule"
+            ],
+            "default": "all"
+          },
+          "module": {
+            "type": "string",
+            "default": ""
+          },
+          "operation": {
+            "enum": [
+              "all",
+              "read",
+              "write",
+              "internal",
+              "special",
+              "unverified"
+            ],
+            "default": "all"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          }
+        },
+        "required": []
+      },
+      "example_input": {
+        "action": "search",
+        "service": "bi",
+        "search": "event",
+        "operation": "read",
+        "offset": 0,
+        "limit": 20
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "risk_level": "medium"
+    },
+    {
+      "name": "SolarQuery",
+      "description": "执行目录中 operation=read 的 BI/Rule 接口，包括 POST 分析查询和实验报告。请先通过 SolarCatalog.describe 获取参数契约；用户未明确产品、应用、日期和时区时不得猜测。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "endpoint_id": {
+            "type": "string",
+            "description": "SolarCatalog 返回的完整接口 ID，必须先读取 describe 契约"
+          },
+          "product_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "明确的产品标识，同时作为 pk 请求头；不等于 appId"
+          },
+          "query": {
+            "type": "object",
+            "default": {},
+            "description": "按 query_schema 填写的 URL 查询参数，保留数字和数组类型"
+          },
+          "body": {
+            "default": null,
+            "description": "按 body_schema 填写的 JSON 请求体；没有请求体的接口使用 null"
+          },
+          "path": {
+            "type": "object",
+            "default": {},
+            "description": "目录中声明的路径占位参数，通常为空"
+          },
+          "context": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": false,
+            "description": "前端业务上下文，不能传入认证或租户请求头",
+            "properties": {
+              "app_ids": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "integer"
+                  ]
+                },
+                "maxItems": 200
+              },
+              "all_apps": {
+                "type": "boolean"
+              },
+              "language": {
+                "enum": [
+                  "zh",
+                  "en"
+                ]
+              },
+              "time_zone": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "system_type": {
+                "enum": [
+                  "product",
+                  "app"
+                ]
+              },
+              "country_region": {
+                "type": "string",
+                "maxLength": 20
+              }
+            }
+          }
+        },
+        "required": [
+          "endpoint_id",
+          "product_key"
+        ]
+      },
+      "example_input": {
+        "endpoint_id": "bi.get.eventConfig_findByProductKey.44438962",
+        "product_key": "<product_key>",
+        "query": {
+          "pageNum": 1,
+          "pageSize": 50
+        },
+        "body": null,
+        "path": {},
+        "context": {}
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "risk_level": "medium"
+    },
+    {
+      "name": "SolarMutate",
+      "description": "执行目录中 operation=write 的明确业务操作，例如新增、编辑、上线、下线或删除；GET 也可能写入。必须有用户明确业务指令，插件配置 allow_mutations=true，并遵守 Agent 工具权限；先查询对象与执行前置检查，修改超时不得直接重试。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "endpoint_id": {
+            "type": "string",
+            "description": "SolarCatalog 返回的完整接口 ID，必须先读取 describe 契约"
+          },
+          "product_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "明确的产品标识，同时作为 pk 请求头；不等于 appId"
+          },
+          "query": {
+            "type": "object",
+            "default": {},
+            "description": "按 query_schema 填写的 URL 查询参数，保留数字和数组类型"
+          },
+          "body": {
+            "default": null,
+            "description": "按 body_schema 填写的 JSON 请求体；没有请求体的接口使用 null"
+          },
+          "path": {
+            "type": "object",
+            "default": {},
+            "description": "目录中声明的路径占位参数，通常为空"
+          },
+          "context": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": false,
+            "description": "前端业务上下文，不能传入认证或租户请求头",
+            "properties": {
+              "app_ids": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "integer"
+                  ]
+                },
+                "maxItems": 200
+              },
+              "all_apps": {
+                "type": "boolean"
+              },
+              "language": {
+                "enum": [
+                  "zh",
+                  "en"
+                ]
+              },
+              "time_zone": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "system_type": {
+                "enum": [
+                  "product",
+                  "app"
+                ]
+              },
+              "country_region": {
+                "type": "string",
+                "maxLength": 20
+              }
+            }
+          },
+          "change_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "用户请求的修改意图及目标说明；该字段本身不是用户授权凭证"
+          }
+        },
+        "required": [
+          "endpoint_id",
+          "product_key",
+          "change_reason"
+        ]
+      },
+      "example_input": {
+        "endpoint_id": "<从目录选择修改接口>",
+        "product_key": "<product_key>",
+        "query": {},
+        "body": null,
+        "path": {},
+        "context": {},
+        "change_reason": "<用户明确要求的业务变更>"
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "risk_level": "high"
     }
   ],
   "timeout_seconds": 90,

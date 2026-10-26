@@ -23,6 +23,10 @@ def export_builtin(plugin_id: str) -> bytes:
         for path in cli_root.rglob("*.py"):
             if path.name != "__main__.py":
                 files["executor/bi_cli/" + path.relative_to(cli_root).as_posix()] = path.read_bytes()
+        # 目录与客户端是插件代码资产，明确打包 Python/JSON，不携带平台配置和缓存。
+        for path in (root / "executor" / "solar_api").rglob("*"):
+            if path.is_file() and path.suffix in (".py", ".json"):
+                files[path.relative_to(root).as_posix()] = path.read_bytes()
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, content in sorted(files.items()):
